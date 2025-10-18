@@ -13,6 +13,7 @@ use git2::{Repository, Status};
 use msc::core::config::Config;
 use msc::ui::formatters::{format_size, format_time, format_permissions};
 use msc::utils::icons::get_file_icon;
+use msc::platform::{is_elevated, elevate_and_rerun, get_temp_directories, is_hidden};
 
 fn main() -> Result<()> {
     let matches = Command::new("msc")
@@ -584,145 +585,6 @@ fn delete_files_recursive(
     }
 }
 
-#[cfg(windows)]
-fn is_elevated() -> bool {
-    use std::ptr;
-    use std::mem;
-    use winapi::ctypes::c_void;
-
-    unsafe {
-        let mut handle: *mut c_void = ptr::null_mut();
-
-        // Open process token
-        if winapi::um::processthreadsapi::OpenProcessToken(
-            winapi::um::processthreadsapi::GetCurrentProcess(),
-            winapi::um::winnt::TOKEN_QUERY,
-            &mut handle,
-        ) == 0 {
-            return false;
-        }
-
-        let mut elevation: winapi::um::winnt::TOKEN_ELEVATION = mem::zeroed();
-        let mut size: u32 = 0;
-
-        // Get token elevation info
-        let result = winapi::um::securitybaseapi::GetTokenInformation(
-            handle,
-            winapi::um::winnt::TokenElevation,
-            &mut elevation as *mut _ as *mut c_void,
-            mem::size_of::<winapi::um::winnt::TOKEN_ELEVATION>() as u32,
-            &mut size,
-        );
-
-        winapi::um::handleapi::CloseHandle(handle);
-
-        result != 0 && elevation.TokenIsElevated != 0
-    }
-}
-
-#[cfg(windows)]
-fn elevate_and_rerun() -> Result<bool> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
-    let exe_path = std::env::current_exe()?;
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    // Use ShellExecute with "runas" verb to trigger UAC
-    let result = Command::new("powershell")
-        .args(&[
-            "-Command",
-            &format!(
-                "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait",
-                exe_path.display(),
-                args.join(" ")
-            )
-        ])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .status();
-
-    match result {
-        Ok(status) => Ok(status.success()),
-        Err(_) => Ok(false),
-    }
-}
-
-fn get_temp_directories() -> Vec<String> {
-    let mut dirs = Vec::new();
-
-    #[cfg(windows)]
-    {
-        // 1. C:\Windows\Temp (system temp folder in root)
-        if let Ok(windir) = std::env::var("SystemRoot") {
-            let windows_temp = format!("{}\\Temp", windir);
-            if Path::new(&windows_temp).exists() {
-                dirs.push(windows_temp);
-            }
-        } else {
-            // Fallback to C:\Windows\Temp
-            let default_windows_temp = "C:\\Windows\\Temp".to_string();
-            if Path::new(&default_windows_temp).exists() {
-                dirs.push(default_windows_temp);
-            }
-        }
-
-        // 2. C:\Users\<username>\AppData\Local\Temp (user temp folder)
-        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
-            let user_temp = format!("{}\\Temp", localappdata);
-            if Path::new(&user_temp).exists() {
-                dirs.push(user_temp);
-            }
-        }
-        // Alternative: use TEMP environment variable
-        if let Ok(temp) = std::env::var("TEMP") {
-            if !dirs.contains(&temp) && Path::new(&temp).exists() {
-                dirs.push(temp);
-            }
-        }
-
-        // 3. C:\Windows\Prefetch (prefetch folder)
-        if let Ok(windir) = std::env::var("SystemRoot") {
-            let prefetch = format!("{}\\Prefetch", windir);
-            if Path::new(&prefetch).exists() {
-                dirs.push(prefetch);
-            }
-        } else {
-            // Fallback to C:\Windows\Prefetch
-            let default_prefetch = "C:\\Windows\\Prefetch".to_string();
-            if Path::new(&default_prefetch).exists() {
-                dirs.push(default_prefetch);
-            }
-        }
-
-        // 4. Recycle Bin - C:\$Recycle.Bin
-        // The Recycle Bin has subdirectories for each user (SID-based)
-        let recycle_bin = "C:\\$Recycle.Bin".to_string();
-        if Path::new(&recycle_bin).exists() {
-            dirs.push(recycle_bin);
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        // Unix/Linux temp directories
-        dirs.push("/tmp".to_string());
-
-        if let Ok(tmpdir) = std::env::var("TMPDIR") {
-            if !dirs.contains(&tmpdir) {
-                dirs.push(tmpdir);
-            }
-        }
-    }
-
-    // Filter to only existing directories and remove duplicates
-    let mut unique_dirs: Vec<String> = dirs.into_iter()
-        .filter(|d| Path::new(d).exists())
-        .collect();
-    unique_dirs.sort();
-    unique_dirs.dedup();
-
-    unique_dirs
-}
 
 fn handle_list_command(matches: &clap::ArgMatches) -> Result<()> {
     match matches.subcommand() {
@@ -777,12 +639,12 @@ fn list_simple(path: &str, show_all: bool) -> Result<()> {
         let entry = entry?;
         let file_name = entry.file_name().to_string_lossy().to_string();
         
-        if !show_all && (file_name.starts_with('.') || is_hidden_on_windows(&entry)) {
+        if !show_all && (file_name.starts_with('.') || is_hidden(&entry)) {
             continue;
         }
         
         let is_dir = entry.file_type()?.is_dir();
-        let is_hidden = file_name.starts_with('.') || is_hidden_on_windows(&entry);
+        let is_hidden = file_name.starts_with('.') || is_hidden(&entry);
         let is_ignored = is_gitignored(&gitignore, &entry.path(), is_dir);
         let git_status = get_git_status_for_file(&git_status_map, &entry.path(), dir_path);
         
@@ -859,12 +721,12 @@ fn list_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_depth
         let entry = entry?;
         let file_name = entry.file_name().to_string_lossy().to_string();
         
-        if !show_all && (file_name.starts_with('.') || is_hidden_on_windows(&entry)) {
+        if !show_all && (file_name.starts_with('.') || is_hidden(&entry)) {
             continue;
         }
         
         let is_dir = entry.file_type()?.is_dir();
-        let is_hidden = file_name.starts_with('.') || is_hidden_on_windows(&entry);
+        let is_hidden = file_name.starts_with('.') || is_hidden(&entry);
         let is_ignored = is_gitignored(&gitignore, &entry.path(), is_dir);
         
         items.push((file_name, is_dir, entry.path(), is_hidden, is_ignored));
@@ -880,11 +742,10 @@ fn list_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_depth
         if *is_dir {
             let colored_name = apply_git_colors(name.clone(), &git_status, true, is_dimmed);
             println!("{}📂 {}", indent, colored_name);
-            if current_depth < max_depth {
-                if let Err(_) = list_recursive(full_path, show_all, current_depth + 1, max_depth) {
+            if current_depth < max_depth
+                && list_recursive(full_path, show_all, current_depth + 1, max_depth).is_err() {
                     println!("{}  {}", indent, format!("Error reading directory: {}", name).red().dimmed());
                 }
-            }
         } else {
             let icon = get_file_icon(name);
             let colored_name = apply_git_colors(name.clone(), &git_status, false, is_dimmed);
@@ -955,12 +816,12 @@ fn list_long_simple(dir_path: &Path, show_all: bool, indent_level: u32) -> Resul
         let entry = entry?;
         let file_name = entry.file_name().to_string_lossy().to_string();
         
-        if !show_all && (file_name.starts_with('.') || is_hidden_on_windows(&entry)) {
+        if !show_all && (file_name.starts_with('.') || is_hidden(&entry)) {
             continue;
         }
         
         let is_dir = entry.file_type()?.is_dir();
-        let is_hidden = file_name.starts_with('.') || is_hidden_on_windows(&entry);
+        let is_hidden = file_name.starts_with('.') || is_hidden(&entry);
         let is_ignored = is_gitignored(&gitignore, &entry.path(), is_dir);
         
         items.push((file_name, is_dir, entry.path(), is_hidden, is_ignored));
@@ -1059,12 +920,12 @@ fn list_long_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_
         let entry = entry?;
         let file_name = entry.file_name().to_string_lossy().to_string();
         
-        if !show_all && (file_name.starts_with('.') || is_hidden_on_windows(&entry)) {
+        if !show_all && (file_name.starts_with('.') || is_hidden(&entry)) {
             continue;
         }
         
         let is_dir = entry.file_type()?.is_dir();
-        let is_hidden = file_name.starts_with('.') || is_hidden_on_windows(&entry);
+        let is_hidden = file_name.starts_with('.') || is_hidden(&entry);
         let is_ignored = is_gitignored(&gitignore, &entry.path(), is_dir);
         
         items.push((file_name, is_dir, entry.path(), is_hidden, is_ignored));
@@ -1136,12 +997,11 @@ fn list_long_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_
             permissions_color
         );
 
-        if *is_dir && current_depth < max_depth {
-            if let Err(_) = list_long_recursive(full_path, show_all, current_depth + 1, max_depth) {
+        if *is_dir && current_depth < max_depth
+            && list_long_recursive(full_path, show_all, current_depth + 1, max_depth).is_err() {
                 let indent_error = "  ".repeat((current_depth + 1) as usize);
                 println!("{}  {}", indent_error, format!("Error reading directory: {}", name).red().dimmed());
             }
-        }
     }
     
     Ok(())
@@ -1153,11 +1013,10 @@ fn load_gitignore(dir_path: &Path) -> Option<Gitignore> {
     
     // Try to add .gitignore file if it exists
     let gitignore_path = dir_path.join(".gitignore");
-    if gitignore_path.exists() {
-        if builder.add(&gitignore_path).is_some() {
+    if gitignore_path.exists()
+        && builder.add(&gitignore_path).is_some() {
             return None;
         }
-    }
     
     // Try to find parent directories with .gitignore
     let mut current = dir_path.parent();
@@ -1175,10 +1034,7 @@ fn load_gitignore(dir_path: &Path) -> Option<Gitignore> {
 
 fn is_gitignored(gitignore: &Option<Gitignore>, path: &Path, is_dir: bool) -> bool {
     if let Some(gi) = gitignore {
-        match gi.matched(path, is_dir) {
-            ignore::Match::Ignore(_) => true,
-            _ => false,
-        }
+        matches!(gi.matched(path, is_dir), ignore::Match::Ignore(_))
     } else {
         false
     }
@@ -1249,37 +1105,17 @@ fn apply_git_colors(text: String, git_status: &GitStatus, is_dir: bool, is_dimme
         GitStatus::Clean => {
             // Normal colors based on file type and dimmed status
             if is_dir {
-                if is_dimmed { 
+                if is_dimmed {
                     text.blue().dimmed()
-                } else { 
+                } else {
                     text.blue().bold()
                 }
+            } else if is_dimmed {
+                text.bright_black()
             } else {
-                if is_dimmed { 
-                    text.bright_black()
-                } else { 
-                    text.white()
-                }
+                text.white()
             }
         }
     }
 }
 
-
-#[cfg(windows)]
-fn is_hidden_on_windows(entry: &std::fs::DirEntry) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    const FILE_ATTRIBUTE_HIDDEN: u32 = 2;
-
-    if let Ok(metadata) = entry.metadata() {
-        let attributes = metadata.file_attributes();
-        (attributes & FILE_ATTRIBUTE_HIDDEN) != 0
-    } else {
-        false
-    }
-}
-
-#[cfg(not(windows))]
-fn is_hidden_on_windows(_entry: &std::fs::DirEntry) -> bool {
-    false
-}
