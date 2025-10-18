@@ -7,10 +7,10 @@ use colored::*;
 use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
 
 // Use modules from the library
-use msc::core::config::Config;
+use msc::core::{Config, TempCleaner, WorkspaceManager};
 use msc::ui::{format_size, format_time, format_permissions};
 use msc::utils::icons::get_file_icon;
-use msc::platform::{is_elevated, elevate_and_rerun, get_temp_directories, is_hidden};
+use msc::platform::{is_elevated, elevate_and_rerun, is_hidden};
 use msc::git::{load_git_status, get_git_status_for_file, load_gitignore, is_gitignored, apply_git_colors};
 
 fn main() -> Result<()> {
@@ -263,65 +263,36 @@ fn handle_get_command(matches: &clap::ArgMatches) -> Result<()> {
 fn handle_work_command(matches: &clap::ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("map", _)) => {
-            let mut config = Config::load()?;
+            let mut manager = WorkspaceManager::new()?;
 
-            let work_path = match config.get_work_path() {
-                Some(path) => path.clone(),
-                None => {
-                    println!("{}", "No work directory configured.".yellow());
-                    println!();
-                    println!("{}", "To set a work directory first, run:".white());
-                    println!("  {}", "msc set work <path>".cyan().bold());
-                    println!();
-                    println!("{}", "Example:".dimmed());
-                    println!("  {}", "msc set work C:\\Users\\marco\\projects".dimmed());
-                    return Ok(());
-                }
-            };
-
-            let work_dir = Path::new(&work_path);
-            if !work_dir.exists() {
-                println!("{}", format!("Error: Work directory '{}' does not exist", work_path).red());
-                return Ok(());
-            }
-
-            if !work_dir.is_dir() {
-                println!("{}", format!("Error: '{}' is not a directory", work_path).red());
+            // Check if work path is configured
+            if manager.config().get_work_path().is_none() {
+                println!("{}", "No work directory configured.".yellow());
+                println!();
+                println!("{}", "To set a work directory first, run:".white());
+                println!("  {}", "msc set work <path>".cyan().bold());
+                println!();
+                println!("{}", "Example:".dimmed());
+                println!("  {}", "msc set work C:\\Users\\marco\\projects".dimmed());
                 return Ok(());
             }
 
             println!("{}", "Mapping workspaces...".cyan());
             println!();
 
-            config.clear_workspaces();
-            let entries = fs::read_dir(work_dir)?;
-            let mut count = 0;
-
-            for entry in entries {
-                let entry = entry?;
-                let file_name = entry.file_name().to_string_lossy().to_string();
-
-                if entry.file_type()?.is_dir() && !file_name.starts_with('.') {
-                    let full_path = entry.path();
-                    let canonical_path = full_path.canonicalize()
-                        .unwrap_or(full_path)
-                        .to_string_lossy()
-                        .to_string();
-
-                    config.add_workspace(file_name.clone(), canonical_path);
-                    println!("  {} {}", "✓".green(), file_name.cyan());
-                    count += 1;
+            match manager.map_workspaces() {
+                Ok(count) => {
+                    println!();
+                    println!("{} {}", "Successfully mapped".green().bold(), format!("{} workspace(s)", count).yellow().bold());
+                }
+                Err(e) => {
+                    println!("{}", format!("Error: {}", e).red());
                 }
             }
-
-            config.save()?;
-
-            println!();
-            println!("{} {}", "Successfully mapped".green().bold(), format!("{} workspace(s)", count).yellow().bold());
         }
         Some(("list", _)) => {
-            let config = Config::load()?;
-            let workspaces = config.get_workspaces();
+            let manager = WorkspaceManager::new()?;
+            let workspaces = manager.list_workspaces();
 
             if workspaces.is_empty() {
                 println!("{}", "No workspaces found. Use 'msc work map' to map your project folders.".yellow());
@@ -331,11 +302,8 @@ fn handle_work_command(matches: &clap::ArgMatches) -> Result<()> {
             println!("{} {}", "Workspaces:".white().bold(), format!("({} total)", workspaces.len()).dimmed());
             println!();
 
-            let mut sorted_workspaces: Vec<_> = workspaces.iter().collect();
-            sorted_workspaces.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
-
-            for (name, path) in sorted_workspaces {
-                let cleaned_path = path.strip_prefix("\\\\?\\").unwrap_or(path);
+            for (name, path) in workspaces {
+                let cleaned_path = path.strip_prefix("\\\\?\\").unwrap_or(&path);
                 println!("  {} {}", "📂".to_string().blue().bold(), name.cyan().bold());
                 println!("     {}", cleaned_path.dimmed());
             }
@@ -359,16 +327,15 @@ fn handle_clean_temp_command(matches: &clap::ArgMatches) -> Result<()> {
     println!("{}", "Starting cleanup of temporary files...".cyan().bold());
     println!();
 
-    // Get temp directories based on OS
-    let temp_dirs = get_temp_directories();
+    let cleaner = TempCleaner::new()?;
 
-    if temp_dirs.is_empty() {
+    if cleaner.directories.is_empty() {
         println!("{}", "No temp directories found.".yellow());
         return Ok(());
     }
 
     println!("{}", "Directories to clean:".white().bold());
-    for (idx, dir) in temp_dirs.iter().enumerate() {
+    for (idx, dir) in cleaner.directories.iter().enumerate() {
         println!("  {}. {}", idx + 1, dir.cyan());
     }
     println!();
@@ -419,27 +386,19 @@ fn handle_clean_temp_command(matches: &clap::ArgMatches) -> Result<()> {
         }
     }
 
-    let mut total_files = 0usize;
-    let mut total_size = 0u64;
-    let mut deleted_files = 0usize;
-    let mut deleted_size = 0u64;
-    let mut failed_files = 0usize;
-
-    // First pass: count files
+    // Scan files
     println!("{}", "Scanning temporary files...".dimmed());
-    for temp_dir in &temp_dirs {
-        count_files_recursive(Path::new(temp_dir), &mut total_files, &mut total_size);
-    }
+    let scan_stats = cleaner.scan();
 
-    if total_files == 0 {
+    if scan_stats.total_files == 0 {
         println!("{}", "No temporary files found to clean.".green());
         return Ok(());
     }
 
     println!("{} {} files ({}) found",
         "Found:".white().bold(),
-        total_files.to_string().yellow().bold(),
-        format_size(total_size).yellow().bold()
+        scan_stats.total_files.to_string().yellow().bold(),
+        format_size(scan_stats.total_size).yellow().bold()
     );
     println!();
 
@@ -451,20 +410,25 @@ fn handle_clean_temp_command(matches: &clap::ArgMatches) -> Result<()> {
         println!();
     }
 
-    let mut processed = 0usize;
+    // Clean with progress callback
+    let stats = cleaner.clean(dry_run, |processed, total| {
+        let percentage = (processed as f64 / total as f64 * 100.0) as usize;
+        let bar_length: usize = 30;
+        let filled = (percentage as f64 / 100.0 * bar_length as f64) as usize;
+        let empty = bar_length.saturating_sub(filled);
 
-    // Second pass: delete files
-    for temp_dir in &temp_dirs {
-        delete_files_recursive(
-            Path::new(temp_dir),
-            &mut processed,
-            total_files,
-            &mut deleted_files,
-            &mut deleted_size,
-            &mut failed_files,
-            dry_run,
+        print!("\r{} [{}{}] {}% ({}/{}) ",
+            "Progress:".white(),
+            "=".repeat(filled).green(),
+            " ".repeat(empty),
+            percentage,
+            processed,
+            total
         );
-    }
+
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+    })?;
 
     println!();
     println!();
@@ -473,16 +437,16 @@ fn handle_clean_temp_command(matches: &clap::ArgMatches) -> Result<()> {
     println!("{}", "─".repeat(50));
 
     if dry_run {
-        println!("{} {}", "Would delete:".white(), format!("{} files", deleted_files).yellow().bold());
-        println!("{} {}", "Space to recover:".white(), format_size(deleted_size).yellow().bold());
+        println!("{} {}", "Would delete:".white(), format!("{} files", stats.deleted_files).yellow().bold());
+        println!("{} {}", "Space to recover:".white(), format_size(stats.deleted_size).yellow().bold());
     } else {
-        println!("{} {}", "Deleted:".green().bold(), format!("{} files", deleted_files).yellow().bold());
-        println!("{} {}", "Space recovered:".green().bold(), format_size(deleted_size).yellow().bold());
+        println!("{} {}", "Deleted:".green().bold(), format!("{} files", stats.deleted_files).yellow().bold());
+        println!("{} {}", "Space recovered:".green().bold(), format_size(stats.deleted_size).yellow().bold());
 
-        if failed_files > 0 {
+        if stats.failed_files > 0 {
             println!("{} {} (files in use or protected)",
                 "Failed:".red().bold(),
-                format!("{} files", failed_files).red()
+                format!("{} files", stats.failed_files).red()
             );
         }
     }
@@ -491,98 +455,6 @@ fn handle_clean_temp_command(matches: &clap::ArgMatches) -> Result<()> {
 
     Ok(())
 }
-
-fn count_files_recursive(dir: &Path, total_files: &mut usize, total_size: &mut u64) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if let Ok(metadata) = entry.metadata() {
-                if metadata.is_file() {
-                    *total_files += 1;
-                    *total_size += metadata.len();
-                } else if metadata.is_dir() {
-                    // Recursively count files in subdirectories
-                    count_files_recursive(&entry.path(), total_files, total_size);
-                }
-            }
-        }
-    }
-}
-
-fn delete_files_recursive(
-    dir: &Path,
-    processed: &mut usize,
-    total_files: usize,
-    deleted_files: &mut usize,
-    deleted_size: &mut u64,
-    failed_files: &mut usize,
-    dry_run: bool,
-) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if let Ok(metadata) = entry.metadata() {
-                if metadata.is_file() {
-                    *processed += 1;
-                    let file_path = entry.path();
-                    let file_name = entry.file_name().to_string_lossy().to_string();
-                    let file_size = metadata.len();
-
-                    // Update progress
-                    let percentage = (*processed as f64 / total_files as f64 * 100.0) as usize;
-                    let bar_length = 30;
-                    let filled = (percentage as f64 / 100.0 * bar_length as f64) as usize;
-                    let empty = bar_length - filled;
-
-                    print!("\r{} [{}{}] {}% ({}/{}) ",
-                        "Progress:".white(),
-                        "=".repeat(filled).green(),
-                        " ".repeat(empty),
-                        percentage,
-                        processed,
-                        total_files
-                    );
-
-                    use std::io::Write;
-                    std::io::stdout().flush().ok();
-
-                    if dry_run {
-                        if *processed % 50 == 0 || *processed <= 10 {
-                            println!();
-                            println!("  {} {} ({})",
-                                "Would delete:".dimmed(),
-                                file_name.dimmed(),
-                                format_size(file_size).dimmed()
-                            );
-                        }
-                        *deleted_files += 1;
-                        *deleted_size += file_size;
-                    } else {
-                        match fs::remove_file(&file_path) {
-                            Ok(_) => {
-                                *deleted_files += 1;
-                                *deleted_size += file_size;
-                            }
-                            Err(_) => {
-                                *failed_files += 1;
-                            }
-                        }
-                    }
-                } else if metadata.is_dir() {
-                    // Recursively delete files in subdirectories
-                    delete_files_recursive(
-                        &entry.path(),
-                        processed,
-                        total_files,
-                        deleted_files,
-                        deleted_size,
-                        failed_files,
-                        dry_run,
-                    );
-                }
-            }
-        }
-    }
-}
-
 
 fn handle_list_command(matches: &clap::ArgMatches) -> Result<()> {
     match matches.subcommand() {

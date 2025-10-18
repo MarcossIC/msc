@@ -75,5 +75,3 @@ cargo test
 git add .
 git commit -m "feat: phase 4 - extract UI prompts and formatters"
 ```
-
----
