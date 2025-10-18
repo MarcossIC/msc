@@ -6,18 +6,13 @@ use std::time::SystemTime;
 use std::collections::HashMap;
 use colored::*;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use chrono::{DateTime, Local};
 use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
 use git2::{Repository, Status};
 
-#[cfg(windows)]
-use std::os::windows::fs::MetadataExt;
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-mod config;
-use config::Config;
+// Use modules from the library
+use msc::core::config::Config;
+use msc::ui::formatters::{format_size, format_time, format_permissions};
+use msc::utils::icons::get_file_icon;
 
 fn main() -> Result<()> {
     let matches = Command::new("msc")
@@ -1152,59 +1147,6 @@ fn list_long_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_
     Ok(())
 }
 
-fn format_size(size: u64) -> String {
-    if size < 1024 {
-        format!("{}B", size)
-    } else if size < 1024 * 1024 {
-        format!("{:.1}KB", size as f64 / 1024.0)
-    } else if size < 1024 * 1024 * 1024 {
-        format!("{:.1}MB", size as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.1}GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
-}
-
-fn format_time(time: SystemTime) -> String {
-    let datetime: DateTime<Local> = time.into();
-    datetime.format("%Y-%m-%d %H:%M").to_string()
-}
-
-#[cfg(windows)]
-fn format_permissions(metadata: &fs::Metadata) -> String {
-    let attributes = metadata.file_attributes();
-    let mut perms = String::new();
-    
-    if (attributes & 1) != 0 { perms.push('R'); } else { perms.push('r'); } // Read-only
-    if (attributes & 2) != 0 { perms.push('H'); } else { perms.push('-'); } // Hidden
-    if (attributes & 4) != 0 { perms.push('S'); } else { perms.push('-'); } // System
-    if (attributes & 16) != 0 { perms.push('D'); } else { perms.push('-'); } // Directory
-    if (attributes & 32) != 0 { perms.push('A'); } else { perms.push('-'); } // Archive
-    
-    perms
-}
-
-#[cfg(not(windows))]
-fn format_permissions(metadata: &fs::Metadata) -> String {
-    let mode = metadata.permissions().mode();
-    let mut perms = String::new();
-    
-    // Owner permissions
-    perms.push(if mode & 0o400 != 0 { 'r' } else { '-' });
-    perms.push(if mode & 0o200 != 0 { 'w' } else { '-' });
-    perms.push(if mode & 0o100 != 0 { 'x' } else { '-' });
-    
-    // Group permissions
-    perms.push(if mode & 0o040 != 0 { 'r' } else { '-' });
-    perms.push(if mode & 0o020 != 0 { 'w' } else { '-' });
-    perms.push(if mode & 0o010 != 0 { 'x' } else { '-' });
-    
-    // Other permissions
-    perms.push(if mode & 0o004 != 0 { 'r' } else { '-' });
-    perms.push(if mode & 0o002 != 0 { 'w' } else { '-' });
-    perms.push(if mode & 0o001 != 0 { 'x' } else { '-' });
-    
-    perms
-}
 
 fn load_gitignore(dir_path: &Path) -> Option<Gitignore> {
     let mut builder = GitignoreBuilder::new(dir_path);
@@ -1323,88 +1265,12 @@ fn apply_git_colors(text: String, git_status: &GitStatus, is_dir: bool, is_dimme
     }
 }
 
-fn get_file_icon(filename: &str) -> &'static str {
-    let path = Path::new(filename);
-    
-    if let Some(ext) = path.extension() {
-        match ext.to_str().unwrap_or("").to_lowercase().as_str() {
-            // Programming languages
-            "rs" => "🦀",
-            "py" => "🐍",
-            "js" | "jsx" | "mjs" | "cjs" => "🟨",
-            "ts" | "tsx" => "🔷",
-            "vue" => "🟩",
-            "svelte" => "🟥",
-            "java" => "☕",
-            "php" => "🐘",
-            "swift" => "🟠",
-            "astro" => "🚀",
-            "pl" => "🐪",
-            "lua" => "🌙",
-            "r" => "📊",
-            "cs" => "🟣",
-            "rb" => "💎",
-            "dart" | "scala" | "hs" | "clj" | "cljs" | "cljc" | "ex" | "exs" | "m" | "f90" | "for" | "jl" | "c" | "cpp" | "tsv" => "📘",
-            // Web
-            "html" | "htm" => "🌐",
-            "rst" => "🌐",
-            "css" | "scss" | "sass" => "🎨",
-            "svg" => "🎨", 
-            // Data formats
-            "json" => "🔧",
-            "xml" => "📰",
-            "yaml" | "yml" | "uml" | "toml" => "📒",
-            "ini" | "cfg" | "conf" | ".editorconfig" | ".dockerignore" | ".gitignore" | ".gitattributes" => "⚙",
-            "env" => "🌱",
-            "sql" | "sqlite" | "sqlite3" | "db" | "mdb" | "accdb" | "dbf" | "parquet" | "avro" | "orc" => "🗄️",
-            // Documents
-            "md" => "📖",
-            "txt" => "📝",
-            "pdf" => "📄",
-            "doc" | "docx" => "📄",
-            "xls" | "xlsx" | "xlsm" => "📊",
-            "ppt" | "pptx" => "🎞️",
-            "odt" | "ods" | "odp" => "📄",
-            // Images
-            "jpg" | "jpeg" | "png" | "gif" | "bmp" | "tiff" | "webp" | "heic" | "psd" | "ai" | "xcf" => "🖼️",
-            "ico" => "🎯",
-            // Fonts
-            "ttf" | "otf" | "woff" | "woff2" => "🔤",
-            // Audio
-            "mp3" | "wav" | "flac" | "ogg" | "aac" => "🎵",
-            // Video
-            "mp4" | "avi" | "mkv" | "mov" | "wmv" | "webm" => "🎬",
-            // Archives
-            "zip" | "rar" | "7z" | "tar" | "gz" | "tgz" | "bz2" | "iso" | "cab" | "zst" | "lzma" | "xz" => "📦",
-            // Executables
-            "exe" | "msi" | "deb" | "rpm" | "dmg" => "⚡",
-            "apk" | "ipa" => "📱",
-            // Lock files
-            "lock" => "🔒",
-            // Logs
-            "log" | "logs" | "bak" | "tmp" | "temp" | "swp" | "torrent" => "📋",
-            // Certificates
-            "crt" | "pem" | "key" | "cert" | "pfx" | "p12" | "der" | "cer" => "🔐",
-            // Suspicious/unknown potentially dangerous
-            "bat" | "cmd" | "ps1" | "sh" | "bash" | "scr" | "vbs" | "jar" => "❓",
-            
-            _ => "📄",
-        }
-    } else {
-        // Files without extension - check if they are configuration files
-        let name_lower = filename.to_lowercase();
-        match name_lower.as_str() {
-            "head" | "config" | "description" | "exclude" | "hooks" | "info" | "objects" | "refs" => "⚙",
-            "makefile" | "dockerfile" | "license" | "readme" | "changelog" | "authors" => "📄",
-            _ => "📄",
-        }
-    }
-}
 
 #[cfg(windows)]
 fn is_hidden_on_windows(entry: &std::fs::DirEntry) -> bool {
+    use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_HIDDEN: u32 = 2;
-    
+
     if let Ok(metadata) = entry.metadata() {
         let attributes = metadata.file_attributes();
         (attributes & FILE_ATTRIBUTE_HIDDEN) != 0
