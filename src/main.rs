@@ -8,7 +8,7 @@ use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
 
 // Use modules from the library
 use msc::core::config::Config;
-use msc::ui::formatters::{format_size, format_time, format_permissions};
+use msc::ui::{format_size, format_time, format_permissions};
 use msc::utils::icons::get_file_icon;
 use msc::platform::{is_elevated, elevate_and_rerun, get_temp_directories, is_hidden};
 use msc::git::{load_git_status, get_git_status_for_file, load_gitignore, is_gitignored, apply_git_colors};

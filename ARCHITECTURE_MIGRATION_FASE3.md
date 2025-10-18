@@ -185,5 +185,3 @@ cargo clippy -- -D warnings
 git add .
 git commit -m "feat: phase 3 - extract git integration"
 ```
-
----
