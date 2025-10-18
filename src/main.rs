@@ -3,17 +3,15 @@ use anyhow::Result;
 use std::path::Path;
 use std::fs;
 use std::time::SystemTime;
-use std::collections::HashMap;
 use colored::*;
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
-use git2::{Repository, Status};
 
 // Use modules from the library
 use msc::core::config::Config;
 use msc::ui::formatters::{format_size, format_time, format_permissions};
 use msc::utils::icons::get_file_icon;
 use msc::platform::{is_elevated, elevate_and_rerun, get_temp_directories, is_hidden};
+use msc::git::{load_git_status, get_git_status_for_file, load_gitignore, is_gitignored, apply_git_colors};
 
 fn main() -> Result<()> {
     let matches = Command::new("msc")
@@ -1005,117 +1003,5 @@ fn list_long_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_
     }
     
     Ok(())
-}
-
-
-fn load_gitignore(dir_path: &Path) -> Option<Gitignore> {
-    let mut builder = GitignoreBuilder::new(dir_path);
-    
-    // Try to add .gitignore file if it exists
-    let gitignore_path = dir_path.join(".gitignore");
-    if gitignore_path.exists()
-        && builder.add(&gitignore_path).is_some() {
-            return None;
-        }
-    
-    // Try to find parent directories with .gitignore
-    let mut current = dir_path.parent();
-    while let Some(parent) = current {
-        let parent_gitignore = parent.join(".gitignore");
-        if parent_gitignore.exists() {
-            let _ = builder.add(&parent_gitignore);
-            break;
-        }
-        current = parent.parent();
-    }
-    
-    builder.build().ok()
-}
-
-fn is_gitignored(gitignore: &Option<Gitignore>, path: &Path, is_dir: bool) -> bool {
-    if let Some(gi) = gitignore {
-        matches!(gi.matched(path, is_dir), ignore::Match::Ignore(_))
-    } else {
-        false
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum GitStatus {
-    Untracked,    // New file (green)
-    Modified,     // Modified file (green)
-    Added,        // Staged file (green)
-    Deleted,      // Deleted file (red strikethrough)
-    Renamed,      // Renamed file (green)
-    Clean,        // No changes
-}
-
-fn load_git_status(dir_path: &Path) -> Option<HashMap<String, GitStatus>> {
-    let repo = Repository::discover(dir_path).ok()?;
-    let mut status_map = HashMap::new();
-    
-    let statuses = repo.statuses(None).ok()?;
-    
-    for entry in statuses.iter() {
-        let path = entry.path()?;
-        let flags = entry.status();
-        
-        let git_status = if flags.contains(Status::WT_DELETED) || flags.contains(Status::INDEX_DELETED) {
-            GitStatus::Deleted
-        } else if flags.contains(Status::WT_NEW) || flags.contains(Status::INDEX_NEW) {
-            if flags.contains(Status::INDEX_NEW) {
-                GitStatus::Added
-            } else {
-                GitStatus::Untracked
-            }
-        } else if flags.contains(Status::WT_MODIFIED) || flags.contains(Status::INDEX_MODIFIED) {
-            GitStatus::Modified
-        } else if flags.contains(Status::WT_RENAMED) || flags.contains(Status::INDEX_RENAMED) {
-            GitStatus::Renamed
-        } else {
-            GitStatus::Clean
-        };
-        
-        status_map.insert(path.to_string(), git_status);
-    }
-    
-    Some(status_map)
-}
-
-fn get_git_status_for_file(git_status_map: &Option<HashMap<String, GitStatus>>, file_path: &Path, base_path: &Path) -> GitStatus {
-    if let Some(status_map) = git_status_map {
-        if let Ok(relative_path) = file_path.strip_prefix(base_path) {
-            let path_str = relative_path.to_string_lossy().replace('\\', "/");
-            return status_map.get(&path_str).cloned().unwrap_or(GitStatus::Clean);
-        }
-    }
-    GitStatus::Clean
-}
-
-fn apply_git_colors(text: String, git_status: &GitStatus, is_dir: bool, is_dimmed: bool) -> ColoredString {
-    match git_status {
-        GitStatus::Deleted => {
-            // Red strikethrough for deleted files
-            text.red().strikethrough()
-        }
-        GitStatus::Untracked | GitStatus::Modified | GitStatus::Added | GitStatus::Renamed => {
-            // Light green for new/modified files
-            text.bright_green()
-        }
-        GitStatus::Clean => {
-            // Normal colors based on file type and dimmed status
-            if is_dir {
-                if is_dimmed {
-                    text.blue().dimmed()
-                } else {
-                    text.blue().bold()
-                }
-            } else if is_dimmed {
-                text.bright_black()
-            } else {
-                text.white()
-            }
-        }
-    }
 }
 
