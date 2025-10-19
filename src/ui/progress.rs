@@ -1,8 +1,8 @@
 // Progress bar and progress indicators module
 // This is a placeholder for future progress bar functionality
 
-use std::io::{self, Write};
 use colored::Colorize;
+use std::io::{self, Write};
 
 /// Display a simple progress bar
 ///
@@ -25,7 +25,8 @@ pub fn show_progress_bar(processed: usize, total: usize, prefix: &str) {
     };
     let empty = bar_length.saturating_sub(filled);
 
-    print!("\r{} [{}{}] {}% ({}/{}) ",
+    print!(
+        "\r{} [{}{}] {}% ({}/{}) ",
         prefix.white(),
         "=".repeat(filled).green(),
         " ".repeat(empty),

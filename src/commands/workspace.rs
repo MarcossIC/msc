@@ -1,6 +1,6 @@
+use crate::core::WorkspaceManager;
 use anyhow::Result;
 use colored::Colorize;
-use crate::core::WorkspaceManager;
 
 pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     match matches.subcommand() {
@@ -34,7 +34,8 @@ fn map_workspaces() -> Result<()> {
     match manager.map_workspaces() {
         Ok(count) => {
             println!();
-            println!("{} {}",
+            println!(
+                "{} {}",
                 "Successfully mapped".green().bold(),
                 format!("{} workspace(s)", count).yellow().bold()
             );
@@ -52,11 +53,15 @@ fn list_workspaces() -> Result<()> {
     let workspaces = manager.list_workspaces();
 
     if workspaces.is_empty() {
-        println!("{}", "No workspaces found. Use 'msc work map' to map your project folders.".yellow());
+        println!(
+            "{}",
+            "No workspaces found. Use 'msc work map' to map your project folders.".yellow()
+        );
         return Ok(());
     }
 
-    println!("{} {}",
+    println!(
+        "{} {}",
         "Workspaces:".white().bold(),
         format!("({} total)", workspaces.len()).dimmed()
     );
@@ -64,7 +69,11 @@ fn list_workspaces() -> Result<()> {
 
     for (name, path) in workspaces {
         let cleaned_path = path.strip_prefix("\\\\?\\").unwrap_or(&path);
-        println!("  {} {}", "📂".to_string().blue().bold(), name.cyan().bold());
+        println!(
+            "  {} {}",
+            "📂".to_string().blue().bold(),
+            name.cyan().bold()
+        );
         println!("     {}", cleaned_path.dimmed());
     }
 

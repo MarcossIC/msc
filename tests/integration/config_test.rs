@@ -29,7 +29,7 @@ fn test_config_roundtrip() {
     // Create a temp directory for testing
     let temp_dir = TempDir::new().unwrap();
     std::env::set_var("HOME", temp_dir.path().to_str().unwrap());
-    
+
     // For this test, we just verify Config can be created
     let config = Config::default();
     assert!(config.workspaces.is_empty());
@@ -38,16 +38,19 @@ fn test_config_roundtrip() {
 #[test]
 fn test_config_workspaces() {
     use std::collections::HashMap;
-    
+
     let mut workspaces = HashMap::new();
     workspaces.insert("project1".to_string(), "/path/to/project1".to_string());
     workspaces.insert("project2".to_string(), "/path/to/project2".to_string());
-    
+
     let config = Config {
         work_path: None,
         workspaces,
     };
-    
+
     assert_eq!(config.workspaces.len(), 2);
-    assert_eq!(config.workspaces.get("project1"), Some(&"/path/to/project1".to_string()));
+    assert_eq!(
+        config.workspaces.get("project1"),
+        Some(&"/path/to/project1".to_string())
+    );
 }

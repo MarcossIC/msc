@@ -1,18 +1,21 @@
-use anyhow::Result;
-use std::path::Path;
-use std::fs;
-use std::time::SystemTime;
-use colored::*;
-use unicode_width::{UnicodeWidthStr, UnicodeWidthChar};
-use crate::utils::icons::get_file_icon;
+use crate::git::{
+    apply_git_colors, get_git_status_for_file, is_gitignored, load_git_status, load_gitignore,
+};
 use crate::platform::is_hidden;
-use crate::git::{load_git_status, get_git_status_for_file, load_gitignore, is_gitignored, apply_git_colors};
-use crate::ui::{format_size, format_time, format_permissions};
+use crate::ui::{format_permissions, format_size, format_time};
+use crate::utils::icons::get_file_icon;
+use anyhow::Result;
+use colored::*;
+use std::fs;
+use std::path::Path;
+use std::time::SystemTime;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("deep", sub_matches)) => {
-            let path = sub_matches.get_one::<String>("path")
+            let path = sub_matches
+                .get_one::<String>("path")
                 .map(|s| s.as_str())
                 .unwrap_or(".");
             let show_all = sub_matches.get_flag("all");
@@ -21,7 +24,8 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
             list_deep(path, show_all, depth)
         }
         _ => {
-            let path = matches.get_one::<String>("path")
+            let path = matches
+                .get_one::<String>("path")
                 .map(|s| s.as_str())
                 .unwrap_or(".");
             let show_all = matches.get_flag("all");
@@ -29,7 +33,16 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
             let is_long = matches.get_flag("long");
 
             if is_long {
-                list_long(path, show_all, is_deep, if is_deep { *matches.get_one::<u32>("depth").unwrap() } else { 0 })
+                list_long(
+                    path,
+                    show_all,
+                    is_deep,
+                    if is_deep {
+                        *matches.get_one::<u32>("depth").unwrap()
+                    } else {
+                        0
+                    },
+                )
             } else if is_deep {
                 let depth = *matches.get_one::<u32>("depth").unwrap();
                 list_deep(path, show_all, depth)
@@ -44,7 +57,10 @@ fn list_simple(path: &str, show_all: bool) -> Result<()> {
     let dir_path = Path::new(path);
 
     if !dir_path.exists() {
-        println!("{}", format!("Error: Directory '{}' does not exist", path).red());
+        println!(
+            "{}",
+            format!("Error: Directory '{}' does not exist", path).red()
+        );
         return Ok(());
     }
 
@@ -76,10 +92,13 @@ fn list_simple(path: &str, show_all: bool) -> Result<()> {
 
     items.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
-    let path_buf = dir_path.canonicalize()
+    let path_buf = dir_path
+        .canonicalize()
         .unwrap_or_else(|_| dir_path.to_path_buf());
     let canonical_path = path_buf.to_string_lossy();
-    let clean_path = canonical_path.strip_prefix("\\\\?\\").unwrap_or(&canonical_path);
+    let clean_path = canonical_path
+        .strip_prefix("\\\\?\\")
+        .unwrap_or(&canonical_path);
 
     println!("{} {}", "Directory:".white(), clean_path.cyan().bold());
     println!();
@@ -108,7 +127,10 @@ fn list_deep(path: &str, show_all: bool, max_depth: u32) -> Result<()> {
     let dir_path = Path::new(path);
 
     if !dir_path.exists() {
-        println!("{}", format!("Error: Directory '{}' does not exist", path).red());
+        println!(
+            "{}",
+            format!("Error: Directory '{}' does not exist", path).red()
+        );
         return Ok(());
     }
 
@@ -117,12 +139,20 @@ fn list_deep(path: &str, show_all: bool, max_depth: u32) -> Result<()> {
         return Ok(());
     }
 
-    let path_buf = dir_path.canonicalize()
+    let path_buf = dir_path
+        .canonicalize()
         .unwrap_or_else(|_| dir_path.to_path_buf());
     let canonical_path = path_buf.to_string_lossy();
-    let clean_path = canonical_path.strip_prefix("\\\\?\\").unwrap_or(&canonical_path);
+    let clean_path = canonical_path
+        .strip_prefix("\\\\?\\")
+        .unwrap_or(&canonical_path);
 
-    println!("{} {} {}", "Directory:".white(), clean_path.cyan().bold(), format!("(depth: {})", max_depth).dimmed());
+    println!(
+        "{} {} {}",
+        "Directory:".white(),
+        clean_path.cyan().bold(),
+        format!("(depth: {})", max_depth).dimmed()
+    );
     println!();
 
     list_recursive(dir_path, show_all, 0, max_depth)?;
@@ -130,7 +160,12 @@ fn list_deep(path: &str, show_all: bool, max_depth: u32) -> Result<()> {
     Ok(())
 }
 
-fn list_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_depth: u32) -> Result<()> {
+fn list_recursive(
+    dir_path: &Path,
+    show_all: bool,
+    current_depth: u32,
+    max_depth: u32,
+) -> Result<()> {
     if current_depth > max_depth {
         return Ok(());
     }
@@ -166,9 +201,14 @@ fn list_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_depth
             let colored_name = apply_git_colors(name.clone(), &git_status, true, is_dimmed);
             println!("{}📂 {}", indent, colored_name);
             if current_depth < max_depth
-                && list_recursive(full_path, show_all, current_depth + 1, max_depth).is_err() {
-                    println!("{}  {}", indent, format!("Error reading directory: {}", name).red().dimmed());
-                }
+                && list_recursive(full_path, show_all, current_depth + 1, max_depth).is_err()
+            {
+                println!(
+                    "{}  {}",
+                    indent,
+                    format!("Error reading directory: {}", name).red().dimmed()
+                );
+            }
         } else {
             let icon = get_file_icon(name);
             let colored_name = apply_git_colors(name.clone(), &git_status, false, is_dimmed);
@@ -183,7 +223,10 @@ fn list_long(path: &str, show_all: bool, is_deep: bool, max_depth: u32) -> Resul
     let dir_path = Path::new(path);
 
     if !dir_path.exists() {
-        println!("{}", format!("Error: Directory '{}' does not exist", path).red());
+        println!(
+            "{}",
+            format!("Error: Directory '{}' does not exist", path).red()
+        );
         return Ok(());
     }
 
@@ -192,27 +235,42 @@ fn list_long(path: &str, show_all: bool, is_deep: bool, max_depth: u32) -> Resul
         return Ok(());
     }
 
-    let path_buf = dir_path.canonicalize()
+    let path_buf = dir_path
+        .canonicalize()
         .unwrap_or_else(|_| dir_path.to_path_buf());
     let canonical_path = path_buf.to_string_lossy();
-    let clean_path = canonical_path.strip_prefix("\\\\?\\").unwrap_or(&canonical_path);
+    let clean_path = canonical_path
+        .strip_prefix("\\\\?\\")
+        .unwrap_or(&canonical_path);
 
     if is_deep {
-        println!("{} {} {}", "Directory:".white(), clean_path.cyan().bold(), format!("(depth: {}, long format)", max_depth).dimmed());
+        println!(
+            "{} {} {}",
+            "Directory:".white(),
+            clean_path.cyan().bold(),
+            format!("(depth: {}, long format)", max_depth).dimmed()
+        );
     } else {
-        println!("{} {} {}", "Directory:".white(), clean_path.cyan().bold(), "(long format)".dimmed());
+        println!(
+            "{} {} {}",
+            "Directory:".white(),
+            clean_path.cyan().bold(),
+            "(long format)".dimmed()
+        );
     }
     println!();
 
     // Header (Name column: 38 total = icon(2) + space(1) + name text(35))
-    println!("{:<38} │ {:<9} │ {:<18} │ {:<18} │ {:<12}",
+    println!(
+        "{:<38} │ {:<9} │ {:<18} │ {:<18} │ {:<12}",
         "Name".white().bold(),
         "Size".white().bold(),
         "Created".white().bold(),
         "Modified".white().bold(),
         "Permissions".white().bold()
     );
-    println!("{}─┼─{}─┼─{}─┼─{}─┼─{}",
+    println!(
+        "{}─┼─{}─┼─{}─┼─{}─┼─{}",
         "─".repeat(38),
         "─".repeat(9),
         "─".repeat(18),
@@ -259,8 +317,16 @@ fn list_long_simple(dir_path: &Path, show_all: bool, indent_level: u32) -> Resul
         let git_status = get_git_status_for_file(&git_status_map, full_path, dir_path);
 
         // Ensure we never keep stray spaces in the icon
-        let icon = if *is_dir { "📂" } else { get_file_icon(name).trim_end() };
-        let size = if *is_dir { "-".to_string() } else { format_size(metadata.len()) };
+        let icon = if *is_dir {
+            "📂"
+        } else {
+            get_file_icon(name).trim_end()
+        };
+        let size = if *is_dir {
+            "-".to_string()
+        } else {
+            format_size(metadata.len())
+        };
         let created = format_time(metadata.created().unwrap_or(SystemTime::UNIX_EPOCH));
         let modified = format_time(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH));
         let permissions = format_permissions(&metadata);
@@ -280,7 +346,8 @@ fn list_long_simple(dir_path: &Path, show_all: bool, indent_level: u32) -> Resul
             let mut w = 0usize;
             for ch in name.chars() {
                 let cw = ch.width().unwrap_or(0);
-                if w + cw > name_available.saturating_sub(3) { // keep room for "..."
+                if w + cw > name_available.saturating_sub(3) {
+                    // keep room for "..."
                     break;
                 }
                 out.push(ch);
@@ -311,24 +378,42 @@ fn list_long_simple(dir_path: &Path, show_all: bool, indent_level: u32) -> Resul
         let modified_padded = format!("{:<18}", modified);
         let permissions_padded = format!("{:<12}", permissions);
 
-        let size_color = if is_dimmed { size_padded.bright_black() } else { size_padded.yellow() };
-        let created_color = if is_dimmed { created_padded.bright_black() } else { created_padded.cyan() };
-        let modified_color = if is_dimmed { modified_padded.bright_black() } else { modified_padded.green() };
-        let permissions_color = if is_dimmed { permissions_padded.bright_black() } else { permissions_padded.magenta() };
+        let size_color = if is_dimmed {
+            size_padded.bright_black()
+        } else {
+            size_padded.yellow()
+        };
+        let created_color = if is_dimmed {
+            created_padded.bright_black()
+        } else {
+            created_padded.cyan()
+        };
+        let modified_color = if is_dimmed {
+            modified_padded.bright_black()
+        } else {
+            modified_padded.green()
+        };
+        let permissions_color = if is_dimmed {
+            permissions_padded.bright_black()
+        } else {
+            permissions_padded.magenta()
+        };
 
-        println!("{} │ {} │ {} │ {} │ {}",
-            colored_name,
-            size_color,
-            created_color,
-            modified_color,
-            permissions_color
+        println!(
+            "{} │ {} │ {} │ {} │ {}",
+            colored_name, size_color, created_color, modified_color, permissions_color
         );
     }
 
     Ok(())
 }
 
-fn list_long_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_depth: u32) -> Result<()> {
+fn list_long_recursive(
+    dir_path: &Path,
+    show_all: bool,
+    current_depth: u32,
+    max_depth: u32,
+) -> Result<()> {
     if current_depth > max_depth {
         return Ok(());
     }
@@ -363,8 +448,16 @@ fn list_long_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_
         let git_status = get_git_status_for_file(&git_status_map, full_path, dir_path);
 
         // Normalize icon and compute other columns
-        let icon = if *is_dir { "📂" } else { get_file_icon(name).trim_end() };
-        let size = if *is_dir { "-".to_string() } else { format_size(metadata.len()) };
+        let icon = if *is_dir {
+            "📂"
+        } else {
+            get_file_icon(name).trim_end()
+        };
+        let size = if *is_dir {
+            "-".to_string()
+        } else {
+            format_size(metadata.len())
+        };
         let created = format_time(metadata.created().unwrap_or(SystemTime::UNIX_EPOCH));
         let modified = format_time(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH));
         let permissions = format_permissions(&metadata);
@@ -407,24 +500,43 @@ fn list_long_recursive(dir_path: &Path, show_all: bool, current_depth: u32, max_
         let modified_padded = format!("{:<18}", modified);
         let permissions_padded = format!("{:<12}", permissions);
 
-        let size_color = if is_dimmed { size_padded.bright_black() } else { size_padded.yellow() };
-        let created_color = if is_dimmed { created_padded.bright_black() } else { created_padded.cyan() };
-        let modified_color = if is_dimmed { modified_padded.bright_black() } else { modified_padded.green() };
-        let permissions_color = if is_dimmed { permissions_padded.bright_black() } else { permissions_padded.magenta() };
+        let size_color = if is_dimmed {
+            size_padded.bright_black()
+        } else {
+            size_padded.yellow()
+        };
+        let created_color = if is_dimmed {
+            created_padded.bright_black()
+        } else {
+            created_padded.cyan()
+        };
+        let modified_color = if is_dimmed {
+            modified_padded.bright_black()
+        } else {
+            modified_padded.green()
+        };
+        let permissions_color = if is_dimmed {
+            permissions_padded.bright_black()
+        } else {
+            permissions_padded.magenta()
+        };
 
-        println!("{} │ {} │ {} │ {} │ {}",
-            colored_name,
-            size_color,
-            created_color,
-            modified_color,
-            permissions_color
+        println!(
+            "{} │ {} │ {} │ {} │ {}",
+            colored_name, size_color, created_color, modified_color, permissions_color
         );
 
-        if *is_dir && current_depth < max_depth
-            && list_long_recursive(full_path, show_all, current_depth + 1, max_depth).is_err() {
-                let indent_error = "  ".repeat((current_depth + 1) as usize);
-                println!("{}  {}", indent_error, format!("Error reading directory: {}", name).red().dimmed());
-            }
+        if *is_dir
+            && current_depth < max_depth
+            && list_long_recursive(full_path, show_all, current_depth + 1, max_depth).is_err()
+        {
+            let indent_error = "  ".repeat((current_depth + 1) as usize);
+            println!(
+                "{}  {}",
+                indent_error,
+                format!("Error reading directory: {}", name).red().dimmed()
+            );
+        }
     }
 
     Ok(())

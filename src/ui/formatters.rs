@@ -1,6 +1,6 @@
+use chrono::{DateTime, Local};
 use std::fs;
 use std::time::SystemTime;
-use chrono::{DateTime, Local};
 
 /// Format file size in human-readable format (B, KB, MB, GB)
 pub fn format_size(size: u64) -> String {
@@ -29,11 +29,31 @@ pub fn format_permissions(metadata: &fs::Metadata) -> String {
     let attributes = metadata.file_attributes();
     let mut perms = String::new();
 
-    if (attributes & 1) != 0 { perms.push('R'); } else { perms.push('r'); } // Read-only
-    if (attributes & 2) != 0 { perms.push('H'); } else { perms.push('-'); } // Hidden
-    if (attributes & 4) != 0 { perms.push('S'); } else { perms.push('-'); } // System
-    if (attributes & 16) != 0 { perms.push('D'); } else { perms.push('-'); } // Directory
-    if (attributes & 32) != 0 { perms.push('A'); } else { perms.push('-'); } // Archive
+    if (attributes & 1) != 0 {
+        perms.push('R');
+    } else {
+        perms.push('r');
+    } // Read-only
+    if (attributes & 2) != 0 {
+        perms.push('H');
+    } else {
+        perms.push('-');
+    } // Hidden
+    if (attributes & 4) != 0 {
+        perms.push('S');
+    } else {
+        perms.push('-');
+    } // System
+    if (attributes & 16) != 0 {
+        perms.push('D');
+    } else {
+        perms.push('-');
+    } // Directory
+    if (attributes & 32) != 0 {
+        perms.push('A');
+    } else {
+        perms.push('-');
+    } // Archive
 
     perms
 }

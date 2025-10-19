@@ -1,10 +1,10 @@
 // UI and formatting module
 
 pub mod formatters;
-pub mod prompts;
 pub mod progress;
+pub mod prompts;
 
 // Re-export commonly used items for cleaner imports
-pub use formatters::{format_size, format_time, format_permissions};
-pub use prompts::{confirm, warn, info, success, error, dimmed, bold};
-pub use progress::{show_progress_bar, clear_line};
+pub use formatters::{format_permissions, format_size, format_time};
+pub use progress::{clear_line, show_progress_bar};
+pub use prompts::{bold, confirm, dimmed, error, info, success, warn};

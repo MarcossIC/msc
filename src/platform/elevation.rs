@@ -1,10 +1,9 @@
-// Platform-specific elevation functions
 use anyhow::Result;
 
 #[cfg(windows)]
 pub fn is_elevated() -> bool {
-    use std::ptr;
     use std::mem;
+    use std::ptr;
     use winapi::ctypes::c_void;
 
     unsafe {
@@ -14,7 +13,8 @@ pub fn is_elevated() -> bool {
             winapi::um::processthreadsapi::GetCurrentProcess(),
             winapi::um::winnt::TOKEN_QUERY,
             &mut handle,
-        ) == 0 {
+        ) == 0
+        {
             return false;
         }
 
@@ -56,7 +56,7 @@ pub fn elevate_and_rerun() -> Result<bool> {
                 "Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -Wait",
                 exe_path.display(),
                 args.join(" ")
-            )
+            ),
         ])
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .status();

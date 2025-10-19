@@ -1,14 +1,17 @@
+use crate::core::TempCleaner;
+use crate::platform::{elevate_and_rerun, is_elevated};
+use crate::ui::format_size;
 use anyhow::Result;
 use colored::Colorize;
-use crate::core::TempCleaner;
-use crate::ui::{format_size};
-use crate::platform::{is_elevated, elevate_and_rerun};
 
 pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     let dry_run = matches.get_flag("dry-run");
 
     if dry_run {
-        println!("{}", "DRY RUN MODE - No files will be deleted".yellow().bold());
+        println!(
+            "{}",
+            "DRY RUN MODE - No files will be deleted".yellow().bold()
+        );
         println!();
     }
 
@@ -30,12 +33,20 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
 
     // Ask for confirmation unless it's a dry run
     if !dry_run {
-        println!("{}", "⚠️  Warning: This will delete all files in the directories listed above.".yellow().bold());
+        println!(
+            "{}",
+            "⚠️  Warning: This will delete all files in the directories listed above."
+                .yellow()
+                .bold()
+        );
 
         #[cfg(windows)]
         {
             if !is_elevated() {
-                println!("{}", "Note: Administrator privileges are required for system directories.".yellow());
+                println!(
+                    "{}",
+                    "Note: Administrator privileges are required for system directories.".yellow()
+                );
             }
         }
 
@@ -63,11 +74,14 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
             if !is_elevated() {
                 println!("{}", "Requesting administrator privileges...".cyan());
                 if elevate_and_rerun()? {
-                    // Successfully relaunched with admin privileges, exit this instance
                     println!("{}", "Relaunching with administrator privileges...".green());
                     return Ok(());
                 } else {
-                    println!("{}", "Warning: Could not elevate privileges. Some files may fail to delete.".yellow());
+                    println!(
+                        "{}",
+                        "Warning: Could not elevate privileges. Some files may fail to delete."
+                            .yellow()
+                    );
                     println!();
                 }
             }
@@ -83,7 +97,8 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
         return Ok(());
     }
 
-    println!("{} {} files ({}) found",
+    println!(
+        "{} {} files ({}) found",
         "Found:".white().bold(),
         scan_stats.total_files.to_string().yellow().bold(),
         format_size(scan_stats.total_size).yellow().bold()
@@ -105,7 +120,8 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
         let filled = (percentage as f64 / 100.0 * bar_length as f64) as usize;
         let empty = bar_length.saturating_sub(filled);
 
-        print!("\r{} [{}{}] {}% ({}/{}) ",
+        print!(
+            "\r{} [{}{}] {}% ({}/{}) ",
             "Progress:".white(),
             "=".repeat(filled).green(),
             " ".repeat(empty),
@@ -125,14 +141,31 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     println!("{}", "─".repeat(50));
 
     if dry_run {
-        println!("{} {}", "Would delete:".white(), format!("{} files", stats.deleted_files).yellow().bold());
-        println!("{} {}", "Space to recover:".white(), format_size(stats.deleted_size).yellow().bold());
+        println!(
+            "{} {}",
+            "Would delete:".white(),
+            format!("{} files", stats.deleted_files).yellow().bold()
+        );
+        println!(
+            "{} {}",
+            "Space to recover:".white(),
+            format_size(stats.deleted_size).yellow().bold()
+        );
     } else {
-        println!("{} {}", "Deleted:".green().bold(), format!("{} files", stats.deleted_files).yellow().bold());
-        println!("{} {}", "Space recovered:".green().bold(), format_size(stats.deleted_size).yellow().bold());
+        println!(
+            "{} {}",
+            "Deleted:".green().bold(),
+            format!("{} files", stats.deleted_files).yellow().bold()
+        );
+        println!(
+            "{} {}",
+            "Space recovered:".green().bold(),
+            format_size(stats.deleted_size).yellow().bold()
+        );
 
         if stats.failed_files > 0 {
-            println!("{} {} (files in use or protected)",
+            println!(
+                "{} {} (files in use or protected)",
                 "Failed:".red().bold(),
                 format!("{} files", stats.failed_files).red()
             );

@@ -19,10 +19,10 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use anyhow::Result;
-use std::path::Path;
-use std::fs;
 use crate::core::config::Config;
+use anyhow::Result;
+use std::fs;
+use std::path::Path;
 
 /// Workspace manager for handling project workspaces
 ///
@@ -35,7 +35,6 @@ pub struct WorkspaceManager {
 }
 
 impl WorkspaceManager {
-    /// Create a new WorkspaceManager by loading the config
     pub fn new() -> Result<Self> {
         let config = Config::load()?;
         Ok(Self { config })
@@ -46,22 +45,22 @@ impl WorkspaceManager {
         Self { config }
     }
 
-    /// Get a reference to the internal config
     pub fn config(&self) -> &Config {
         &self.config
     }
 
-    /// Map all directories in the work path as workspaces
-    ///
-    /// Returns the number of workspaces mapped
     pub fn map_workspaces(&mut self) -> Result<usize> {
-        let work_path = self.config.get_work_path()
+        let work_path = self
+            .config
+            .get_work_path()
             .ok_or_else(|| anyhow::anyhow!("Work path not set"))?
             .clone();
 
         let work_dir = Path::new(&work_path);
         if !work_dir.exists() || !work_dir.is_dir() {
-            return Err(anyhow::anyhow!("Work directory does not exist or is not a directory"));
+            return Err(anyhow::anyhow!(
+                "Work directory does not exist or is not a directory"
+            ));
         }
 
         self.config.clear_workspaces();
@@ -74,7 +73,8 @@ impl WorkspaceManager {
 
             if entry.file_type()?.is_dir() && !file_name.starts_with('.') {
                 let full_path = entry.path();
-                let canonical_path = full_path.canonicalize()
+                let canonical_path = full_path
+                    .canonicalize()
                     .unwrap_or(full_path)
                     .to_string_lossy()
                     .to_string();
@@ -92,7 +92,9 @@ impl WorkspaceManager {
     ///
     /// Returns a vector of (name, path) tuples
     pub fn list_workspaces(&self) -> Vec<(String, String)> {
-        let mut workspaces: Vec<_> = self.config.get_workspaces()
+        let mut workspaces: Vec<_> = self
+            .config
+            .get_workspaces()
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();

@@ -7,9 +7,9 @@ pub use error::{MscError, Result};
 // Module declarations
 pub mod commands;
 pub mod core;
-pub mod ui;
-pub mod platform;
 pub mod git;
+pub mod platform;
+pub mod ui;
 pub mod utils;
 
 // Re-export commonly used types

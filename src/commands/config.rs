@@ -1,7 +1,7 @@
-use anyhow::Result;
-use std::path::Path;
-use colored::Colorize;
 use crate::core::Config;
+use anyhow::Result;
+use colored::Colorize;
+use std::path::Path;
 
 pub fn handle_set(matches: &clap::ArgMatches) -> Result<()> {
     match matches.subcommand() {
@@ -14,7 +14,8 @@ pub fn handle_set(matches: &clap::ArgMatches) -> Result<()> {
             }
 
             let canonical_path = if path_buf.exists() {
-                path_buf.canonicalize()
+                path_buf
+                    .canonicalize()
                     .map_err(|e| anyhow::anyhow!("Failed to resolve path: {}", e))?
                     .to_string_lossy()
                     .to_string()
@@ -46,7 +47,7 @@ pub fn handle_get(matches: &clap::ArgMatches) -> Result<()> {
                     let cleaned_path = path.strip_prefix("\\\\?\\").unwrap_or(path);
                     println!("{}", "Work directory path:".white());
                     println!("{}", cleaned_path.cyan().bold());
-                },
+                }
                 None => {
                     println!("{}", "No work directory configured.".yellow());
                     println!();

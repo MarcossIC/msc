@@ -1,6 +1,6 @@
+use anyhow::Result;
 use clap::{Arg, Command};
 use msc::commands;
-use anyhow::Result;
 
 fn main() -> Result<()> {
     // Initialize logger
@@ -47,45 +47,40 @@ fn build_cli() -> Command {
                 .short_alias('V')
                 .long("version")
                 .help("Print version information")
-                .action(clap::ArgAction::SetTrue)
+                .action(clap::ArgAction::SetTrue),
         )
         .subcommand(
-            Command::new("hello")
-                .about("Says hello")
-                .arg(
-                    Arg::new("name")
-                        .short('n')
-                        .long("name")
-                        .value_name("NAME")
-                        .help("Name to greet")
-                        .default_value("World")
-                )
+            Command::new("hello").about("Says hello").arg(
+                Arg::new("name")
+                    .short('n')
+                    .long("name")
+                    .value_name("NAME")
+                    .help("Name to greet")
+                    .default_value("World"),
+            ),
         )
-        .subcommand(
-            Command::new("version")
-                .about("Shows version information")
-        )
+        .subcommand(Command::new("version").about("Shows version information"))
         .subcommand(
             Command::new("list")
                 .about("List files and directories")
                 .arg(
                     Arg::new("path")
                         .help("Directory to list (defaults to current directory)")
-                        .index(1)
+                        .index(1),
                 )
                 .arg(
                     Arg::new("all")
                         .short('a')
                         .long("all")
                         .help("Show hidden files")
-                        .action(clap::ArgAction::SetTrue)
+                        .action(clap::ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("deep")
                         .short('d')
                         .long("deep")
                         .help("List files recursively (default depth: 1)")
-                        .action(clap::ArgAction::SetTrue)
+                        .action(clap::ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("depth")
@@ -93,14 +88,14 @@ fn build_cli() -> Command {
                         .help("Maximum depth to traverse when using --deep")
                         .value_parser(clap::value_parser!(u32))
                         .default_value("1")
-                        .requires("deep")
+                        .requires("deep"),
                 )
                 .arg(
                     Arg::new("long")
                         .short('l')
                         .long("long")
                         .help("Use long listing format (table view)")
-                        .action(clap::ArgAction::SetTrue)
+                        .action(clap::ArgAction::SetTrue),
                 )
                 .subcommand(
                     Command::new("deep")
@@ -108,14 +103,14 @@ fn build_cli() -> Command {
                         .arg(
                             Arg::new("path")
                                 .help("Directory to list (defaults to current directory)")
-                                .index(1)
+                                .index(1),
                         )
                         .arg(
                             Arg::new("all")
                                 .short('a')
                                 .long("all")
                                 .help("Show hidden files")
-                                .action(clap::ArgAction::SetTrue)
+                                .action(clap::ArgAction::SetTrue),
                         )
                         .arg(
                             Arg::new("depth")
@@ -123,9 +118,9 @@ fn build_cli() -> Command {
                                 .long("depth")
                                 .help("Maximum depth to traverse (default: 1)")
                                 .value_parser(clap::value_parser!(u32))
-                                .default_value("1")
-                        )
-                )
+                                .default_value("1"),
+                        ),
+                ),
         )
         .subcommand(
             Command::new("set")
@@ -133,39 +128,28 @@ fn build_cli() -> Command {
                 .subcommand_required(true)
                 .arg_required_else_help(true)
                 .subcommand(
-                    Command::new("work")
-                        .about("Set work directory path")
-                        .arg(
-                            Arg::new("path")
-                                .help("Path to the work directory")
-                                .required(true)
-                                .index(1)
-                        )
-                )
+                    Command::new("work").about("Set work directory path").arg(
+                        Arg::new("path")
+                            .help("Path to the work directory")
+                            .required(true)
+                            .index(1),
+                    ),
+                ),
         )
         .subcommand(
             Command::new("get")
                 .about("Get configuration values")
                 .subcommand_required(true)
                 .arg_required_else_help(true)
-                .subcommand(
-                    Command::new("work")
-                        .about("Get work directory path")
-                )
+                .subcommand(Command::new("work").about("Get work directory path")),
         )
         .subcommand(
             Command::new("work")
                 .about("Manage workspaces")
                 .subcommand_required(true)
                 .arg_required_else_help(true)
-                .subcommand(
-                    Command::new("map")
-                        .about("Map project folders as workspaces")
-                )
-                .subcommand(
-                    Command::new("list")
-                        .about("List all registered workspaces")
-                )
+                .subcommand(Command::new("map").about("Map project folders as workspaces"))
+                .subcommand(Command::new("list").about("List all registered workspaces")),
         )
         .subcommand(
             Command::new("clean-temp")
@@ -174,7 +158,7 @@ fn build_cli() -> Command {
                     Arg::new("dry-run")
                         .long("dry-run")
                         .help("Show what would be deleted without actually deleting")
-                        .action(clap::ArgAction::SetTrue)
-                )
+                        .action(clap::ArgAction::SetTrue),
+                ),
         )
 }

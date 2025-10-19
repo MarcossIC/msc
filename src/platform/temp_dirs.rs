@@ -1,7 +1,6 @@
 // Platform-specific temporary directory detection
 use std::path::Path;
 
-/// Get all temporary directories for the current OS
 pub fn get_temp_directories() -> Vec<String> {
     let mut dirs = Vec::new();
 
@@ -65,9 +64,7 @@ pub fn get_temp_directories() -> Vec<String> {
     }
 
     // Remove duplicates
-    let mut unique_dirs: Vec<String> = dirs.into_iter()
-        .filter(|d| Path::new(d).exists())
-        .collect();
+    let mut unique_dirs: Vec<String> = dirs.into_iter().filter(|d| Path::new(d).exists()).collect();
     unique_dirs.sort();
     unique_dirs.dedup();
 

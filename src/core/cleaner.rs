@@ -9,7 +9,7 @@
 //! use msc::core::cleaner::TempCleaner;
 //!
 //! let cleaner = TempCleaner::new()?;
-//! 
+//!
 //! // Scan to get statistics
 //! let stats = cleaner.scan();
 //! println!("Found {} files ({} bytes)", stats.total_files, stats.total_size);
@@ -21,10 +21,10 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use anyhow::Result;
-use std::path::Path;
-use std::fs;
 use crate::platform::get_temp_directories;
+use anyhow::Result;
+use std::fs;
+use std::path::Path;
 
 /// Temporary files cleaner
 ///
@@ -51,12 +51,15 @@ impl TempCleaner {
         Ok(Self { directories })
     }
 
-    /// Scan temporary directories and count files
     pub fn scan(&self) -> CleanupStats {
         let mut stats = CleanupStats::default();
 
         for temp_dir in &self.directories {
-            count_files_recursive(Path::new(temp_dir), &mut stats.total_files, &mut stats.total_size);
+            count_files_recursive(
+                Path::new(temp_dir),
+                &mut stats.total_files,
+                &mut stats.total_size,
+            );
         }
 
         stats
@@ -84,7 +87,7 @@ impl TempCleaner {
         };
 
         for temp_dir in &self.directories {
-            delete_files_recursive(Path::new(temp_dir), &mut ctx);
+            delete_files_recursive_with_tracking(Path::new(temp_dir), &mut ctx);
         }
 
         Ok(CleanupStats {
@@ -97,7 +100,6 @@ impl TempCleaner {
     }
 }
 
-/// Count files recursively in a directory
 fn count_files_recursive(dir: &Path, total_files: &mut usize, total_size: &mut u64) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -113,7 +115,6 @@ fn count_files_recursive(dir: &Path, total_files: &mut usize, total_size: &mut u
     }
 }
 
-/// Context for delete operations
 struct DeleteContext<'a, F>
 where
     F: Fn(usize, usize),
@@ -127,8 +128,7 @@ where
     on_progress: &'a F,
 }
 
-/// Delete files recursively with progress tracking
-fn delete_files_recursive<F>(dir: &Path, ctx: &mut DeleteContext<F>)
+fn delete_files_recursive_with_tracking<F>(dir: &Path, ctx: &mut DeleteContext<F>)
 where
     F: Fn(usize, usize),
 {
@@ -157,7 +157,7 @@ where
                         }
                     }
                 } else if metadata.is_dir() {
-                    delete_files_recursive(&entry.path(), ctx);
+                    delete_files_recursive_with_tracking(&entry.path(), ctx);
                 }
             }
         }
@@ -178,7 +178,6 @@ mod tests {
     fn test_scan_returns_stats() {
         let cleaner = TempCleaner::new().unwrap();
         let stats = cleaner.scan();
-        // Just verify we can scan without errors (total_files is always valid usize)
         let _ = stats.total_files;
     }
 }

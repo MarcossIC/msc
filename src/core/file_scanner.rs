@@ -19,13 +19,13 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use crate::git::{load_git_status, load_gitignore, GitStatus};
+use crate::platform::is_hidden;
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use ignore::gitignore::Gitignore;
 use std::collections::HashMap;
 use std::fs;
-use crate::git::{GitStatus, load_git_status, load_gitignore};
-use crate::platform::is_hidden;
-use ignore::gitignore::Gitignore;
+use std::path::{Path, PathBuf};
 
 /// Scanner for listing files with detailed information
 ///
@@ -48,7 +48,6 @@ pub struct ScanEntry {
 }
 
 impl FileScanner {
-    /// Create a new FileScanner for the given path
     pub fn new(path: &Path) -> Result<Self> {
         log::debug!("Creating FileScanner for path: {:?}", path);
 
@@ -62,17 +61,14 @@ impl FileScanner {
         })
     }
 
-    /// Get the base path being scanned
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Get the Git status map
     pub fn git_status(&self) -> &Option<HashMap<String, GitStatus>> {
         &self.git_status
     }
 
-    /// Get the Gitignore configuration
     pub fn gitignore(&self) -> &Option<Gitignore> {
         &self.gitignore
     }
@@ -88,7 +84,6 @@ impl FileScanner {
         for entry in dir_entries.flatten() {
             let file_name = entry.file_name().to_string_lossy().to_string();
 
-            // Skip hidden files if not requested
             if !show_hidden && (file_name.starts_with('.') || is_hidden(&entry)) {
                 continue;
             }
@@ -108,12 +103,10 @@ impl FileScanner {
         }
 
         // Sort: directories first, then alphabetically
-        entries.sort_by(|a, b| {
-            match (a.is_dir, b.is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            }
+        entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
 
         Ok(entries)

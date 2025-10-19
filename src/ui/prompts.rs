@@ -1,7 +1,7 @@
 // UI prompts and user interaction module
 
-use std::io::{self, Write};
 use colored::Colorize;
+use std::io::{self, Write};
 
 /// Ask user for yes/no confirmation
 pub fn confirm(message: &str) -> io::Result<bool> {

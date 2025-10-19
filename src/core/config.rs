@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -26,37 +26,35 @@ impl Config {
             return Ok(Config::default());
         }
 
-        let config = bincode::deserialize(&data)
-            .unwrap_or_else(|_| {
-                // If deserialization fails, return default config
-                // (this can happen when the config format changes)
-                Config::default()
-            });
+        let config = bincode::deserialize(&data).unwrap_or_else(|_| {
+            // If deserialization fails, return default config
+            // (this can happen when the config format changes)
+            Config::default()
+        });
 
         Ok(config)
     }
 
     pub fn save(&self) -> Result<()> {
         let config_path = Self::get_config_path()?;
-        
+
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create config directory: {:?}", parent))?;
         }
 
-        let data = bincode::serialize(self)
-            .with_context(|| "Failed to serialize config")?;
-        
+        let data = bincode::serialize(self).with_context(|| "Failed to serialize config")?;
+
         fs::write(&config_path, data)
             .with_context(|| format!("Failed to write config file: {:?}", config_path))?;
-        
+
         Ok(())
     }
 
     fn get_config_path() -> Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .with_context(|| "Could not determine config directory")?;
-        
+        let config_dir =
+            dirs::config_dir().with_context(|| "Could not determine config directory")?;
+
         Ok(config_dir.join("msc").join("config.bin"))
     }
 
