@@ -1,4 +1,23 @@
-// File scanner for listing directory contents with Git integration
+//! File scanner for listing directory contents with Git integration
+//!
+//! This module provides a `FileScanner` that can scan directories and
+//! return detailed information about files, including Git status and
+//! respecting .gitignore patterns.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use msc::core::file_scanner::FileScanner;
+//! use std::path::Path;
+//!
+//! let scanner = FileScanner::new(Path::new("."))?;
+//! let entries = scanner.scan(false)?;
+//!
+//! for entry in entries {
+//!     println!("{}: {} bytes", entry.name, entry.size);
+//! }
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
@@ -9,6 +28,9 @@ use crate::platform::is_hidden;
 use ignore::gitignore::Gitignore;
 
 /// Scanner for listing files with detailed information
+///
+/// The `FileScanner` integrates with Git to provide status information
+/// and respects `.gitignore` patterns when scanning directories.
 pub struct FileScanner {
     path: PathBuf,
     git_status: Option<HashMap<String, GitStatus>>,

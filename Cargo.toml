@@ -35,6 +35,9 @@ winapi = { version = "0.3", features = ["winuser", "consoleapi", "processthreads
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[dev-dependencies]
+tempfile = "3.8"
+
 [profile.release]
 strip = true
 lto = true

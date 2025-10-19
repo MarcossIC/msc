@@ -1,4 +1,25 @@
-// Temporary files cleaner for system directories
+//! Temporary files cleaner for system directories
+//!
+//! This module provides functionality to scan and clean temporary files
+//! from system temporary directories.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use msc::core::cleaner::TempCleaner;
+//!
+//! let cleaner = TempCleaner::new()?;
+//! 
+//! // Scan to get statistics
+//! let stats = cleaner.scan();
+//! println!("Found {} files ({} bytes)", stats.total_files, stats.total_size);
+//!
+//! // Clean with dry-run
+//! let stats = cleaner.clean(true, |processed, total| {
+//!     println!("Progress: {}/{}", processed, total);
+//! })?;
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 
 use anyhow::Result;
 use std::path::Path;
@@ -6,6 +27,9 @@ use std::fs;
 use crate::platform::get_temp_directories;
 
 /// Temporary files cleaner
+///
+/// Scans and optionally deletes files from system temporary directories.
+/// Supports both dry-run mode (simulation) and actual deletion with progress tracking.
 pub struct TempCleaner {
     pub directories: Vec<String>,
 }

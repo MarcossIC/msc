@@ -1,4 +1,23 @@
-// Workspace management module
+//! Workspace management module
+//!
+//! This module provides functionality for managing project workspaces,
+//! including mapping directories and listing registered workspaces.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use msc::core::workspace::WorkspaceManager;
+//!
+//! let mut manager = WorkspaceManager::new()?;
+//! let count = manager.map_workspaces()?;
+//! println!("Mapped {} workspaces", count);
+//!
+//! let workspaces = manager.list_workspaces();
+//! for (name, path) in workspaces {
+//!     println!("{}: {}", name, path);
+//! }
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 
 use anyhow::Result;
 use std::path::Path;
@@ -6,6 +25,11 @@ use std::fs;
 use crate::core::config::Config;
 
 /// Workspace manager for handling project workspaces
+///
+/// This struct manages the configuration of workspaces, allowing you to:
+/// - Map all directories in a work path as workspaces
+/// - List all registered workspaces
+/// - Access the underlying configuration
 pub struct WorkspaceManager {
     config: Config,
 }
