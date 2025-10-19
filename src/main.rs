@@ -169,20 +169,67 @@ fn build_cli() -> Command {
                 .subcommand(
                     Command::new("start")
                         .about("Clean temporary files from the system")
+                        .long_about(
+                            "Clean temporary files from the system.\n\n\
+                            Uses two-phase cleanup following the Principle of Least Privilege:\n\
+                            1. User directories are cleaned WITHOUT admin privileges\n\
+                            2. System directories are cleaned WITH admin privileges (after confirmation)\n\n\
+                            By default, only files older than 24 hours are deleted to protect active applications.\n\n\
+                            Options:\n\
+                            --dry-run           Simulate cleanup without deleting files\n\
+                            --min-age <HOURS>   Only delete files older than N hours (default: 24)\n\
+                            --include-recent    Delete files of all ages (dangerous!)\n\
+                            --include-recycle   Include Recycle Bin in cleanup\n\n\
+                            Examples:\n\
+                            msc clean start                      # Clean files older than 24 hours\n\
+                            msc clean start --dry-run            # Preview what would be deleted\n\
+                            msc clean start --min-age 48         # Only delete files older than 48 hours\n\
+                            msc clean start --include-recent     # Delete all files (dangerous!)\n\
+                            msc clean start --include-recycle    # Include Recycle Bin in cleanup"
+                        )
                         .arg(
                             Arg::new("dry-run")
                                 .long("dry-run")
                                 .help("Show what would be deleted without actually deleting")
                                 .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("min-age")
+                                .long("min-age")
+                                .value_name("HOURS")
+                                .help("Only delete files older than N hours (default: 24)")
+                                .value_parser(clap::value_parser!(u64)),
+                        )
+                        .arg(
+                            Arg::new("include-recent")
+                                .long("include-recent")
+                                .help("Include recently modified files (dangerous!)")
+                                .action(clap::ArgAction::SetTrue)
+                                .conflicts_with("min-age"),
+                        )
+                        .arg(
+                            Arg::new("include-recycle")
+                                .long("include-recycle")
+                                .help("Include Recycle Bin in cleanup")
+                                .action(clap::ArgAction::SetTrue),
                         ),
                 )
                 .subcommand(
-                    Command::new("add").about("Add a custom clean path").arg(
-                        Arg::new("path")
-                            .help("Directory path to add to clean paths")
-                            .required(true)
-                            .index(1),
-                    ),
+                    Command::new("add")
+                        .about("Add a custom clean path")
+                        .arg(
+                            Arg::new("path")
+                                .help("Directory path to add to clean paths")
+                                .required(true)
+                                .index(1),
+                        )
+                        .arg(
+                            Arg::new("force")
+                                .short('f')
+                                .long("force")
+                                .help("Skip safety warnings (dangerous!)")
+                                .action(clap::ArgAction::SetTrue),
+                        ),
                 )
                 .subcommand(Command::new("list").about("List all clean paths (default and custom)"))
                 .subcommand(Command::new("remove").about("Remove a clean path (interactive)"))

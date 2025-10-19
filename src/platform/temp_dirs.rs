@@ -1,6 +1,41 @@
 // Platform-specific temporary directory detection
 use std::path::Path;
 
+/// Get the Recycle Bin directory path
+pub fn get_recycle_bin_directory() -> Option<String> {
+    #[cfg(windows)]
+    {
+        // Get all drives and return the first available Recycle Bin
+        let drives = vec!["C:", "D:", "E:", "F:"];
+        for drive in drives {
+            let recycle_path = format!("{}\\$Recycle.Bin", drive);
+            if Path::new(&recycle_path).exists() {
+                return Some(recycle_path);
+            }
+        }
+        None
+    }
+
+    #[cfg(not(windows))]
+    {
+        // On Unix-like systems, the trash location varies
+        if let Ok(home) = std::env::var("HOME") {
+            // Try common trash locations
+            let trash_paths = vec![
+                format!("{}/.local/share/Trash", home),
+                format!("{}/.Trash", home),
+            ];
+
+            for path in trash_paths {
+                if Path::new(&path).exists() {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    }
+}
+
 /// Get only the default system temporary directories
 pub fn get_default_temp_directories() -> Vec<String> {
     let mut dirs = Vec::new();
@@ -33,24 +68,10 @@ pub fn get_default_temp_directories() -> Vec<String> {
             }
         }
 
-        // 3. C:\Windows\Prefetch (prefetch folder)
-        if let Ok(windir) = std::env::var("SystemRoot") {
-            let prefetch = format!("{}\\Prefetch", windir);
-            if Path::new(&prefetch).exists() {
-                dirs.push(prefetch);
-            }
-        } else {
-            let default_prefetch = "C:\\Windows\\Prefetch".to_string();
-            if Path::new(&default_prefetch).exists() {
-                dirs.push(default_prefetch);
-            }
-        }
-
-        // 4. Recycle Bin
-        let recycle_bin = "C:\\$Recycle.Bin".to_string();
-        if Path::new(&recycle_bin).exists() {
-            dirs.push(recycle_bin);
-        }
+        // NOTE: Prefetch and Recycle Bin are intentionally excluded:
+        // - Prefetch: Contains performance optimization files, not temporary files.
+        //   Deleting them degrades system performance.
+        // Users can manually add these paths if desired using 'msc clean add'.
     }
 
     #[cfg(unix)]

@@ -21,6 +21,69 @@ pub fn confirm(message: &str) -> io::Result<bool> {
     Ok(response == "y" || response == "yes")
 }
 
+/// Ask user for confirmation with robust error handling and retry logic
+///
+/// # Arguments
+/// * `prompt` - The prompt message to display
+/// * `max_attempts` - Maximum number of retry attempts for IO errors (default 3)
+///
+/// # Returns
+/// * `Ok(true)` - User confirmed (y/yes)
+/// * `Ok(false)` - User declined (n/no or any other input)
+/// * `Err` - IO error after max attempts
+pub fn read_confirmation(prompt: &str, max_attempts: u32) -> anyhow::Result<bool> {
+    for attempt in 1..=max_attempts {
+        print!("{}", prompt.white().bold());
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(_) => {
+                let response = input.trim().to_lowercase();
+                return Ok(response == "y" || response == "yes");
+            }
+            Err(e) if attempt < max_attempts => {
+                println!(
+                    "{}",
+                    format!(
+                        "Error reading input (attempt {}/{}): {}",
+                        attempt, max_attempts, e
+                    )
+                    .yellow()
+                );
+                println!("{}", "Retrying...".dimmed());
+                continue;
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to read confirmation after {} attempts: {}",
+                    max_attempts,
+                    e
+                ));
+            }
+        }
+    }
+    unreachable!()
+}
+
+/// Ask user for exact string confirmation (case-sensitive)
+/// Used for high-risk operations requiring explicit confirmation
+pub fn read_exact_confirmation(prompt: &str, expected: &str) -> anyhow::Result<bool> {
+    print!("{}", prompt.white().bold());
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    match io::stdin().read_line(&mut input) {
+        Ok(_) => Ok(input.trim() == expected),
+        Err(e) => {
+            println!();
+            println!("{}", format!("Error reading input: {}", e).red());
+            println!("{}", "Operation cancelled for safety.".yellow());
+            Err(anyhow::anyhow!("Failed to read user confirmation: {}", e))
+        }
+    }
+}
+
 /// Display a warning message
 pub fn warn(message: &str) {
     println!("{}", format!("⚠️  Warning: {}", message).yellow().bold());

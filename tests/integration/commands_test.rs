@@ -4,6 +4,8 @@ use msc::core::file_scanner::FileScanner;
 use msc::core::workspace::WorkspaceManager;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 #[test]
@@ -55,7 +57,12 @@ fn test_temp_cleaner_creation() {
         // If normal creation fails (e.g., in test environment), verify we can create manually
         let config = Config::default();
         let directories = config.get_clean_paths();
-        let cleaner = TempCleaner { directories };
+        let cleaner = TempCleaner {
+            directories,
+            min_age: Some(std::time::Duration::from_secs(24 * 3600)),
+            max_age: None,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        };
 
         // Verify the structure is valid
         assert!(cleaner.directories.is_empty() || !cleaner.directories.is_empty());
@@ -75,6 +82,9 @@ fn test_temp_cleaner_scan() {
         let config = Config::default();
         TempCleaner {
             directories: config.get_clean_paths(),
+            min_age: Some(std::time::Duration::from_secs(24 * 3600)),
+            max_age: None,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     };
 
@@ -96,6 +106,9 @@ fn test_temp_cleaner_dry_run() {
         let config = Config::default();
         TempCleaner {
             directories: config.get_clean_paths(),
+            min_age: Some(std::time::Duration::from_secs(24 * 3600)),
+            max_age: None,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     };
 
