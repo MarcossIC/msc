@@ -28,6 +28,7 @@ git2 = "0.19"
 thiserror = "1.0"
 log = "0.4"
 env_logger = "0.11"
+crossterm = "0.27"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "consoleapi", "processthreadsapi", "winnt", "securitybaseapi", "handleapi"] }

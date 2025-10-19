@@ -46,6 +46,9 @@ fn test_config_workspaces() {
     let config = Config {
         work_path: None,
         workspaces,
+        default_paths: Vec::new(),
+        custom_paths: Vec::new(),
+        excluded_default_paths: Vec::new(),
     };
 
     assert_eq!(config.workspaces.len(), 2);

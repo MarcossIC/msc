@@ -25,7 +25,17 @@ fn main() -> Result<()> {
         Some(("set", sub_matches)) => commands::config::handle_set(sub_matches),
         Some(("get", sub_matches)) => commands::config::handle_get(sub_matches),
         Some(("work", sub_matches)) => commands::workspace::execute(sub_matches),
-        Some(("clean-temp", sub_matches)) => commands::clean_temp::execute(sub_matches),
+        Some(("clean", sub_matches)) => match sub_matches.subcommand() {
+            Some(("start", sub_sub_matches)) => commands::clean::handle_start(sub_sub_matches),
+            Some(("add", sub_sub_matches)) => commands::clean::handle_add(sub_sub_matches),
+            Some(("list", sub_sub_matches)) => commands::clean::handle_list(sub_sub_matches),
+            Some(("remove", sub_sub_matches)) => commands::clean::handle_remove(sub_sub_matches),
+            Some(("reset", sub_sub_matches)) => commands::clean::handle_clear(sub_sub_matches),
+            _ => {
+                println!("Use 'msc clean --help' for more information.");
+                Ok(())
+            }
+        },
         Some(("list", sub_matches)) => commands::list::execute(sub_matches),
         _ => {
             println!("Welcome to MSC CLI!");
@@ -152,13 +162,32 @@ fn build_cli() -> Command {
                 .subcommand(Command::new("list").about("List all registered workspaces")),
         )
         .subcommand(
-            Command::new("clean-temp")
-                .about("Clean temporary files from the system")
-                .arg(
-                    Arg::new("dry-run")
-                        .long("dry-run")
-                        .help("Show what would be deleted without actually deleting")
-                        .action(clap::ArgAction::SetTrue),
+            Command::new("clean")
+                .about("Manage cleanup operations and clean paths")
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("start")
+                        .about("Clean temporary files from the system")
+                        .arg(
+                            Arg::new("dry-run")
+                                .long("dry-run")
+                                .help("Show what would be deleted without actually deleting")
+                                .action(clap::ArgAction::SetTrue),
+                        ),
+                )
+                .subcommand(
+                    Command::new("add").about("Add a custom clean path").arg(
+                        Arg::new("path")
+                            .help("Directory path to add to clean paths")
+                            .required(true)
+                            .index(1),
+                    ),
+                )
+                .subcommand(Command::new("list").about("List all clean paths (default and custom)"))
+                .subcommand(Command::new("remove").about("Remove a clean path (interactive)"))
+                .subcommand(
+                    Command::new("reset").about("Reset clean paths just keeps default paths"),
                 ),
         )
 }

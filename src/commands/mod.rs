@@ -1,5 +1,5 @@
 // Command handlers module
-pub mod clean_temp;
+pub mod clean;
 pub mod config;
 pub mod hello;
 pub mod list;

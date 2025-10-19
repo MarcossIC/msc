@@ -1,7 +1,8 @@
 // Platform-specific temporary directory detection
 use std::path::Path;
 
-pub fn get_temp_directories() -> Vec<String> {
+/// Get only the default system temporary directories
+pub fn get_default_temp_directories() -> Vec<String> {
     let mut dirs = Vec::new();
 
     #[cfg(windows)]

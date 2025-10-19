@@ -9,9 +9,7 @@ pub fn apply_git_colors(
     is_dimmed: bool,
 ) -> ColoredString {
     match git_status {
-        GitStatus::Deleted => {
-            text.red().strikethrough()
-        }
+        GitStatus::Deleted => text.red().strikethrough(),
         GitStatus::Untracked | GitStatus::Modified | GitStatus::Added | GitStatus::Renamed => {
             text.bright_green()
         }

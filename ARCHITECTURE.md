@@ -1,11 +1,5 @@
 # MSC - Arquitectura del Proyecto
 
-> **Documento de referencia arquitectónica para el desarrollo del proyecto MSC**  
-> **Versión:** 1.0  
-> **Última actualización:** Octubre 2025
-
----
-
 ## Tabla de Contenidos
 
 1. [Visión General](#visión-general)
@@ -154,37 +148,6 @@ msc/
 ---
 
 ## Capas de la Aplicación
-
-### Flujo de Datos
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         main.rs                              │
-│                  (CLI parsing with clap)                     │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    COMMANDS LAYER                            │
-│   • Parseo de argumentos                                     │
-│   • Validación de entrada                                    │
-│   • Orquestación de flujo                                    │
-│   • Manejo de errores de alto nivel                          │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-                ┌───────────┼───────────┐
-                ▼           ▼           ▼
-        ┌───────────┐ ┌─────────┐ ┌─────────┐
-        │    UI     │ │  CORE   │ │   GIT   │
-        │  LAYER    │ │  LAYER  │ │  LAYER  │
-        └───────────┘ └────┬────┘ └─────────┘
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │   PLATFORM   │
-                    │    LAYER     │
-                    └──────────────┘
-```
 
 ### 1. Commands Layer (`src/commands/`)
 
@@ -466,32 +429,10 @@ trait processor { }
 SCREAMING_SNAKE_CASE    # Constantes y statics
 ```
 
-```rust
-// ✅ Correcto
-const MAX_FILE_SIZE: u64 = 1024 * 1024;
-const DEFAULT_DEPTH: u32 = 1;
-static CONFIG_FILE: &str = "config.bin";
-
-// ❌ Incorrecto
-const maxFileSize: u64 = 1024 * 1024;
-const default_depth: u32 = 1;
-```
-
 ### Módulos
 
 ```rust
 snake_case          # Nombres de módulos
-```
-
-```rust
-// ✅ Correcto
-mod file_scanner;
-mod clean_temp;
-pub mod workspace;
-
-// ❌ Incorrecto
-mod FileScanner;
-mod CleanTemp;
 ```
 
 ### Acrónimos y Abreviaciones
@@ -523,27 +464,6 @@ Cada directorio con submódulos debe tener un `mod.rs` que:
 1. Declara los submódulos
 2. Re-exporta los tipos públicos principales
 3. Documenta el propósito del módulo
-
-```rust
-// src/core/mod.rs
-
-//! Core business logic module
-//!
-//! This module contains the main business logic and domain models
-//! for the MSC application.
-
-// Declaración de submódulos
-pub mod config;
-pub mod workspace;
-pub mod file_scanner;
-pub mod cleaner;
-
-// Re-exportación de tipos públicos comunes
-pub use config::Config;
-pub use workspace::WorkspaceManager;
-pub use file_scanner::{FileScanner, ScanEntry};
-pub use cleaner::{TempCleaner, CleanupStats};
-```
 
 ### Imports
 
@@ -1028,46 +948,6 @@ let home_dir = dirs::home_dir()?;
 
 ## Dependencias
 
-### Dependencias Principales
-
-```toml
-[dependencies]
-# CLI
-clap = { version = "4.4", features = ["derive"] }
-
-# Error handling
-anyhow = "1.0"
-thiserror = "1.0"
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-bincode = "1.3"
-
-# Utilities
-dirs = "5.0"
-chrono = { version = "0.4", features = ["serde"] }
-unicode-width = "0.1"
-
-# UI
-colored = "2.0"
-
-# Git integration
-git2 = "0.19"
-ignore = "0.4"  # Para manejar .gitignore
-
-# Logging
-log = "0.4"
-env_logger = "0.11"
-
-# Platform-specific
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = [...] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-```
-
 ### Agregar Nueva Dependencia
 
 #### Proceso:
@@ -1077,29 +957,6 @@ libc = "0.2"
 3. **Verificar mantenimiento**: ¿El crate está activamente mantenido?
 4. **Verificar licencia**: ¿Es compatible con MIT?
 5. **Agregar con versión específica**: No usar `*`
-
-```bash
-# Agregar dependencia
-cargo add serde --features derive
-
-# O editar Cargo.toml
-[dependencies]
-new-crate = "1.0"
-```
-
-6. **Documentar uso**: Agregar comentario en `Cargo.toml` si no es obvio
-
-```toml
-[dependencies]
-# Para calcular hashes SHA256 de archivos
-sha2 = "0.10"
-```
-
-7. **Actualizar periódicamente**:
-```bash
-cargo update
-cargo audit  # Verificar vulnerabilidades
-```
 
 ### Dependency Features
 
@@ -1481,47 +1338,6 @@ pub fn process_files(&self) -> Result<()> {
 - **debug**: Información útil para debugging
 - **trace**: Información muy detallada (cada iteración, etc.)
 
-### 7. Documentación de Código
-
-```rust
-/// Calculates the total size of all files in a directory.
-///
-/// This function recursively walks through the directory tree and sums
-/// the sizes of all files found.
-///
-/// # Arguments
-///
-/// * `path` - The directory path to analyze
-/// * `max_depth` - Maximum recursion depth (None for unlimited)
-///
-/// # Returns
-///
-/// The total size in bytes, or an error if the operation fails.
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// * The path does not exist
-/// * The path is not a directory
-/// * Permission is denied to access any file
-///
-/// # Examples
-///
-/// ```
-/// use msc::core::calculate_directory_size;
-/// use std::path::Path;
-///
-/// let size = calculate_directory_size(Path::new("."), Some(3))?;
-/// println!("Total size: {} bytes", size);
-/// ```
-pub fn calculate_directory_size(
-    path: &Path,
-    max_depth: Option<u32>,
-) -> Result<u64> {
-    // Implementation
-}
-```
-
 ### 8. Const para Valores Mágicos
 
 ```rust
@@ -1587,7 +1403,7 @@ pub fn process(self, data: Vec<String>) -> Result<()> {
 Antes de hacer commit, verificar:
 
 - [ ] `cargo fmt` ejecutado (código formateado)
-- [ ] `cargo clippy` sin warnings
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` sin warnings
 - [ ] `cargo test` todos los tests pasan
 - [ ] `cargo build --release` compila sin errores
 - [ ] No hay `println!` de debug olvidados
@@ -1672,6 +1488,6 @@ Estas preguntas te guiarán a la capa correcta.
 
 ---
 
-**Mantenido por**: Marco  
+**Mantenido por**: Marcos
 **Última revisión**: Octubre 2025
 

@@ -21,7 +21,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
-use crate::platform::get_temp_directories;
+use crate::core::Config;
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
@@ -42,12 +42,17 @@ pub struct CleanupStats {
     pub deleted_files: usize,
     pub deleted_size: u64,
     pub failed_files: usize,
+    pub inaccessible_dirs: Vec<String>,
 }
 
 impl TempCleaner {
-    /// Create a new TempCleaner with system temporary directories
+    /// Create a new TempCleaner with all active clean paths from config
+    /// Paths are automatically synced with system defaults on each load
     pub fn new() -> Result<Self> {
-        let directories = get_temp_directories();
+        let config = Config::load()?;
+        // get_clean_paths() returns merged default + custom paths
+        // default paths are synced dynamically on load
+        let directories = config.get_clean_paths();
         Ok(Self { directories })
     }
 
@@ -55,8 +60,16 @@ impl TempCleaner {
         let mut stats = CleanupStats::default();
 
         for temp_dir in &self.directories {
+            let path = Path::new(temp_dir);
+
+            // Check if directory exists and is accessible
+            if !path.exists() || !path.is_dir() {
+                stats.inaccessible_dirs.push(temp_dir.clone());
+                continue;
+            }
+
             count_files_recursive(
-                Path::new(temp_dir),
+                path,
                 &mut stats.total_files,
                 &mut stats.total_size,
             );
@@ -87,7 +100,14 @@ impl TempCleaner {
         };
 
         for temp_dir in &self.directories {
-            delete_files_recursive_with_tracking(Path::new(temp_dir), &mut ctx);
+            let path = Path::new(temp_dir);
+
+            // Skip directories that don't exist or aren't accessible
+            if !path.exists() || !path.is_dir() {
+                continue;
+            }
+
+            delete_files_recursive_with_tracking(path, &mut ctx);
         }
 
         Ok(CleanupStats {
@@ -96,6 +116,7 @@ impl TempCleaner {
             deleted_files: ctx.deleted_files,
             deleted_size: ctx.deleted_size,
             failed_files: ctx.failed_files,
+            inaccessible_dirs: stats.inaccessible_dirs,
         })
     }
 }
