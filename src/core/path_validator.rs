@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use anyhow::Result;
+use std::path::{Path, PathBuf};
 
 pub struct PathValidator {
     forbidden_paths: Vec<String>,
@@ -28,7 +28,7 @@ impl PathValidator {
                 "C:\\Program Files (x86)".to_string(),
                 "C:\\ProgramData".to_string(),
                 "C:\\Users".to_string(), // Ra�z de usuarios
-                "C:\\".to_string(),       // Ra�z del sistema
+                "C:\\".to_string(),      // Ra�z del sistema
             ]);
 
             // Directorio de usuario actual (ra�z)
@@ -75,9 +75,7 @@ impl PathValidator {
     pub fn validate_path(&self, path: &Path) -> Result<ValidationResult> {
         // 1. Verificar que existe
         if !path.exists() {
-            return Ok(ValidationResult::Error(
-                "Path does not exist".to_string(),
-            ));
+            return Ok(ValidationResult::Error("Path does not exist".to_string()));
         }
 
         // 2. Verificar que es directorio
@@ -119,11 +117,8 @@ impl PathValidator {
             let forbidden_lower = forbidden.to_lowercase();
 
             // Normalizar separadores de ruta y quitar prefijos de Windows (\\?\)
-            let canonical_normalized = canonical_str
-                .replace('/', "\\")
-                .replace("\\\\?\\", "");
-            let forbidden_normalized = forbidden_lower
-                .replace('/', "\\");
+            let canonical_normalized = canonical_str.replace('/', "\\").replace("\\\\?\\", "");
+            let forbidden_normalized = forbidden_lower.replace('/', "\\");
 
             // Verificar coincidencia exacta
             if canonical_normalized == forbidden_normalized {
@@ -229,7 +224,7 @@ impl Default for PathValidator {
 #[derive(Debug)]
 pub enum ValidationResult {
     Safe(PathBuf),
-    Warning(String, PathBuf),  // (mensaje de advertencia, ruta canónica)
+    Warning(String, PathBuf), // (mensaje de advertencia, ruta canónica)
     Forbidden(String),
     Error(String),
 }
@@ -408,8 +403,14 @@ mod tests {
     #[test]
     fn test_validator_default() {
         let validator = PathValidator::default();
-        assert!(!validator.forbidden_paths.is_empty(), "Default validator should have forbidden paths");
-        assert!(!validator.forbidden_patterns.is_empty(), "Default validator should have forbidden patterns");
+        assert!(
+            !validator.forbidden_paths.is_empty(),
+            "Default validator should have forbidden paths"
+        );
+        assert!(
+            !validator.forbidden_patterns.is_empty(),
+            "Default validator should have forbidden patterns"
+        );
     }
 
     #[test]
@@ -450,10 +451,7 @@ mod tests {
         #[cfg(unix)]
         {
             // Test safe subdirectories
-            let safe_paths = vec![
-                Path::new("/tmp"),
-                Path::new("/var/cache"),
-            ];
+            let safe_paths = vec![Path::new("/tmp"), Path::new("/var/cache")];
 
             for path in safe_paths {
                 assert!(
@@ -464,10 +462,7 @@ mod tests {
             }
 
             // Test unsafe subdirectories
-            let unsafe_paths = vec![
-                Path::new("/usr/bin"),
-                Path::new("/etc"),
-            ];
+            let unsafe_paths = vec![Path::new("/usr/bin"), Path::new("/etc")];
 
             for path in unsafe_paths {
                 assert!(
@@ -502,10 +497,7 @@ mod tests {
 
         #[cfg(unix)]
         {
-            let active_dirs = vec![
-                Path::new("/var/log"),
-                Path::new("/var/run"),
-            ];
+            let active_dirs = vec![Path::new("/var/log"), Path::new("/var/run")];
 
             for path in active_dirs {
                 assert!(
@@ -523,11 +515,15 @@ mod tests {
 
         // The patterns are checked case-insensitively and in the path string
         assert!(
-            validator.forbidden_patterns.contains(&"system32".to_string()),
+            validator
+                .forbidden_patterns
+                .contains(&"system32".to_string()),
             "Should include system32 pattern"
         );
         assert!(
-            validator.forbidden_patterns.contains(&"program files".to_string()),
+            validator
+                .forbidden_patterns
+                .contains(&"program files".to_string()),
             "Should include program files pattern"
         );
     }
@@ -565,7 +561,10 @@ mod tests {
 
         for path_str in forbidden {
             assert!(
-                validator.forbidden_paths.iter().any(|p| p.to_lowercase() == path_str.to_lowercase()),
+                validator
+                    .forbidden_paths
+                    .iter()
+                    .any(|p| p.to_lowercase() == path_str.to_lowercase()),
                 "Should include {} in forbidden paths",
                 path_str
             );

@@ -1,4 +1,5 @@
 // Command handlers module
+pub mod alias;
 pub mod clean;
 pub mod config;
 pub mod hello;

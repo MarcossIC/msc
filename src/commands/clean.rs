@@ -28,7 +28,8 @@ fn is_user_directory(path: &str) -> bool {
     let path_lower = path.to_lowercase();
 
     // Get current user's username to check for user-specific paths
-    let current_user = std::env::var("USERNAME").ok()
+    let current_user = std::env::var("USERNAME")
+        .ok()
         .or_else(|| std::env::var("USER").ok())
         .unwrap_or_default()
         .to_lowercase();
@@ -186,6 +187,198 @@ fn perform_cleanup(
     Ok(stats)
 }
 
+/// Clean work cache directories (target, dist, node_modules) in work directory projects
+fn clean_work_cache(config: &crate::core::Config, dry_run: bool) -> Result<()> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    // Get work path from config
+    let work_path = match config.get_work_path() {
+        Some(path) => path,
+        None => {
+            println!("{}", "No work directory configured.".yellow());
+            println!(
+                "{}",
+                "Use 'msc set work <path>' to configure a work directory.".dimmed()
+            );
+            return Ok(());
+        }
+    };
+
+    let work_path_buf = PathBuf::from(work_path);
+    if !work_path_buf.exists() {
+        println!(
+            "{}",
+            format!("Work directory does not exist: {}", work_path).red()
+        );
+        return Ok(());
+    }
+
+    if !work_path_buf.is_dir() {
+        println!(
+            "{}",
+            format!("Work path is not a directory: {}", work_path).red()
+        );
+        return Ok(());
+    }
+
+    println!("{}", "═".repeat(50).cyan());
+    println!("{}", "WORK CACHE CLEANUP".cyan().bold());
+    println!("{}", "═".repeat(50).cyan());
+    println!();
+
+    // Get ignored folders
+    let ignored_folders = config.get_ignored_work_folders();
+
+    if !ignored_folders.is_empty() {
+        println!("{}", "Ignored project folders:".dimmed());
+        for folder in &ignored_folders {
+            println!("  • {}", folder.dimmed());
+        }
+        println!();
+    }
+
+    // Cache folders to clean
+    let cache_folders = ["target", "dist", "node_modules"];
+
+    println!(
+        "{}",
+        "Scanning work directory for project cache folders...".dimmed()
+    );
+    println!();
+
+    // Scan work directory
+    let entries = match fs::read_dir(&work_path_buf) {
+        Ok(entries) => entries,
+        Err(e) => {
+            println!("{}", format!("Error reading work directory: {}", e).red());
+            return Ok(());
+        }
+    };
+
+    let mut total_size: u64 = 0;
+    let mut total_files: usize = 0;
+    let mut cleaned_count: usize = 0;
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let project_path = entry.path();
+
+        // Skip if not a directory
+        if !project_path.is_dir() {
+            continue;
+        }
+
+        // Get folder name
+        let folder_name = match project_path.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => continue,
+        };
+
+        // Skip if folder is in ignore list
+        if ignored_folders.contains(&folder_name) {
+            continue;
+        }
+
+        // Check for cache folders in this project
+        for cache_folder in &cache_folders {
+            let cache_path = project_path.join(cache_folder);
+
+            if cache_path.exists() && cache_path.is_dir() {
+                // Calculate size
+                let (folder_size, file_count) = calculate_dir_size(&cache_path);
+
+                if dry_run {
+                    println!(
+                        "{} {} in {}/{}",
+                        "Would delete:".yellow(),
+                        format_size(folder_size).yellow().bold(),
+                        folder_name.cyan(),
+                        cache_folder.cyan().bold()
+                    );
+                } else {
+                    print!(
+                        "{} {}",
+                        "Deleting:".cyan(),
+                        format!("{}/{}", folder_name, cache_folder).cyan()
+                    );
+
+                    // Delete the folder
+                    match fs::remove_dir_all(&cache_path) {
+                        Ok(_) => {
+                            println!(" {} ({})", "✓".green(), format_size(folder_size).dimmed());
+                            cleaned_count += 1;
+                        }
+                        Err(e) => {
+                            println!(" {} ({})", "✗".red(), e.to_string().red());
+                        }
+                    }
+                }
+
+                total_size += folder_size;
+                total_files += file_count;
+            }
+        }
+    }
+
+    println!();
+    println!("{}", "═".repeat(50).cyan());
+
+    if dry_run {
+        println!(
+            "{} {} cache folders ({} files, {})",
+            "Would delete:".yellow().bold(),
+            cleaned_count.to_string().yellow().bold(),
+            total_files.to_string().dimmed(),
+            format_size(total_size).yellow().bold()
+        );
+    } else {
+        println!(
+            "{} {} cache folders ({} files, {})",
+            "Deleted:".green().bold(),
+            cleaned_count.to_string().yellow().bold(),
+            total_files.to_string().dimmed(),
+            format_size(total_size).yellow().bold()
+        );
+    }
+
+    println!("{}", "═".repeat(50).cyan());
+    println!();
+
+    Ok(())
+}
+
+/// Calculate total size and file count of a directory recursively
+fn calculate_dir_size(path: &std::path::Path) -> (u64, usize) {
+    use std::fs;
+
+    let mut total_size: u64 = 0;
+    let mut file_count: usize = 0;
+
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+
+            if entry_path.is_file() {
+                if let Ok(metadata) = fs::metadata(&entry_path) {
+                    total_size += metadata.len();
+                    file_count += 1;
+                }
+            } else if entry_path.is_dir() {
+                let (dir_size, dir_files) = calculate_dir_size(&entry_path);
+                total_size += dir_size;
+                file_count += dir_files;
+            }
+        }
+    }
+
+    (total_size, file_count)
+}
+
 /// Display cleanup summary
 fn display_cleanup_summary(
     stats: &crate::core::CleanupStats,
@@ -197,11 +390,21 @@ fn display_cleanup_summary(
     if stats.was_cancelled {
         println!();
         println!("{}", "═".repeat(50).yellow());
-        println!("{}", "  OPERATION CANCELLED BY USER  ".black().on_yellow().bold());
+        println!(
+            "{}",
+            "  OPERATION CANCELLED BY USER  ".black().on_yellow().bold()
+        );
         println!("{}", "═".repeat(50).yellow());
         println!();
         println!("{}", "Cleanup was stopped safely.".yellow());
-        println!("{}", format!("Processed: {}/{} files before cancellation", stats.deleted_files, stats.total_files).dimmed());
+        println!(
+            "{}",
+            format!(
+                "Processed: {}/{} files before cancellation",
+                stats.deleted_files, stats.total_files
+            )
+            .dimmed()
+        );
         println!();
     }
 
@@ -314,6 +517,7 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
     let min_age_hours = matches.get_one::<u64>("min-age");
     let include_recent = matches.get_flag("include-recent");
     let include_recycle = matches.get_flag("include-recycle");
+    let work_cache = matches.get_flag("work-cache");
 
     // Create shared cancellation flag
     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -323,9 +527,13 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
     ctrlc::set_handler(move || {
         println!();
         println!("{}", "Cancellation requested...".yellow().bold());
-        println!("{}", "Stopping cleanup safely (this may take a moment)...".dimmed());
+        println!(
+            "{}",
+            "Stopping cleanup safely (this may take a moment)...".dimmed()
+        );
         cancel_flag_clone.store(true, Ordering::Relaxed);
-    }).map_err(|e| anyhow::anyhow!("Failed to set Ctrl+C handler: {}", e))?;
+    })
+    .map_err(|e| anyhow::anyhow!("Failed to set Ctrl+C handler: {}", e))?;
 
     if dry_run {
         println!(
@@ -352,7 +560,9 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
     if include_recent {
         println!(
             "{}",
-            "⚠️  Warning: Deleting files of ALL ages (including recent files)".yellow().bold()
+            "⚠️  Warning: Deleting files of ALL ages (including recent files)"
+                .yellow()
+                .bold()
         );
         println!(
             "{}",
@@ -405,7 +615,10 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
     // Categorize directories by privilege requirements
     let categorized = categorize_by_privilege(&all_directories);
 
-    println!("{}", "Directories categorized by privilege level:".white().bold());
+    println!(
+        "{}",
+        "Directories categorized by privilege level:".white().bold()
+    );
     println!();
 
     if !categorized.user_directories.is_empty() {
@@ -459,7 +672,10 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
     if !categorized.user_directories.is_empty() {
         println!("{}", "═".repeat(50).green());
         println!("{}", "PHASE 1: Cleaning User Directories".green().bold());
-        println!("{}", "(No administrator privileges needed)".green().dimmed());
+        println!(
+            "{}",
+            "(No administrator privileges needed)".green().dimmed()
+        );
         println!("{}", "═".repeat(50).green());
         println!();
 
@@ -485,7 +701,10 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
     if !categorized.system_directories.is_empty() {
         println!("{}", "═".repeat(50).yellow());
         println!("{}", "PHASE 2: Cleaning System Directories".yellow().bold());
-        println!("{}", "(Administrator privileges required)".yellow().dimmed());
+        println!(
+            "{}",
+            "(Administrator privileges required)".yellow().dimmed()
+        );
         println!("{}", "═".repeat(50).yellow());
         println!();
 
@@ -547,7 +766,10 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
                                 .yellow()
                         );
                         println!();
-                        println!("{}", "User directories have been cleaned successfully.".green());
+                        println!(
+                            "{}",
+                            "User directories have been cleaned successfully.".green()
+                        );
                         return Ok(());
                     }
                 }
@@ -560,7 +782,10 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
                     );
                     println!("{}", "Try running this command with sudo/root.".yellow());
                     println!();
-                    println!("{}", "User directories have been cleaned successfully.".green());
+                    println!(
+                        "{}",
+                        "User directories have been cleaned successfully.".green()
+                    );
                     return Ok(());
                 }
             }
@@ -580,10 +805,17 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
         println!();
     }
 
-    println!("{}", "═".repeat(50).green());
-    println!("{}", "✓ Cleanup completed successfully".green().bold());
-    println!("{}", "═".repeat(50).green());
-    println!();
+    if !categorized.user_directories.is_empty() || !categorized.system_directories.is_empty() {
+        println!("{}", "═".repeat(50).green());
+        println!("{}", "✓ Cleanup completed successfully".green().bold());
+        println!("{}", "═".repeat(50).green());
+        println!();
+    }
+
+    // WORK CACHE CLEANUP: Clean cache folders in work directory projects if requested
+    if work_cache {
+        clean_work_cache(&config, dry_run)?;
+    }
 
     Ok(())
 }
@@ -604,7 +836,10 @@ pub fn handle_add(matches: &clap::ArgMatches) -> Result<()> {
     let canonical_path = match validation {
         ValidationResult::Forbidden(msg) => {
             println!("{}", "╔═══════════════════════════════════════════╗".red());
-            println!("{}", "║  FORBIDDEN - CANNOT ADD THIS PATH        ║".red().bold());
+            println!(
+                "{}",
+                "║  FORBIDDEN - CANNOT ADD THIS PATH        ║".red().bold()
+            );
             println!("{}", "╚═══════════════════════════════════════════╝".red());
             println!();
             println!("{}", msg.red());
@@ -665,7 +900,10 @@ pub fn handle_add(matches: &clap::ArgMatches) -> Result<()> {
         println!("{}", "✓ Clean path added successfully:".green());
         println!("  {}", cleaned_path.cyan());
         println!();
-        println!("{}", "This path will be included in future cleanup operations.".dimmed());
+        println!(
+            "{}",
+            "This path will be included in future cleanup operations.".dimmed()
+        );
     } else {
         println!("{}", "Path already exists in clean paths.".yellow());
     }
@@ -679,7 +917,9 @@ pub fn handle_list(_matches: &clap::ArgMatches) -> Result<()> {
     let config = Config::load()?;
     let active_paths = config.get_clean_paths();
 
-    println!("{}", "Active Clean Paths".white().bold());
+    println!("{}", "═".repeat(70).white());
+    println!("{}", "  ACTIVE CLEAN PATHS  ".white().bold());
+    println!("{}", "═".repeat(70).white());
     println!();
 
     if active_paths.is_empty() {
@@ -688,6 +928,7 @@ pub fn handle_list(_matches: &clap::ArgMatches) -> Result<()> {
         println!("{}", "To add a custom path, run:".dimmed());
         println!("  {}", "msc clean add <path>".cyan());
     } else {
+        println!("{}", "Default & Custom Paths:".white().bold());
         for (index, dir) in active_paths.iter().enumerate() {
             let cleaned_path = dir.strip_prefix("\\\\?\\").unwrap_or(dir);
             println!(
@@ -698,6 +939,76 @@ pub fn handle_list(_matches: &clap::ArgMatches) -> Result<()> {
         }
     }
 
+    println!();
+    println!("{}", "─".repeat(70).dimmed());
+    println!();
+
+    // Show Special Paths (Recycle Bin and Work Cache)
+    println!("{}", "Special Paths:".white().bold());
+    println!();
+
+    // Recycle Bin
+    println!("{}", "  Recycle Bin:".cyan());
+    if let Some(recycle_path) = get_recycle_bin_directory() {
+        println!("    {} {}", "•".dimmed(), recycle_path.yellow());
+        println!(
+            "      {}",
+            "(only included with --include-recycle or --IR flag)".dimmed()
+        );
+    } else {
+        println!(
+            "    {} {}",
+            "•".dimmed(),
+            "Not available on this system".dimmed()
+        );
+    }
+
+    println!();
+
+    // Work Cache Paths
+    println!("{}", "  Work Directory Cache:".cyan());
+    if let Some(work_path) = config.get_work_path() {
+        // Clean the Windows long path prefix
+        let cleaned_work_path = work_path.strip_prefix("\\\\?\\").unwrap_or(work_path);
+        let cache_folders = ["target", "dist", "node_modules"];
+
+        for cache_folder in &cache_folders {
+            println!(
+                "    {} {}",
+                "•".dimmed(),
+                format!("{}\\<project>\\{}", cleaned_work_path, cache_folder).yellow()
+            );
+        }
+
+        println!();
+        println!(
+            "      {}",
+            "(only included with --work-cache or -WC flag)".dimmed()
+        );
+
+        // Show ignored folders
+        let ignored_folders = config.get_ignored_work_folders();
+        if !ignored_folders.is_empty() {
+            println!();
+            println!("      {}", "Ignored project folders:".dimmed());
+            for folder in &ignored_folders {
+                println!("        {} {}", "↳".dimmed(), folder.dimmed());
+            }
+        }
+    } else {
+        println!(
+            "    {} {}",
+            "•".dimmed(),
+            "No work directory configured".dimmed()
+        );
+        println!(
+            "      {}",
+            "Use 'msc set work <path>' to configure a work directory".dimmed()
+        );
+    }
+
+    println!();
+    println!("{}", "═".repeat(70).white());
     println!();
 
     Ok(())
@@ -803,6 +1114,134 @@ pub fn handle_clear(_matches: &clap::ArgMatches) -> Result<()> {
     );
     println!("{}", "All default system paths are now active.".dimmed());
     println!();
+
+    Ok(())
+}
+
+/// Handle 'clean ignore add' command - Add a folder to the ignore list
+pub fn handle_ignore_add(matches: &clap::ArgMatches) -> Result<()> {
+    let folder = matches
+        .get_one::<String>("folder")
+        .expect("Folder is required");
+
+    // Load config
+    let mut config = Config::load()?;
+
+    // Check if it's "msc" (already always ignored)
+    if folder == "msc" {
+        println!(
+            "{}",
+            "The 'msc' folder is always ignored automatically.".yellow()
+        );
+        println!("{}", "You don't need to add it manually.".dimmed());
+        return Ok(());
+    }
+
+    // Try to add the folder
+    if config.add_ignored_work_folder(folder.clone()) {
+        config.save()?;
+        println!();
+        println!("{}", "✓ Folder added to ignore list:".green().bold());
+        println!("  {}", folder.cyan());
+        println!();
+        println!(
+            "{}",
+            "This folder will be skipped during work cache cleanup.".dimmed()
+        );
+        println!();
+    } else {
+        println!("{}", "Folder already in ignore list.".yellow());
+        println!("  {}", folder.cyan());
+    }
+
+    Ok(())
+}
+
+/// Handle 'clean ignore list' command - List all ignored folders
+pub fn handle_ignore_list(_matches: &clap::ArgMatches) -> Result<()> {
+    let config = Config::load()?;
+    let ignored_folders = config.get_ignored_work_folders();
+
+    println!("{}", "═".repeat(50).white());
+    println!("{}", "  IGNORED WORK FOLDERS  ".white().bold());
+    println!("{}", "═".repeat(50).white());
+    println!();
+
+    if ignored_folders.is_empty() {
+        println!("  {}", "No folders configured to ignore.".dimmed());
+        println!();
+        println!(
+            "{}",
+            "Note: 'msc' is always ignored automatically.".dimmed()
+        );
+    } else {
+        println!(
+            "{}",
+            "Folders that will be skipped during work cache cleanup:".white()
+        );
+        println!();
+
+        for (index, folder) in ignored_folders.iter().enumerate() {
+            if folder == "msc" {
+                println!(
+                    "  {}. {} {}",
+                    (index + 1).to_string().dimmed(),
+                    folder.cyan(),
+                    "(automatic)".dimmed()
+                );
+            } else {
+                println!("  {}. {}", (index + 1).to_string().dimmed(), folder.cyan());
+            }
+        }
+    }
+
+    println!();
+    println!("{}", "═".repeat(50).white());
+    println!();
+
+    Ok(())
+}
+
+/// Handle 'clean ignore remove' command - Remove a folder from the ignore list
+pub fn handle_ignore_remove(matches: &clap::ArgMatches) -> Result<()> {
+    let folder = matches
+        .get_one::<String>("folder")
+        .expect("Folder is required");
+
+    // Load config
+    let mut config = Config::load()?;
+
+    // Check if it's "msc" (always ignored)
+    if folder == "msc" {
+        println!("{}", "Cannot remove 'msc' from ignore list.".yellow());
+        println!(
+            "{}",
+            "This folder is always ignored automatically for safety.".dimmed()
+        );
+        return Ok(());
+    }
+
+    // Try to remove the folder
+    if config.remove_ignored_work_folder(folder) {
+        config.save()?;
+        println!();
+        println!("{}", "✓ Folder removed from ignore list:".green().bold());
+        println!("  {}", folder.cyan());
+        println!();
+        println!(
+            "{}",
+            "This folder will now be included in work cache cleanup.".dimmed()
+        );
+        println!();
+    } else {
+        println!("{}", "Folder not found in ignore list.".yellow());
+        println!("  {}", folder.cyan());
+        println!();
+        println!(
+            "{}",
+            "Use 'msc clean ignore list' to see all ignored folders.".dimmed()
+        );
+    }
 
     Ok(())
 }

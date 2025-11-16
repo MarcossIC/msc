@@ -20,6 +20,9 @@ pub struct Config {
     /// Default paths excluded by user (persistent)
     #[serde(default)]
     pub excluded_default_paths: Vec<String>,
+    /// Work directory folders that should be ignored during work cache cleanup
+    #[serde(default)]
+    pub ignored_work_folders: Vec<String>,
 }
 
 impl Config {
@@ -177,5 +180,52 @@ impl Config {
         self.custom_paths.clear();
         self.excluded_default_paths.clear();
         self.sync_default_paths();
+    }
+
+    // Work cache ignore management
+
+    /// Get all ignored work folders (always includes "msc" for safety)
+    pub fn get_ignored_work_folders(&self) -> Vec<String> {
+        let mut ignored = self.ignored_work_folders.clone();
+
+        // Always include "msc" to avoid cleaning the tool itself
+        if !ignored.contains(&"msc".to_string()) {
+            ignored.push("msc".to_string());
+        }
+
+        ignored
+    }
+
+    /// Add a folder to the ignore list for work cache cleanup
+    pub fn add_ignored_work_folder(&mut self, folder_name: String) -> bool {
+        // Don't add "msc" as it's always included
+        if folder_name == "msc" {
+            return false;
+        }
+
+        if self.ignored_work_folders.contains(&folder_name) {
+            return false;
+        }
+
+        self.ignored_work_folders.push(folder_name);
+        true
+    }
+
+    /// Remove a folder from the ignore list
+    pub fn remove_ignored_work_folder(&mut self, folder_name: &str) -> bool {
+        if let Some(pos) = self
+            .ignored_work_folders
+            .iter()
+            .position(|f| f == folder_name)
+        {
+            self.ignored_work_folders.remove(pos);
+            return true;
+        }
+        false
+    }
+
+    /// Get the list of user-configured ignored work folders (without "msc")
+    pub fn get_user_ignored_work_folders(&self) -> &Vec<String> {
+        &self.ignored_work_folders
     }
 }

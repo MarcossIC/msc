@@ -156,7 +156,13 @@ impl TempCleaner {
                 continue;
             }
 
-            delete_files_recursive_with_tracking(path, &mut ctx, self.min_age, self.max_age, &self.cancel_flag);
+            delete_files_recursive_with_tracking(
+                path,
+                &mut ctx,
+                self.min_age,
+                self.max_age,
+                &self.cancel_flag,
+            );
         }
 
         Ok(CleanupStats {
@@ -175,7 +181,11 @@ impl TempCleaner {
 }
 
 /// Check if a file should be deleted based on age criteria
-fn should_delete_file(metadata: &fs::Metadata, min_age: Option<Duration>, max_age: Option<Duration>) -> bool {
+fn should_delete_file(
+    metadata: &fs::Metadata,
+    min_age: Option<Duration>,
+    max_age: Option<Duration>,
+) -> bool {
     // Get file modification time
     let modified_time = match metadata.modified() {
         Ok(time) => time,
@@ -234,10 +244,17 @@ fn count_files_recursive(
                                 // Categorize metadata errors
                                 if e.kind() == std::io::ErrorKind::PermissionDenied {
                                     stats.permission_errors += 1;
-                                    log::warn!("Permission denied accessing metadata: {:?}", entry.path());
+                                    log::warn!(
+                                        "Permission denied accessing metadata: {:?}",
+                                        entry.path()
+                                    );
                                 } else {
                                     stats.other_errors += 1;
-                                    log::warn!("Error reading metadata for {:?}: {}", entry.path(), e);
+                                    log::warn!(
+                                        "Error reading metadata for {:?}: {}",
+                                        entry.path(),
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -287,8 +304,7 @@ fn delete_files_recursive_with_tracking<F>(
     min_age: Option<Duration>,
     max_age: Option<Duration>,
     cancel_flag: &Arc<AtomicBool>,
-)
-where
+) where
     F: FnMut(usize, usize),
 {
     match fs::read_dir(dir) {
@@ -337,28 +353,49 @@ where
                                             }
                                             Err(e) => {
                                                 ctx.failed_files += 1;
-                                                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                                                if e.kind() == std::io::ErrorKind::PermissionDenied
+                                                {
                                                     ctx.permission_errors += 1;
-                                                    log::warn!("Permission denied deleting file: {:?}", file_path);
+                                                    log::warn!(
+                                                        "Permission denied deleting file: {:?}",
+                                                        file_path
+                                                    );
                                                 } else {
                                                     ctx.other_errors += 1;
-                                                    log::warn!("Error deleting file {:?}: {}", file_path, e);
+                                                    log::warn!(
+                                                        "Error deleting file {:?}: {}",
+                                                        file_path,
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
                                     }
                                 } else if metadata.is_dir() {
-                                    delete_files_recursive_with_tracking(&entry.path(), ctx, min_age, max_age, cancel_flag);
+                                    delete_files_recursive_with_tracking(
+                                        &entry.path(),
+                                        ctx,
+                                        min_age,
+                                        max_age,
+                                        cancel_flag,
+                                    );
                                 }
                             }
                             Err(e) => {
                                 // Failed to get metadata
                                 if e.kind() == std::io::ErrorKind::PermissionDenied {
                                     ctx.permission_errors += 1;
-                                    log::warn!("Permission denied accessing metadata: {:?}", entry.path());
+                                    log::warn!(
+                                        "Permission denied accessing metadata: {:?}",
+                                        entry.path()
+                                    );
                                 } else {
                                     ctx.other_errors += 1;
-                                    log::warn!("Error reading metadata for {:?}: {}", entry.path(), e);
+                                    log::warn!(
+                                        "Error reading metadata for {:?}: {}",
+                                        entry.path(),
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -405,7 +442,10 @@ mod tests {
     #[test]
     fn test_cancel_flag_initial_state() {
         let cleaner = TempCleaner::new().unwrap();
-        assert!(!cleaner.is_cancelled(), "Cancel flag should be false initially");
+        assert!(
+            !cleaner.is_cancelled(),
+            "Cancel flag should be false initially"
+        );
     }
 
     #[test]
@@ -415,7 +455,10 @@ mod tests {
 
         cleaner.cancel();
 
-        assert!(cleaner.is_cancelled(), "Cancel flag should be true after cancel()");
+        assert!(
+            cleaner.is_cancelled(),
+            "Cancel flag should be true after cancel()"
+        );
     }
 
     #[test]
@@ -426,7 +469,10 @@ mod tests {
         // Simulate another thread setting the flag
         cancel_flag.store(true, Ordering::Relaxed);
 
-        assert!(cleaner.is_cancelled(), "Cancel flag should be visible across references");
+        assert!(
+            cleaner.is_cancelled(),
+            "Cancel flag should be visible across references"
+        );
     }
 
     #[test]
@@ -535,7 +581,10 @@ mod tests {
         // Files should still exist
         assert!(file1.exists(), "File should still exist after dry run");
         assert!(file2.exists(), "File should still exist after dry run");
-        assert_eq!(stats.deleted_files, 2, "Stats should show 2 files would be deleted");
+        assert_eq!(
+            stats.deleted_files, 2,
+            "Stats should show 2 files would be deleted"
+        );
     }
 
     #[test]
@@ -661,11 +710,13 @@ mod tests {
         let mut callback_count = 0;
         let mut last_processed = 0;
 
-        cleaner.clean(true, |processed, total| {
-            callback_count += 1;
-            last_processed = processed;
-            assert!(processed <= total, "Processed should not exceed total");
-        }).unwrap();
+        cleaner
+            .clean(true, |processed, total| {
+                callback_count += 1;
+                last_processed = processed;
+                assert!(processed <= total, "Processed should not exceed total");
+            })
+            .unwrap();
 
         assert!(callback_count > 0, "Callback should be called");
         assert_eq!(last_processed, 3, "Should process all 3 files");
@@ -689,7 +740,10 @@ mod tests {
 
         let stats = cleaner.scan();
 
-        assert_eq!(stats.total_files, 2, "Should find files in nested directories");
+        assert_eq!(
+            stats.total_files, 2,
+            "Should find files in nested directories"
+        );
     }
 
     #[test]

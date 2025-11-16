@@ -2,8 +2,49 @@
 
 A modular command-line interface tool for managing workspaces and system utilities.
 
+## Quick Start
+
+### Prerequisites
+- [Rust](https://www.rust-lang.org/tools/install) (1.70 or higher)
+
+En caso de tener problemas con dlltool
+- [MSY](https://www.msys2.org)
+
+Ejecutar en MSYS2 MinGW
+
+```bash
+pacman -Syu
+pacman -S mingw-w64-x86_64-toolchain
+```bash
+
+### Build and Run
+
+```bash
+# Clone the repository
+git clone https://github.com/marco/msc.git
+cd msc
+
+# Build the project
+cargo build
+
+# Run locally commands (development)
+cargo run -- --help
+cargo run -- list
+cargo run -- work map
+
+# Build optimized release version
+cargo build --release
+
+# Install locally
+cargo install --path .
+
+# After installation, use directly
+msc --help
+```
+
 ## Features
 
+- **Global Alias System**: Create global command aliases accessible from anywhere
 - **Workspace Management**: Configure and manage your work directories
 - **File Listing**: Advanced file scanning with Git integration and icons
 - **Temporary File Cleaning**: Clean system temporary directories safely
@@ -63,30 +104,132 @@ msc list
 msc list --long
 ```
 
+#### Global Alias System
+```bash
+# Initialize the alias system (add to PATH)
+msc alias init
+
+# Create a new alias
+msc alias add pyh "python3 -m http.server 5000"
+
+# Create an alias with description
+msc alias add gp "git push" -d "Quick git push"
+
+# List all aliases
+msc alias list
+
+# Remove an alias
+msc alias remove pyh
+
+# After creating aliases, use them directly:
+pyh              # Runs: python3 -m http.server 5000
+gp               # Runs: git push
+```
+
 #### Temporary File Cleaning
 ```bash
-# Dry run (preview what would be deleted)
-msc clean-temp --dry-run
+# List all paths that will be cleaned
+msc clean list
 
-# Actually clean temporary files (requires admin/sudo)
-msc clean-temp
+# Dry run (preview what would be deleted)
+msc clean start --dry-run
+
+# Clean temporary files
+msc clean start
+
+# Clean with specific age threshold
+msc clean start --min-age 48
+
+# Include Recycle Bin
+msc clean start --IR
+
+# Clean work cache (target, dist, node_modules)
+msc clean start --work-cache
 ```
+
+## Alias System
+
+The alias system allows you to create global command shortcuts that work from anywhere in your terminal.
+
+### How It Works
+
+1. **Windows**: Creates lightweight executable shims (~369KB each) that forward commands
+2. **Unix**: Creates shell scripts that execute your commands
+3. **Configuration**: Stored in `~/.config/msc/aliases/aliases.json` (cross-platform)
+4. **Executables**: Stored in `~/.config/msc/aliases/bin/`
+
+### Quick Start
+
+```bash
+# 1. Initialize (adds bin directory to PATH)
+msc alias init
+
+# 2. Create your first alias
+msc alias add gs "git status"
+
+# 3. Restart your terminal or source your shell config
+
+# 4. Use it!
+gs    # Runs: git status
+```
+
+### Common Use Cases
+
+```bash
+# Development shortcuts
+msc alias add cb "cargo build --release"
+msc alias add ct "cargo test"
+
+# Git shortcuts
+msc alias add gp "git push"
+msc alias add gl "git log --oneline --graph"
+msc alias add gs "git status"
+
+# Python development
+msc alias add pyh "python3 -m http.server 5000"
+msc alias add venv "python3 -m venv venv"
+
+# System utilities
+msc alias add update "sudo apt update && sudo apt upgrade"
+msc alias add ports "netstat -tuln"
+```
+
+### Platform-Specific Details
+
+#### Windows
+- Adds `%APPDATA%\msc\aliases\bin` to user PATH via registry
+- May require terminal restart
+- Supports command arguments: `pyh --help` works as expected
+
+#### Unix (Linux/macOS)
+- Adds `~/.config/msc/aliases/bin` to shell config (.bashrc, .zshrc, or config.fish)
+- Run `source ~/.bashrc` (or equivalent) to apply immediately
+- Supports all shell features
 
 ## Architecture
 
 The project follows a clean, modular architecture with clear separation of concerns:
 
 ```
-src/
-├── main.rs          # Entry point (~80 lines)
-├── lib.rs           # Public API for reusability
-├── error.rs         # Custom error types
-├── commands/        # CLI command handlers
-├── core/            # Business logic
-├── ui/              # User interface components
-├── platform/        # OS-specific code
-├── git/             # Git integration
-└── utils/           # Shared utilities
+msc/
+├── msc-shim/            # Lightweight shim executable for aliases
+│   └── src/
+│       └── main.rs      # Shim implementation (~140 lines)
+├── src/
+│   ├── main.rs          # Entry point (~80 lines)
+│   ├── lib.rs           # Public API for reusability
+│   ├── error.rs         # Custom error types
+│   ├── commands/        # CLI command handlers
+│   │   └── alias.rs     # Alias command implementation
+│   ├── core/            # Business logic
+│   │   ├── alias.rs     # Alias data model
+│   │   ├── alias_generator.rs  # Platform-specific generators
+│   │   └── path_manager.rs     # PATH management
+│   ├── ui/              # User interface components
+│   ├── platform/        # OS-specific code
+│   ├── git/             # Git integration
+│   └── utils/           # Shared utilities
+└── tests/               # Comprehensive test suite
 ```
 
 ### Module Responsibilities

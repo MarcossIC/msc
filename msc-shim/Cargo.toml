@@ -1,0 +1,18 @@
+[package]
+name = "msc-shim"
+version = "0.1.0"
+edition = "2021"
+authors = ["Marco"]
+description = "Lightweight shim executable for MSC alias system"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "5.0"
+
+[profile.release]
+opt-level = "z"       # Optimizar para tamaño
+lto = true            # Link Time Optimization
+codegen-units = 1     # Mejor optimización (más lento de compilar)
+strip = true          # Eliminar símbolos de debug
+panic = "abort"       # Abortar en panic (binario más pequeño)

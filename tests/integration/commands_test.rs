@@ -38,6 +38,7 @@ fn test_workspace_list() {
         default_paths: Vec::new(),
         custom_paths: Vec::new(),
         excluded_default_paths: Vec::new(),
+        ignored_work_folders: Vec::new(),
     };
 
     let manager = WorkspaceManager::with_config(config);
