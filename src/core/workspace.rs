@@ -21,6 +21,7 @@
 
 use crate::core::config::Config;
 use anyhow::Result;
+use log::warn;
 use std::fs;
 use std::path::Path;
 
@@ -73,13 +74,19 @@ impl WorkspaceManager {
 
             if entry.file_type()?.is_dir() && !file_name.starts_with('.') {
                 let full_path = entry.path();
-                let canonical_path = full_path
-                    .canonicalize()
-                    .unwrap_or(full_path)
-                    .to_string_lossy()
-                    .to_string();
+                let canonical_path = match full_path.canonicalize() {
+                    Ok(path) => path,
+                    Err(e) => {
+                        warn!(
+                            "Failed to canonicalize path {:?} ({}), using original path",
+                            full_path, e
+                        );
+                        full_path.clone()
+                    }
+                };
 
-                self.config.add_workspace(file_name, canonical_path);
+                let canonical_path_str = canonical_path.to_string_lossy().to_string();
+                self.config.add_workspace(file_name, canonical_path_str);
                 count += 1;
             }
         }

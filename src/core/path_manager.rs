@@ -132,20 +132,22 @@ impl PathManager {
         let bin_dir = Self::get_aliases_bin_dir()?;
         let bin_dir_str = bin_dir.to_string_lossy();
 
-        // Detect shell
-        let shell = env::var("SHELL").unwrap_or_default();
+        // Detect shell - default to bash if SHELL env var not set
+        let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+
+        let home = dirs::home_dir().with_context(|| "Could not determine home directory")?;
 
         let (rc_file, path_line) = if shell.contains("zsh") {
-            let rc = dirs::home_dir().unwrap().join(".zshrc");
+            let rc = home.join(".zshrc");
             let line = format!("\n# MSC aliases\nexport PATH=\"{}:$PATH\"\n", bin_dir_str);
             (rc, line)
         } else if shell.contains("fish") {
-            let rc = dirs::home_dir().unwrap().join(".config/fish/config.fish");
+            let rc = home.join(".config/fish/config.fish");
             let line = format!("\n# MSC aliases\nset -gx PATH {} $PATH\n", bin_dir_str);
             (rc, line)
         } else {
             // Default to bash
-            let rc = dirs::home_dir().unwrap().join(".bashrc");
+            let rc = home.join(".bashrc");
             let line = format!("\n# MSC aliases\nexport PATH=\"{}:$PATH\"\n", bin_dir_str);
             (rc, line)
         };
@@ -183,15 +185,17 @@ impl PathManager {
         let bin_dir = Self::get_aliases_bin_dir()?;
         let bin_dir_str = bin_dir.to_string_lossy();
 
-        // Detect shell
-        let shell = env::var("SHELL").unwrap_or_default();
+        // Detect shell - default to bash if SHELL env var not set
+        let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+
+        let home = dirs::home_dir().with_context(|| "Could not determine home directory")?;
 
         let rc_files = if shell.contains("zsh") {
-            vec![dirs::home_dir().unwrap().join(".zshrc")]
+            vec![home.join(".zshrc")]
         } else if shell.contains("fish") {
-            vec![dirs::home_dir().unwrap().join(".config/fish/config.fish")]
+            vec![home.join(".config/fish/config.fish")]
         } else {
-            vec![dirs::home_dir().unwrap().join(".bashrc")]
+            vec![home.join(".bashrc")]
         };
 
         for rc_file in rc_files {

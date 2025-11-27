@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -8,6 +9,14 @@ use std::path::PathBuf;
 pub struct Config {
     #[serde(default)]
     pub work_path: Option<String>,
+    #[serde(default)]
+    pub video_path: Option<String>,
+    #[serde(default)]
+    pub yt_dlp_path: Option<String>,
+    /// Indica si yt-dlp fue instalado por msc (true) o si el usuario ya lo tenía (false)
+    /// Útil para saber si debemos desinstalar nuestra versión en el futuro
+    #[serde(default)]
+    pub yt_dlp_installed_by_msc: bool,
     #[serde(default)]
     pub workspaces: HashMap<String, String>,
     /// System default temp paths (synchronized dynamically on each load)
@@ -37,13 +46,21 @@ impl Config {
 
             // If the file is empty or corrupted, return default config
             if data.is_empty() {
+                warn!("Config file is empty, using default configuration");
                 Config::default()
             } else {
-                bincode::deserialize(&data).unwrap_or_else(|_| {
-                    // If deserialization fails, return default config
-                    // (this can happen when the config format changes)
-                    Config::default()
-                })
+                match bincode::deserialize(&data) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        warn!(
+                            "Failed to deserialize config file ({}), using default configuration. \
+                             This can happen when the config format changes. \
+                             Previous config will be backed up on next save.",
+                            e
+                        );
+                        Config::default()
+                    }
+                }
             }
         };
 
@@ -89,6 +106,30 @@ impl Config {
 
     pub fn get_work_path(&self) -> Option<&String> {
         self.work_path.as_ref()
+    }
+
+    pub fn set_video_path(&mut self, path: String) {
+        self.video_path = Some(path);
+    }
+
+    pub fn get_video_path(&self) -> Option<&String> {
+        self.video_path.as_ref()
+    }
+
+    pub fn set_yt_dlp_path(&mut self, path: String) {
+        self.yt_dlp_path = Some(path);
+    }
+
+    pub fn get_yt_dlp_path(&self) -> Option<&String> {
+        self.yt_dlp_path.as_ref()
+    }
+
+    pub fn set_yt_dlp_installed_by_msc(&mut self, installed_by_msc: bool) {
+        self.yt_dlp_installed_by_msc = installed_by_msc;
+    }
+
+    pub fn is_yt_dlp_installed_by_msc(&self) -> bool {
+        self.yt_dlp_installed_by_msc
     }
 
     pub fn add_workspace(&mut self, name: String, path: String) {

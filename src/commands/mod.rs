@@ -5,6 +5,7 @@ pub mod config;
 pub mod hello;
 pub mod list;
 pub mod version;
+pub mod vget;
 pub mod workspace;
 
 // Re-exports for cleaner imports

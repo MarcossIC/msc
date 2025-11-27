@@ -51,6 +51,7 @@ fn main() -> Result<()> {
             }
         },
         Some(("list", sub_matches)) => commands::list::execute(sub_matches),
+        Some(("vget", sub_matches)) => commands::vget::execute(sub_matches),
         _ => {
             println!("Welcome to MSC CLI!");
             println!("Use 'msc --help' for more information.");
@@ -158,6 +159,14 @@ fn build_cli() -> Command {
                             .required(true)
                             .index(1),
                     ),
+                )
+                .subcommand(
+                    Command::new("video").about("Set video directory path").arg(
+                        Arg::new("path")
+                            .help("Path to the video directory")
+                            .required(true)
+                            .index(1),
+                    ),
                 ),
         )
         .subcommand(
@@ -165,7 +174,8 @@ fn build_cli() -> Command {
                 .about("Get configuration values")
                 .subcommand_required(true)
                 .arg_required_else_help(true)
-                .subcommand(Command::new("work").about("Get work directory path")),
+                .subcommand(Command::new("work").about("Get work directory path"))
+                .subcommand(Command::new("video").about("Get video directory path")),
         )
         .subcommand(
             Command::new("work")
@@ -440,6 +450,89 @@ fn build_cli() -> Command {
                                         .index(1),
                                 ),
                         ),
+                ),
+        )
+        .subcommand(
+            Command::new("vget")
+                .about("Download videos from 1000+ platforms using yt-dlp")
+                .long_about(
+                    "Download videos from YouTube, Vimeo, TikTok, Twitch, and 1000+ platforms.\n\n\
+                    FEATURES:\n\
+                    • Auto-installs yt-dlp if not present\n\
+                    • Resumes interrupted downloads automatically\n\
+                    • Supports playlists and multiple formats\n\
+                    • Downloads to configured video directory\n\n\
+                    EXAMPLES:\n\
+                    msc vget \"https://youtube.com/watch?v=...\"          # Basic download\n\
+                    msc vget \"https://vimeo.com/123456789\"              # Download from Vimeo\n\
+                    msc vget \"URL\" -o my_video                          # Custom name\n\
+                    msc vget \"URL\" -q 720p                              # Specific quality\n\
+                    msc vget \"URL\" --audio-only                         # Audio only\n\
+                    msc vget \"URL\" --playlist                           # Download playlist\n\
+                    msc vget \"URL\" --no-continue                        # Force download from scratch\n\
+                    msc vget \"URL\" --clean-parts                        # Clean .part files first"
+                )
+                .arg(
+                    Arg::new("url")
+                        .help("URL of the video to download")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("output")
+                        .short('o')
+                        .long("output")
+                        .value_name("NAME")
+                        .help("Custom output filename (without extension)"),
+                )
+                .arg(
+                    Arg::new("quality")
+                        .short('q')
+                        .long("quality")
+                        .value_name("QUALITY")
+                        .help("Video quality (e.g., 1080p, 720p, 480p)")
+                        .value_parser(["2160p", "1080p", "720p", "480p", "360p", "best"]),
+                )
+                .arg(
+                    Arg::new("format")
+                        .short('f')
+                        .long("format")
+                        .value_name("FORMAT")
+                        .help("Output format (mp4, mkv, webm)")
+                        .value_parser(["mp4", "mkv", "webm", "avi"]),
+                )
+                .arg(
+                    Arg::new("audio-only")
+                        .short('a')
+                        .long("audio-only")
+                        .help("Download audio only")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("no-playlist")
+                        .long("no-playlist")
+                        .help("Download only the video (ignore playlist)")
+                        .action(clap::ArgAction::SetTrue)
+                        .conflicts_with("playlist"),
+                )
+                .arg(
+                    Arg::new("playlist")
+                        .short('p')
+                        .long("playlist")
+                        .help("Download entire playlist")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("no-continue")
+                        .long("no-continue")
+                        .help("Force download from scratch (ignore existing .part files)")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("clean-parts")
+                        .long("clean-parts")
+                        .help("Clean orphaned .part files before downloading")
+                        .action(clap::ArgAction::SetTrue),
                 ),
         )
 }

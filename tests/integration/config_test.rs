@@ -45,6 +45,9 @@ fn test_config_workspaces() {
 
     let config = Config {
         work_path: None,
+        video_path: None,
+        yt_dlp_path: None,
+        yt_dlp_installed_by_msc: false,
         workspaces,
         default_paths: Vec::new(),
         custom_paths: Vec::new(),

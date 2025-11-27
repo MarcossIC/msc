@@ -4,7 +4,7 @@ use crate::git::{
 use crate::platform::is_hidden;
 use crate::ui::{format_permissions, format_size, format_time};
 use crate::utils::icons::get_file_icon;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::*;
 use std::fs;
 use std::path::Path;
@@ -19,7 +19,9 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
                 .map(|s| s.as_str())
                 .unwrap_or(".");
             let show_all = sub_matches.get_flag("all");
-            let depth = *sub_matches.get_one::<u32>("depth").unwrap();
+            let depth = *sub_matches
+                .get_one::<u32>("depth")
+                .context("Depth argument is required")?;
 
             list_deep(path, show_all, depth)
         }
@@ -38,13 +40,17 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
                     show_all,
                     is_deep,
                     if is_deep {
-                        *matches.get_one::<u32>("depth").unwrap()
+                        *matches
+                            .get_one::<u32>("depth")
+                            .context("Depth argument is required")?
                     } else {
                         0
                     },
                 )
             } else if is_deep {
-                let depth = *matches.get_one::<u32>("depth").unwrap();
+                let depth = *matches
+                    .get_one::<u32>("depth")
+                    .context("Depth argument is required")?;
                 list_deep(path, show_all, depth)
             } else {
                 list_simple(path, show_all)
