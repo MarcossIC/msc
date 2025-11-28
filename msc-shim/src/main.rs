@@ -86,9 +86,9 @@ fn get_config_path() -> Result<PathBuf, String> {
 fn load_command(config_path: &PathBuf, alias_name: &str) -> Result<String, String> {
     // Check if config file exists
     if !config_path.exists() {
-        return Err(format!(
-            "Alias configuration not found. Run 'msc alias list' to see available aliases."
-        ));
+        return Err(
+            "Alias configuration not found. Run 'msc alias list' to see available aliases.".to_string()
+        );
     }
 
     // Read config file
@@ -116,12 +116,12 @@ fn load_command(config_path: &PathBuf, alias_name: &str) -> Result<String, Strin
 fn execute_command(command: &str) -> i32 {
     #[cfg(target_os = "windows")]
     let status = Command::new("cmd")
-        .args(&["/C", command])
+        .args(["/C", command])
         .status();
 
     #[cfg(not(target_os = "windows"))]
     let status = Command::new("sh")
-        .args(&["-c", command])
+        .args(["-c", command])
         .status();
 
     match status {

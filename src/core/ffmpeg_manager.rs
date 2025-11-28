@@ -8,6 +8,7 @@ use std::process::Command;
 
 use crate::core::Config;
 
+#[derive(Default)]
 pub struct FFmpegManager {
     config: Config,
 }
@@ -239,14 +240,6 @@ impl FFmpegManager {
                 "ffmpeg -version failed with status: {}",
                 output.status
             ))
-        }
-    }
-}
-
-impl Default for FFmpegManager {
-    fn default() -> Self {
-        Self {
-            config: Config::default(),
         }
     }
 }

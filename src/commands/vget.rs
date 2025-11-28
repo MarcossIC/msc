@@ -3,18 +3,31 @@ use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use dialoguer::Input;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Configuration for video download
+struct DownloadConfig<'a> {
+    yt_dlp_path: &'a Path,
+    url: &'a str,
+    download_dir: &'a Path,
+    output: Option<&'a str>,
+    quality: Option<&'a str>,
+    format: Option<&'a str>,
+    audio_only: bool,
+    no_playlist: bool,
+    playlist: bool,
+    no_continue: bool,
+}
 
 pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     // 1. Extraer argumentos
-    let url = matches
-        .get_one::<String>("url")
-        .context("URL es requerida")?;
+    let get = |k| matches.get_one::<String>(k).map(|s| s.as_str());
 
-    let output = matches.get_one::<String>("output");
-    let quality = matches.get_one::<String>("quality");
-    let format = matches.get_one::<String>("format");
+    let url = get("url").context("URL es requerida")?;
+    let output = get("output");
+    let quality = get("quality");
+    let format = get("format");
     let audio_only = matches.get_flag("audio-only");
     let no_playlist = matches.get_flag("no-playlist");
     let playlist = matches.get_flag("playlist");
@@ -43,10 +56,10 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     }
 
     // 7. Construir y ejecutar comando
-    execute_download(
-        &yt_dlp_path,
+    let config = DownloadConfig {
+        yt_dlp_path: &yt_dlp_path,
         url,
-        &download_dir,
+        download_dir: &download_dir,
         output,
         quality,
         format,
@@ -54,7 +67,8 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
         no_playlist,
         playlist,
         no_continue,
-    )?;
+    };
+    execute_download(&config)?;
 
     Ok(())
 }
@@ -82,11 +96,8 @@ fn clean_part_files(download_dir: &PathBuf) -> Result<()> {
     }
 
     if count > 0 {
-        println!(
-            "{} {}",
-            "✓ Eliminados".green().bold(),
-            format!("{} archivos .part", count)
-        );
+        let msg = format!("{} archivos .part", count);
+        println!("{} {}", "✓ Eliminados".green().bold(), msg);
     } else {
         println!("{}", "No se encontraron archivos .part".dimmed());
     }
@@ -104,14 +115,11 @@ fn get_download_directory() -> Result<PathBuf> {
         let path = PathBuf::from(video_path);
 
         if !path.exists() {
-            println!(
-                "{}",
-                format!(
-                    "⚠️  El directorio de videos configurado no existe: {}",
-                    video_path
-                )
-                .yellow()
+            let msg = format!(
+                "⚠️  El directorio de videos configurado no existe: {}",
+                video_path
             );
+            println!("{}", msg.yellow());
             println!();
             // Pedir nueva ruta interactivamente
             let new_path = prompt_for_video_path()?;
@@ -167,10 +175,8 @@ fn prompt_for_video_path() -> Result<PathBuf> {
         // Verificar si el directorio existe
         if !path.exists() {
             println!();
-            println!(
-                "{}",
-                format!("⚠️  El directorio '{}' no existe.", input).yellow()
-            );
+            let msg = format!("⚠️  El directorio '{}' no existe.", input);
+            println!("{}", msg.yellow());
 
             // Preguntar si quiere crearlo
             if dialoguer::Confirm::new()
@@ -179,10 +185,8 @@ fn prompt_for_video_path() -> Result<PathBuf> {
                 .interact()?
             {
                 fs::create_dir_all(&path).context("No se pudo crear el directorio")?;
-                println!(
-                    "{}",
-                    format!("✓ Directorio creado: {}", path.display()).green()
-                );
+                let success_msg = format!("✓ Directorio creado: {}", path.display());
+                println!("{}", success_msg.green());
                 return Ok(path);
             }
 
@@ -194,10 +198,8 @@ fn prompt_for_video_path() -> Result<PathBuf> {
         // Verificar que es un directorio
         if !path.is_dir() {
             println!();
-            println!(
-                "{}",
-                format!("⚠️  '{}' no es un directorio válido.", input).red()
-            );
+            let msg = format!("⚠️  '{}' no es un directorio válido.", input);
+            println!("{}", msg.red());
             println!();
             continue;
         }
@@ -207,7 +209,7 @@ fn prompt_for_video_path() -> Result<PathBuf> {
 }
 
 /// Guarda la ruta de video en la configuración
-fn save_video_path(config: &mut Config, path: &PathBuf) -> Result<()> {
+fn save_video_path(config: &mut Config, path: &Path) -> Result<()> {
     let canonical_path = path
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("Failed to resolve path: {}", e))?
@@ -221,38 +223,27 @@ fn save_video_path(config: &mut Config, path: &PathBuf) -> Result<()> {
 }
 
 /// Ejecuta la descarga del video
-fn execute_download(
-    yt_dlp_path: &PathBuf,
-    url: &str,
-    download_dir: &PathBuf,
-    output: Option<&String>,
-    quality: Option<&String>,
-    format: Option<&String>,
-    audio_only: bool,
-    no_playlist: bool,
-    playlist: bool,
-    no_continue: bool,
-) -> Result<()> {
+fn execute_download(config: &DownloadConfig) -> Result<()> {
     println!();
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
     println!("{}", "  Descargando Video".cyan().bold());
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
     println!();
 
-    let mut cmd = Command::new(yt_dlp_path);
+    let mut cmd = Command::new(config.yt_dlp_path);
 
     // Configurar directorio de salida
-    let output_template = if let Some(name) = output {
-        download_dir.join(format!("{}.%(ext)s", name))
+    let output_template = if let Some(name) = config.output {
+        config.download_dir.join(format!("{}.%(ext)s", name))
     } else {
-        download_dir.join("%(title)s.%(ext)s")
+        config.download_dir.join("%(title)s.%(ext)s")
     };
 
     cmd.arg("-o").arg(output_template);
 
     // Configurar continuación de descarga
     // Por defecto, yt-dlp continúa descargas interrumpidas (-c está implícito)
-    if no_continue {
+    if config.no_continue {
         // Forzar descarga desde cero (--no-continue)
         cmd.arg("--no-continue");
         println!(
@@ -271,32 +262,32 @@ fn execute_download(
     println!();
 
     // Configurar calidad
-    if let Some(q) = quality {
+    if let Some(q) = config.quality {
         cmd.arg("-f").arg(format!(
             "bestvideo[height<={}]+bestaudio/best[height<={}]",
             q, q
         ));
-    } else if audio_only {
+    } else if config.audio_only {
         cmd.arg("-f").arg("bestaudio");
         cmd.arg("-x"); // Extract audio
     }
 
     // Configurar formato
-    if let Some(fmt) = format {
+    if let Some(fmt) = config.format {
         cmd.arg("--merge-output-format").arg(fmt);
-    } else if !audio_only {
+    } else if !config.audio_only {
         cmd.arg("--merge-output-format").arg("mp4");
     }
 
     // Configurar playlist
-    if no_playlist {
+    if config.no_playlist {
         cmd.arg("--no-playlist");
-    } else if playlist {
+    } else if config.playlist {
         cmd.arg("--yes-playlist");
     }
 
     // Agregar URL
-    cmd.arg(url);
+    cmd.arg(config.url);
 
     println!("{} {:?}", "Ejecutando:".dimmed(), cmd);
     println!();

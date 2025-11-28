@@ -211,13 +211,15 @@ fn test_workspace_map_with_valid_work_path() {
     // Should succeed or fail gracefully
     // (Implementation may vary - this test documents the behavior)
     if result.is_ok() {
-        let count = result.unwrap();
-        // Should have found some directories
-        assert!(count > 0);
+        if let Ok(count) = result {
+            assert!(count > 0, "Expected at least one directory to be mapped");
 
-        // Verify workspaces were added
-        let workspaces = manager.list_workspaces();
-        assert!(workspaces.len() > 0);
+            let workspaces = manager.list_workspaces();
+            assert!(
+                !workspaces.is_empty(),
+                "Expected workspace list to be non-empty"
+            );
+        }
     }
     // If it fails, that's acceptable for this test environment
 }
@@ -289,11 +291,14 @@ fn test_workspace_map_ignores_files() {
         let workspaces = manager.list_workspaces();
 
         // Should have at least the "project" directory
-        assert!(workspaces.len() > 0);
+        assert!(
+            !workspaces.is_empty(),
+            "Expected at least one workspace to be mapped"
+        );
 
         // Verify "project" is in the list
         let has_project = workspaces.iter().any(|(name, _)| name == "project");
-        assert!(has_project, "Should have found 'project' directory");
+        assert!(has_project, "Expected to find 'project' directory");
     }
     // If mapping fails, test still passes (implementation may vary)
 }
@@ -319,14 +324,22 @@ fn test_workspace_map_with_nested_directories() {
 
     // Only test if mapping succeeds
     if result.is_ok() {
-        let workspaces = manager.list_workspaces();
+        let workspaces = result
+            .as_ref()
+            .map(|_| manager.list_workspaces())
+            .unwrap_or_default();
 
         // Should have mapped at least one workspace
-        assert!(workspaces.len() > 0);
+        assert!(
+            !workspaces.is_empty(),
+            "Expected at least one workspace to be mapped"
+        );
 
-        // Should include the top-level "project" directory
-        let has_project = workspaces.iter().any(|(name, _)| name == "project");
-        assert!(has_project, "Should have found 'project' directory");
+        // Should include the top-level 'project' directory
+        assert!(
+            workspaces.iter().any(|(name, _)| name == "project"),
+            "Expected to find 'project' directory"
+        );
     }
     // If mapping fails, test still passes (implementation may vary)
 }

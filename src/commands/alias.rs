@@ -394,15 +394,13 @@ fn cleanup_installed_tools() -> Result<()> {
     let config_dir = dirs::config_dir().context("Could not determine config directory")?;
     let bin_dir = config_dir.join("msc").join("bin");
 
-    if bin_dir.exists() {
-        // Check if directory is empty
-        if let Ok(entries) = fs::read_dir(&bin_dir) {
-            if entries.count() == 0 {
-                match fs::remove_dir(&bin_dir) {
-                    Ok(_) => println!("    {} Removed empty bin directory", "✓".green()),
-                    Err(_) => {} // Ignore errors for empty directory removal
-                }
-            }
+    if fs::read_dir(&bin_dir)
+        .map(|dirs| dirs.count() == 0)
+        .unwrap_or(false)
+    {
+        match fs::remove_dir(&bin_dir) {
+            Ok(_) => println!("    {} Removed empty bin directory", "✓".green()),
+            Err(e) => eprintln!("    Failed to remove empty bin directory: {}", e),
         }
     }
 

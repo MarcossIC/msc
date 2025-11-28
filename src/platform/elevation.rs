@@ -121,5 +121,5 @@ pub fn ensure_elevated() -> Result<bool> {
 }
 
 pub fn simulate_elevation_command(program: &str, args: &str) -> String {
-    build_elevation_command(program, &vec![args.to_string()])
+    build_elevation_command(program, &[args.to_string()])
 }

@@ -8,6 +8,7 @@ use std::process::Command;
 
 use crate::core::Config;
 
+#[derive(Default)]
 pub struct WgetManager {
     config: Config,
 }
@@ -149,14 +150,6 @@ impl WgetManager {
                 "wget --version failed with status: {}",
                 output.status
             ))
-        }
-    }
-}
-
-impl Default for WgetManager {
-    fn default() -> Self {
-        Self {
-            config: Config::default(),
         }
     }
 }

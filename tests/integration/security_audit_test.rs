@@ -572,7 +572,6 @@ fn test_high_binary_download_without_verification() {
     println!("  1. Attacker compromises TLS certificate");
     println!("  2. Attacker gains access to yt-dlp GitHub releases");
     println!("  3. Attacker performs MitM on corporate network");
-    println!("");
     println!("Recommendation:");
     println!("  - Verify GPG signature from yt-dlp");
     println!("  - Compare SHA256 checksum");
@@ -606,7 +605,6 @@ fn test_high_url_credentials_exposure() {
         println!("⚠️  HIGH: Credentials would be exposed in logs:");
         println!("    URL: {}", url);
         println!("    Output: Ejecutando: Command {{ ... \"{}\" }}", url);
-        println!("");
 
         // TODO: Redact credentials from logs
         // Expected: https://***:***@private-server.com/video.mp4
@@ -665,12 +663,10 @@ fn test_medium_race_condition_alias_generation() {
     println!("  2. config.save() writes aliases.json");
     println!("  3. Attacker replaces aliases.json with malicious version");
     println!("  4. generator.generate() creates executable with malicious command");
-    println!("");
     println!("Requirements:");
     println!("  - Filesystem access");
     println!("  - Precise timing");
     println!("  - inotify/FileSystemWatcher to detect save");
-    println!("");
     println!("Mitigation:");
     println!("  - Use atomic operations");
     println!("  - Verify config before generating executable");
@@ -689,7 +685,6 @@ fn test_medium_alias_json_tampering() {
     println!("  1. Modify ~/.config/msc/aliases/aliases.json");
     println!("  2. Inject malicious commands");
     println!("  3. Wait for user to execute alias");
-    println!("");
     println!("Example malicious JSON:");
     println!(
         r#"{{
@@ -702,7 +697,6 @@ fn test_medium_alias_json_tampering() {
   }}
 }}"#
     );
-    println!("");
     println!("Mitigation:");
     println!("  - Sign aliases.json with HMAC");
     println!("  - Verify signature on load");
@@ -722,12 +716,10 @@ fn test_medium_config_bin_tampering() {
     println!("  2. Change work_path to malicious directory");
     println!("  3. Change video_path to sensitive location");
     println!("  4. Modify clean_paths to delete important files");
-    println!("");
     println!("Potential impact:");
     println!("  - msc clean could delete wrong directories");
     println!("  - msc work map could scan malicious directory");
     println!("  - Path traversal to sensitive locations");
-    println!("");
     println!("Mitigation:");
     println!("  - Add HMAC authentication to config.bin");
     println!("  - Validate all paths on load");
@@ -824,7 +816,10 @@ fn test_safe_path_traversal_protection() {
 fn test_safe_null_byte_injection() {
     // ✅ SAFE: Null bytes are properly rejected
 
-    let _null_byte_attempts = vec!["path\0malicious", "https://example.com\0evil"];
+    let _null_byte_attempts = [
+        String::from_utf8_lossy(b"path\0malicious").into_owned(),
+        String::from_utf8_lossy(b"https://example.com\0evil").into_owned(),
+    ];
 
     assert!(validation::validate_url("https://example.com\0").is_err());
     assert!(validation::validate_output_path("video\0.mp4").is_err());

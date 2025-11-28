@@ -5,7 +5,7 @@ use dialoguer::Input;
 use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use url::Url;
 
@@ -50,10 +50,11 @@ pub fn execute_postprocessing(matches: &clap::ArgMatches) -> Result<()> {
             .and_then(|n| n.to_str())
             .unwrap_or("example.com");
 
+        let url_msg = format!("https://{}", domain);
         println!(
             "{} {}",
             "⚠️  URL no especificada, usando:".yellow(),
-            format!("https://{}", domain)
+            url_msg
         );
         Url::parse(&format!("https://{}", domain))?
     };
@@ -386,7 +387,7 @@ impl Crawler {
                         // Only process HTML files
                         if local_path
                             .extension()
-                            .map_or(false, |ext| ext == "html" || ext == "htm")
+                            .is_some_and(|ext| ext == "html" || ext == "htm")
                         {
                             println!(
                                 "   {}",
@@ -538,7 +539,7 @@ fn prompt_for_web_path() -> Result<PathBuf> {
 }
 
 /// Save web path to configuration
-fn save_web_path(config: &mut Config, path: &PathBuf) -> Result<()> {
+fn save_web_path(config: &mut Config, path: &Path) -> Result<()> {
     let canonical_path = path
         .canonicalize()
         .context("Failed to resolve path")?
@@ -673,15 +674,16 @@ fn post_process_directory(current_dir: &PathBuf, root_dir: &PathBuf, base_url: &
 
         if path.is_dir() {
             // Skip assets directory
-            if path.file_name().map_or(false, |n| n == "assets") {
+            if path.file_name().is_some_and(|n| n == "assets") {
                 continue;
             }
             post_process_directory(&path, root_dir, base_url)?;
         } else if path
             .extension()
-            .map_or(false, |ext| ext == "html" || ext == "htm")
+            .is_some_and(|ext| ext == "html" || ext == "htm")
         {
-            println!("   {}", format!("⟳ Procesando {}", path.display()).dimmed());
+            let msg = format!("⟳ Procesando {}", path.display());
+            println!("   {}", msg.dimmed());
             process_html_file_complete(&path, root_dir, base_url)?;
         }
     }
@@ -690,8 +692,8 @@ fn post_process_directory(current_dir: &PathBuf, root_dir: &PathBuf, base_url: &
 
 /// Process the downloaded page(s) to ensure all links are local and resources are downloaded (single page mode)
 fn process_downloaded_page(original_url: &str, target_dir: &PathBuf) -> Result<()> {
-    let base_url =
-        Url::parse(original_url).unwrap_or_else(|_| Url::parse("http://example.com").unwrap());
+    let base_url = Url::parse(original_url)
+        .with_context(|| format!("Invalid URL received: {}", original_url))?;
 
     // In Single Page Mode, wget uses --no-directories, so the file is in target_dir (flat)
     // We calculate the expected file path and only process that one file
@@ -731,12 +733,11 @@ fn process_downloaded_page(original_url: &str, target_dir: &PathBuf) -> Result<(
 
 /// Calculate possible local file paths where the URL might be saved
 /// Returns multiple possibilities to handle both flat and nested directory structures
-fn calculate_possible_local_paths(url: &Url, base_dir: &PathBuf) -> Vec<PathBuf> {
+fn calculate_possible_local_paths(url: &Url, base_dir: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
-    let domain = match url.domain() {
-        Some(d) => d,
-        None => return paths,
+    let Some(domain) = url.domain() else {
+        return paths;
     };
 
     let url_path = url.path();
@@ -759,7 +760,7 @@ fn calculate_possible_local_paths(url: &Url, base_dir: &PathBuf) -> Vec<PathBuf>
             let has_extension = rel_path.contains('.')
                 && rel_path
                     .split('/')
-                    .last()
+                    .next_back()
                     .map(|f| f.contains('.'))
                     .unwrap_or(false);
 
@@ -769,7 +770,7 @@ fn calculate_possible_local_paths(url: &Url, base_dir: &PathBuf) -> Vec<PathBuf>
                     *last = format!("{}.html", last);
                 }
             } else if !url_path.ends_with(".html") && !url_path.ends_with(".htm") {
-                let ext = rel_path.split('.').last().unwrap_or("");
+                let ext = rel_path.split('.').next_back().unwrap_or("");
                 if ![
                     "html", "htm", "css", "js", "json", "xml", "txt", "pdf", "png", "jpg", "jpeg",
                     "gif", "svg", "ico", "woff", "woff2", "ttf", "eot",
@@ -812,9 +813,9 @@ fn calculate_possible_local_paths(url: &Url, base_dir: &PathBuf) -> Vec<PathBuf>
 
 /// Calculate the local file path for a URL assuming a FLAT directory structure
 /// (used when wget is run with --no-directories)
-fn calculate_flat_local_path(url: &Url, base_dir: &PathBuf) -> Option<PathBuf> {
+fn calculate_flat_local_path(url: &Url, base_dir: &Path) -> Option<PathBuf> {
     let path = url.path();
-    let mut local_path = base_dir.clone();
+    let mut local_path = base_dir.to_path_buf();
 
     if path == "/" || path.is_empty() {
         local_path.push("index.html");
@@ -826,7 +827,7 @@ fn calculate_flat_local_path(url: &Url, base_dir: &PathBuf) -> Option<PathBuf> {
         let file_name = if path.ends_with('/') {
             "index.html"
         } else {
-            rel_path.split('/').last().unwrap_or("index.html")
+            rel_path.split('/').next_back().unwrap_or("index.html")
         };
 
         // Handle extension adjustments similar to wget
@@ -871,7 +872,7 @@ fn calculate_flat_local_path(url: &Url, base_dir: &PathBuf) -> Option<PathBuf> {
 
 /// Calculate the local file path where wget would save a given URL
 /// This mirrors wget's behavior with --adjust-extension and directory structure
-fn calculate_local_path_for_url(url: &Url, base_dir: &PathBuf) -> Option<PathBuf> {
+fn calculate_local_path_for_url(url: &Url, base_dir: &Path) -> Option<PathBuf> {
     let domain = url.domain()?;
     let path = url.path();
 
@@ -896,7 +897,7 @@ fn calculate_local_path_for_url(url: &Url, base_dir: &PathBuf) -> Option<PathBuf
             let has_extension = rel_path.contains('.')
                 && rel_path
                     .split('/')
-                    .last()
+                    .next_back()
                     .map(|f| f.contains('.'))
                     .unwrap_or(false);
 
@@ -1033,7 +1034,7 @@ fn process_html_file_complete(
                 };
 
                 // Determine local filename
-                let file_name = match full_url.split('/').last() {
+                let file_name = match full_url.split('/').next_back() {
                     Some(name) if !name.is_empty() => {
                         // Remove query params
                         name.split('?').next().unwrap_or("resource")
@@ -1112,6 +1113,9 @@ fn process_html_file_complete(
     }
 
     // Apply replacements
+    let src_pattern = regex::Regex::new(r#"src\s*=\s*["'][^"']*["']"#)
+        .context("Failed to create regex pattern")?;
+
     for (target, replacement, is_image) in replacements {
         if is_image {
             // Try to find the target. It might be HTML encoded in the file (e.g. & -> &amp;)
@@ -1143,8 +1147,6 @@ fn process_html_file_complete(
                                 let mut new_tag = tag_content.to_string();
                                 new_tag = new_tag.replace(&curr_target, &replacement);
 
-                                let src_pattern = regex::Regex::new(r#"src\s*=\s*["'][^"']*["']"#)
-                                    .context("Failed to create regex pattern")?;
                                 new_tag = src_pattern
                                     .replace(&new_tag, format!("src=\"{}\"", replacement).as_str())
                                     .to_string();
@@ -1306,7 +1308,7 @@ fn process_html_file_complete(
                                         }
                                     };
 
-                                    let file_name = match full_url.split('/').last() {
+                                    let file_name = match full_url.split('/').next_back() {
                                         Some(name) if !name.is_empty() => {
                                             name.split('?').next().unwrap_or("image.jpg")
                                         }
@@ -1318,8 +1320,8 @@ fn process_html_file_complete(
                                     let local_assets_dir = parent.join("assets");
                                     let global_assets_dir = base_dir.join("assets");
 
-                                    let local_path = local_assets_dir.join(&file_name);
-                                    let global_path = global_assets_dir.join(&file_name);
+                                    let local_path = local_assets_dir.join(file_name);
+                                    let global_path = global_assets_dir.join(file_name);
 
                                     let (final_path, replacement_path) = if local_path.exists() {
                                         // Already exists locally
@@ -1333,11 +1335,11 @@ fn process_html_file_complete(
                                             rel_to_global.push_str("../");
                                         }
                                         rel_to_global.push_str("assets/");
-                                        rel_to_global.push_str(&file_name);
+                                        rel_to_global.push_str(file_name);
                                         (global_path, rel_to_global)
                                     } else {
                                         // Need to download - prefer local
-                                        if let Ok(_) = fs::create_dir_all(&local_assets_dir) {
+                                        if fs::create_dir_all(&local_assets_dir).is_ok() {
                                             (
                                                 local_path,
                                                 format!("{}{}", assets_rel_path, file_name),

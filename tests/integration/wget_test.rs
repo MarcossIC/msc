@@ -42,7 +42,9 @@ mod wget_tests {
             Err(e) => {
                 let error_msg = format!("{}", e);
                 assert!(
-                    error_msg.contains("wget") || error_msg.contains("download") || error_msg.contains("install"),
+                    error_msg.contains("wget")
+                        || error_msg.contains("download")
+                        || error_msg.contains("install"),
                     "Error message should mention wget or installation: {}",
                     error_msg
                 );

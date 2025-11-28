@@ -1517,22 +1517,6 @@ Antes de hacer commit, verificar:
 
 ---
 
-## Recursos y Referencias
-
-### Documentación Rust
-
-- [The Rust Book](https://doc.rust-lang.org/book/)
-- [Rust by Example](https://doc.rust-lang.org/rust-by-example/)
-- [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
-- [Rust Design Patterns](https://rust-unofficial.github.io/patterns/)
-
-### Crates Importantes
-
-- [Clap Documentation](https://docs.rs/clap/)
-- [Serde Documentation](https://serde.rs/)
-- [Anyhow Documentation](https://docs.rs/anyhow/)
-- [Thiserror Documentation](https://docs.rs/thiserror/)
-
 ### Herramientas
 
 ```bash

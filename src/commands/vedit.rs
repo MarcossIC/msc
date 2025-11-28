@@ -2,7 +2,7 @@ use crate::core::FFmpegManager;
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Execute the vedit command to edit videos
@@ -51,7 +51,7 @@ fn execute_compress(matches: &clap::ArgMatches) -> Result<()> {
 }
 
 /// Valida que el archivo tenga una extensión de video válida
-fn validate_video_file(path: &PathBuf) -> Result<()> {
+fn validate_video_file(path: &Path) -> Result<()> {
     let valid_extensions = ["mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v"];
 
     let extension = path
@@ -72,7 +72,7 @@ fn validate_video_file(path: &PathBuf) -> Result<()> {
 }
 
 /// Construye el path de salida agregando "_compress" antes de la extensión
-fn build_output_path(input_path: &PathBuf) -> Result<PathBuf> {
+fn build_output_path(input_path: &Path) -> Result<PathBuf> {
     let parent = input_path
         .parent()
         .ok_or_else(|| anyhow!("No se pudo obtener el directorio padre"))?;
