@@ -48,7 +48,7 @@ fn test_critical_alias_command_injection_unix() {
     for (cmd, attack_type) in command_separators {
         let result = validation::validate_alias_command(cmd);
         assert!(
-            result.is_ok(),
+            result.is_err(),
             "❌ FAILED to block {} attack: {}",
             attack_type,
             cmd
@@ -69,7 +69,7 @@ fn test_critical_alias_command_injection_unix() {
     for (cmd, attack_type) in command_substitution {
         let result = validation::validate_alias_command(cmd);
         assert!(
-            result.is_ok(),
+            result.is_err(),
             "❌ FAILED to block {} attack: {}",
             attack_type,
             cmd
@@ -89,7 +89,7 @@ fn test_critical_alias_command_injection_unix() {
     for (cmd, attack_type) in backgrounding {
         let result = validation::validate_alias_command(cmd);
         assert!(
-            result.is_ok(),
+            result.is_err(),
             "❌ FAILED to block {} attack: {}",
             attack_type,
             cmd
@@ -107,7 +107,7 @@ fn test_critical_alias_command_injection_unix() {
     for (cmd, attack_type) in pipe_attacks {
         let result = validation::validate_alias_command(cmd);
         assert!(
-            result.is_ok(),
+            result.is_err(),
             "❌ FAILED to block {} attack: {}",
             attack_type,
             cmd
@@ -131,7 +131,7 @@ fn test_critical_alias_command_injection_unix() {
     for (cmd, attack_type) in redirection_attacks {
         let result = validation::validate_alias_command(cmd);
         assert!(
-            result.is_ok(),
+            result.is_err(),
             "❌ FAILED to block {} attack: {}",
             attack_type,
             cmd

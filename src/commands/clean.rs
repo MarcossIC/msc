@@ -824,7 +824,9 @@ pub fn handle_start(matches: &clap::ArgMatches) -> Result<()> {
 pub fn handle_add(matches: &clap::ArgMatches) -> Result<()> {
     use crate::core::{PathValidator, ValidationResult};
 
-    let path = matches.get_one::<String>("path").expect("Path is required");
+    let path = matches
+        .get_one::<String>("path")
+        .ok_or_else(|| anyhow::anyhow!("Path is required"))?;
     let force = matches.get_flag("force");
 
     let path_buf = Path::new(path);
@@ -1122,7 +1124,7 @@ pub fn handle_clear(_matches: &clap::ArgMatches) -> Result<()> {
 pub fn handle_ignore_add(matches: &clap::ArgMatches) -> Result<()> {
     let folder = matches
         .get_one::<String>("folder")
-        .expect("Folder is required");
+        .ok_or_else(|| anyhow::anyhow!("Folder is required"))?;
 
     // Load config
     let mut config = Config::load()?;
@@ -1206,7 +1208,7 @@ pub fn handle_ignore_list(_matches: &clap::ArgMatches) -> Result<()> {
 pub fn handle_ignore_remove(matches: &clap::ArgMatches) -> Result<()> {
     let folder = matches
         .get_one::<String>("folder")
-        .expect("Folder is required");
+        .ok_or_else(|| anyhow::anyhow!("Folder is required"))?;
 
     // Load config
     let mut config = Config::load()?;

@@ -13,23 +13,27 @@ pub struct Config {
     pub video_path: Option<String>,
     #[serde(default)]
     pub yt_dlp_path: Option<String>,
-    /// Indica si yt-dlp fue instalado por msc (true) o si el usuario ya lo tenía (false)
-    /// Útil para saber si debemos desinstalar nuestra versión en el futuro
     #[serde(default)]
     pub yt_dlp_installed_by_msc: bool,
     #[serde(default)]
+    pub web_path: Option<String>,
+    #[serde(default)]
+    pub ffmpeg_path: Option<String>,
+    #[serde(default)]
+    pub ffmpeg_installed_by_msc: bool,
+    #[serde(default)]
+    pub wget_path: Option<String>,
+    #[serde(default)]
+    pub wget_installed_by_msc: bool,
+    #[serde(default)]
     pub workspaces: HashMap<String, String>,
-    /// System default temp paths (synchronized dynamically on each load)
     #[serde(skip)]
     #[serde(default)]
     pub default_paths: Vec<String>,
-    /// Custom paths added by user
     #[serde(default)]
     pub custom_paths: Vec<String>,
-    /// Default paths excluded by user (persistent)
     #[serde(default)]
     pub excluded_default_paths: Vec<String>,
-    /// Work directory folders that should be ignored during work cache cleanup
     #[serde(default)]
     pub ignored_work_folders: Vec<String>,
 }
@@ -44,7 +48,6 @@ impl Config {
             let data = fs::read(&config_path)
                 .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
 
-            // If the file is empty or corrupted, return default config
             if data.is_empty() {
                 warn!("Config file is empty, using default configuration");
                 Config::default()
@@ -64,14 +67,11 @@ impl Config {
             }
         };
 
-        // Always sync default paths on load (dynamic update)
         config.sync_default_paths();
 
         Ok(config)
     }
 
-    /// Synchronize default paths with current system configuration
-    /// This is called automatically on load to ensure paths are always up-to-date
     pub fn sync_default_paths(&mut self) {
         use crate::platform::get_default_temp_directories;
         self.default_paths = get_default_temp_directories();
@@ -116,6 +116,14 @@ impl Config {
         self.video_path.as_ref()
     }
 
+    pub fn set_web_path(&mut self, path: String) {
+        self.web_path = Some(path);
+    }
+
+    pub fn get_web_path(&self) -> Option<&String> {
+        self.web_path.as_ref()
+    }
+
     pub fn set_yt_dlp_path(&mut self, path: String) {
         self.yt_dlp_path = Some(path);
     }
@@ -130,6 +138,38 @@ impl Config {
 
     pub fn is_yt_dlp_installed_by_msc(&self) -> bool {
         self.yt_dlp_installed_by_msc
+    }
+
+    pub fn set_ffmpeg_path(&mut self, path: String) {
+        self.ffmpeg_path = Some(path);
+    }
+
+    pub fn get_ffmpeg_path(&self) -> Option<&String> {
+        self.ffmpeg_path.as_ref()
+    }
+
+    pub fn set_ffmpeg_installed_by_msc(&mut self, installed_by_msc: bool) {
+        self.ffmpeg_installed_by_msc = installed_by_msc;
+    }
+
+    pub fn is_ffmpeg_installed_by_msc(&self) -> bool {
+        self.ffmpeg_installed_by_msc
+    }
+
+    pub fn set_wget_path(&mut self, path: String) {
+        self.wget_path = Some(path);
+    }
+
+    pub fn get_wget_path(&self) -> Option<&String> {
+        self.wget_path.as_ref()
+    }
+
+    pub fn set_wget_installed_by_msc(&mut self, installed_by_msc: bool) {
+        self.wget_installed_by_msc = installed_by_msc;
+    }
+
+    pub fn is_wget_installed_by_msc(&self) -> bool {
+        self.wget_installed_by_msc
     }
 
     pub fn add_workspace(&mut self, name: String, path: String) {

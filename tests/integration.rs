@@ -5,8 +5,10 @@ mod integration {
     mod clean_paths_test;
     mod commands_test;
     mod config_test;
+    mod ffmpeg_test;
     mod set_command_test;
     mod vget_security_test;
+    mod wget_test;
     mod workspace_test;
 
     // Security audit tests

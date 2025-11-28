@@ -4,8 +4,10 @@ pub mod clean;
 pub mod config;
 pub mod hello;
 pub mod list;
+pub mod vedit;
 pub mod version;
 pub mod vget;
+pub mod wget;
 pub mod workspace;
 
 // Re-exports for cleaner imports

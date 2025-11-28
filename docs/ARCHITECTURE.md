@@ -7,13 +7,14 @@
 3. [Estructura de Directorios](#estructura-de-directorios)
 4. [Capas de la Aplicación](#capas-de-la-aplicación)
 5. [Convenciones de Nomenclatura](#convenciones-de-nomenclatura)
-6. [Gestión de Módulos](#gestión-de-módulos)
-7. [Manejo de Errores](#manejo-de-errores)
-8. [Testing](#testing)
-9. [Configuración](#configuración)
-10. [Dependencias](#dependencias)
-11. [Guías de Desarrollo](#guías-de-desarrollo)
-12. [Patrones y Buenas Prácticas](#patrones-y-buenas-prácticas)
+6. [Código Autoexplicativo y Comentarios](#código-autoexplicativo-y-comentarios)
+7. [Gestión de Módulos](#gestión-de-módulos)
+8. [Manejo de Errores](#manejo-de-errores)
+9. [Testing](#testing)
+10. [Configuración](#configuración)
+11. [Dependencias](#dependencias)
+12. [Guías de Desarrollo](#guías-de-desarrollo)
+13. [Patrones y Buenas Prácticas](#patrones-y-buenas-prácticas)
 
 ---
 
@@ -452,6 +453,106 @@ let git_status = GitStatus::default();
 struct HTTPClient { }
 struct gitStatus { }
 ```
+
+---
+
+## Código Autoexplicativo y Comentarios
+
+### Filosofía: El Código Debe Hablar por Sí Mismo
+
+Un código bien escrito es **autoexplicativo**. Si necesitas muchos comentarios para explicar qué hace tu código, es señal de que tu código no es suficientemente claro.
+
+### Cuándo SÍ Usar Comentarios
+
+✅ **Explicar el "por qué", no el "qué"**
+```rust
+// CORRECTO: Explica una decisión de diseño no obvia
+// Usamos Base64 en lugar de escapado porque PowerShell tiene bugs
+// con comillas anidadas en ciertos contextos de seguridad
+let encoded = encode_base64(command);
+```
+
+✅ **Documentar APIs públicas con doc comments**
+```rust
+/// See docs/security.md for security considerations
+pub fn validate_input(input: &str) -> Result<String> { ... }
+```
+
+✅ **Advertir sobre comportamientos peligrosos**
+```rust
+// WARNING: This deletes files permanently without confirmation
+fn delete_all_files(path: &Path) -> Result<()> { ... }
+```
+
+### Cuándo NO Usar Comentarios
+
+❌ **Comentarios que repiten el código**
+```rust
+// BAD: El código ya dice esto
+// Create a new config
+let config = Config::new();
+
+// GOOD: Sin comentario innecesario
+let config = Config::new();
+```
+
+❌ **Doc comments obvios**
+```rust
+// BAD: El nombre de la función ya lo dice
+/// Returns true if the file exists
+pub fn file_exists(&self) -> bool { ... }
+
+// GOOD: Sin doc comment
+pub fn file_exists(&self) -> bool { ... }
+```
+
+❌ **Comentarios inline en arrays/structs**
+```rust
+// BAD: Descripciones redundantes
+const DANGEROUS_CHARS: &[(&str, &str)] = &[
+    (";", "semicolon - command separator"),
+    ("|", "pipe - command chaining"),
+];
+
+// GOOD: El contexto es suficiente
+const DANGEROUS_CHARS: &[&str] = &[";", "|", "&", "$"];
+```
+
+❌ **Bloques masivos de comentarios de seguridad**
+```rust
+// BAD: 30 líneas de comentarios explicando seguridad
+/// This function prevents command injection attacks by...
+/// [30 líneas más]
+pub fn validate() -> Result<()> { ... }
+
+// GOOD: Referencia a documentación externa
+/// See docs/security.md for security considerations
+pub fn validate() -> Result<()> { ... }
+```
+
+### Preferir Nombres Claros Sobre Comentarios
+
+**En lugar de:**
+```rust
+// Validate the URL to prevent injection
+fn check(s: &str) -> bool { ... }
+```
+
+**Hacer:**
+```rust
+fn validate_url_against_injection(url: &str) -> Result<()> { ... }
+```
+
+### Regla de Oro
+
+Si tu comentario puede ser reemplazado por un mejor nombre de variable/función, **elimina el comentario y mejora el nombre**.
+
+### Documentación de Seguridad
+
+Para funciones críticas de seguridad, la documentación detallada debe ir en archivos externos:
+- `docs/security.md` - Consideraciones de seguridad
+- `docs/architecture.md` - Decisiones arquitectónicas
+- `docs/ffmpeg_implementation.md` - Implementación específica
 
 ---
 

@@ -92,12 +92,6 @@ impl YtDlpManager {
 
     /// Instala yt-dlp en el directorio de la aplicación
     pub fn install(&mut self) -> Result<PathBuf> {
-        println!();
-        println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
-        println!("{}", "  Instalación de yt-dlp".cyan().bold());
-        println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
-        println!();
-
         // 1. Obtener última versión
         let version = Self::get_latest_version()?;
 
@@ -112,20 +106,13 @@ impl YtDlpManager {
         let binary_path = install_dir.join("yt-dlp.exe");
         fs::write(&binary_path, binary_data).context("Error al guardar el ejecutable")?;
 
-        println!(
-            "{} {}",
-            "Instalado en:".green().bold(),
-            binary_path.display()
-        );
-
         // 5. Guardar ruta en configuración y marcar que fue instalado por msc
         self.config
             .set_yt_dlp_path(binary_path.to_string_lossy().to_string());
         self.config.set_yt_dlp_installed_by_msc(true);
         self.config.save()?;
 
-        println!("{}", "✓ Configuración actualizada".green());
-        println!("{}", "✓ yt-dlp instalado y registrado por msc".green());
+        println!("{}", "✓ yt-dlp listo".green());
         println!();
 
         Ok(binary_path)
@@ -154,34 +141,28 @@ impl YtDlpManager {
 
     /// Asegura que yt-dlp esté instalado y listo para usar
     /// Prioridad:
-    /// 1. Verificar si está en el PATH del sistema
-    /// 2. Verificar si lo instalamos nosotros (config.yt_dlp_path)
-    /// 3. Si no está disponible, descargarlo e instalarlo
+    /// 1. Verificar si está en el PATH del sistema (transparente, sin mensajes)
+    /// 2. Verificar si lo instalamos nosotros (transparente, sin mensajes)
+    /// 3. Si no está disponible, instalarlo (con mensaje breve solo la primera vez)
     pub fn ensure_yt_dlp(&mut self) -> Result<PathBuf> {
         // 1. Verificar si yt-dlp está en el PATH del sistema
         if let Some(system_path) = Self::check_system_ytdlp() {
-            println!(
-                "{} {}",
-                "✓ Usando yt-dlp del sistema (PATH):".green(),
-                "yt-dlp".cyan()
-            );
+            // Transparente: usar sin mostrar mensajes
             return Ok(system_path);
         }
 
         // 2. Verificar si lo instalamos nosotros previamente
         if self.is_installed() {
             if let Some(path) = self.get_binary_path() {
-                println!(
-                    "{} {}",
-                    "✓ Usando yt-dlp instalado por msc:".green(),
-                    path.display().to_string().cyan()
-                );
+                // Transparente: usar sin mostrar mensajes
                 return Ok(path);
             }
         }
 
         // 3. No está disponible, necesitamos instalarlo
-        println!("{}", "yt-dlp no está instalado.".yellow());
+        // Solo mostrar mensaje breve la primera vez
+        println!();
+        println!("{}", "🔧 Iniciando yt-dlp (primera ejecución)...".cyan());
         self.install()
     }
 }

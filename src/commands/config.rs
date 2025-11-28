@@ -7,6 +7,7 @@ use std::path::Path;
 enum ConfigType {
     Work,
     Video,
+    Web,
 }
 
 impl ConfigType {
@@ -14,6 +15,7 @@ impl ConfigType {
         match self {
             ConfigType::Work => "Work",
             ConfigType::Video => "Video",
+            ConfigType::Web => "Web",
         }
     }
 
@@ -21,6 +23,7 @@ impl ConfigType {
         match self {
             ConfigType::Work => config.set_work_path(path),
             ConfigType::Video => config.set_video_path(path),
+            ConfigType::Web => config.set_web_path(path),
         }
     }
 
@@ -28,6 +31,7 @@ impl ConfigType {
         match self {
             ConfigType::Work => config.get_work_path(),
             ConfigType::Video => config.get_video_path(),
+            ConfigType::Web => config.get_web_path(),
         }
     }
 
@@ -35,6 +39,7 @@ impl ConfigType {
         match self {
             ConfigType::Work => "C:\\Users\\marco\\projects",
             ConfigType::Video => "C:\\Users\\marco\\videos",
+            ConfigType::Web => "C:\\Users\\marco\\Downloads\\websites",
         }
     }
 }
@@ -43,6 +48,7 @@ pub fn handle_set(matches: &clap::ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("work", sub_matches)) => set_path_for_type(sub_matches, ConfigType::Work),
         Some(("video", sub_matches)) => set_path_for_type(sub_matches, ConfigType::Video),
+        Some(("web", sub_matches)) => set_path_for_type(sub_matches, ConfigType::Web),
         _ => {
             println!("Use 'msc set --help' for more information.");
             Ok(())
@@ -98,6 +104,7 @@ pub fn handle_get(matches: &clap::ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("work", _)) => get_path_for_type(ConfigType::Work),
         Some(("video", _)) => get_path_for_type(ConfigType::Video),
+        Some(("web", _)) => get_path_for_type(ConfigType::Web),
         _ => {
             println!("Use 'msc get --help' for more information.");
             Ok(())
