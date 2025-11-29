@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub struct Config {
     #[serde(default)]
     pub work_path: Option<String>,
@@ -52,8 +52,8 @@ impl Config {
                 warn!("Config file is empty, using default configuration");
                 Config::default()
             } else {
-                match bincode::deserialize(&data) {
-                    Ok(config) => config,
+                match bincode::decode_from_slice::<Config, _>(&data, bincode::config::standard()) {
+                    Ok((config, _size)) => config,
                     Err(e) => {
                         warn!(
                             "Failed to deserialize config file ({}), using default configuration. \
@@ -85,7 +85,8 @@ impl Config {
                 .with_context(|| format!("Failed to create config directory: {:?}", parent))?;
         }
 
-        let data = bincode::serialize(self).with_context(|| "Failed to serialize config")?;
+        let data = bincode::encode_to_vec(self, bincode::config::standard())
+            .with_context(|| "Failed to serialize config")?;
 
         fs::write(&config_path, data)
             .with_context(|| format!("Failed to write config file: {:?}", config_path))?;

