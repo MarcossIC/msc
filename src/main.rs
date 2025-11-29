@@ -54,6 +54,9 @@ fn main() -> Result<()> {
         Some(("vedit", sub_matches)) => commands::vedit::execute(sub_matches),
         Some(("vget", sub_matches)) => commands::vget::execute(sub_matches),
         Some(("wget", sub_matches)) => match sub_matches.subcommand() {
+            Some(("cookies", cookie_matches)) => {
+                commands::wget::execute_cookies(cookie_matches)
+            }
             Some(("postprocessing", post_matches)) => {
                 commands::wget::execute_postprocessing(post_matches)
             }
@@ -606,7 +609,7 @@ fn build_cli() -> Command {
             Command::new("wget")
                 .about("Download web pages for offline viewing")
                 .subcommand_required(false)
-                .arg_required_else_help(false)
+                .arg_required_else_help(true)
                 .long_about(
                     "Download complete web pages with all resources (HTML, CSS, images, JavaScript) for offline viewing.\n\n\
                     FEATURES:\n\
@@ -617,6 +620,7 @@ fn build_cli() -> Command {
                     • Supports HTTP and HTTPS protocols\n\
                     • Use --all to mirror entire website\n\
                     • Filter URLs with regex patterns (--pattern)\n\
+                    • Extract cookies with 'cookies' subcommand\n\
                     • Re-run post-processing with 'postprocessing' subcommand\n\n\
                     EXAMPLES:\n\
                     msc wget \"https://example.com\"                                 # Download single page\n\
@@ -627,18 +631,20 @@ fn build_cli() -> Command {
                     msc wget \"https://site.com\" --all --pattern '/t.*'             # Only pages starting with /t\n\
                     msc wget \"https://site.com\" --all --limit 150                  # Download max 150 pages\n\
                     msc wget \"https://site.com\" --all --pattern '/posts/.*' --limit 50  # 50 pages matching pattern\n\
+                    msc wget cookies https://example.com                           # Extract cookies from browser\n\
                     msc wget postprocessing ./my-site -u https://example.com       # Re-run post-processing\n\
                     msc set web ~/Downloads/websites                               # Set default web directory\n\
                     msc get web                                                    # Show configured web directory\n\n\
                     NOTE: Requires wget to be installed on your system.\n\
                     \n\
                     SUBCOMMANDS:\n\
+                    cookies           Extract cookies from browser (use --help for details)\n\
                     postprocessing    Re-run post-processing on downloaded files (use --help for details)"
                 )
                 .arg(
                     Arg::new("url")
                         .help("URL of the web page to download")
-                        .required(true)
+                        .required(false)
                         .index(1),
                 )
                 .arg(
@@ -685,6 +691,98 @@ fn build_cli() -> Command {
                         )
                         .value_name("NUMBER")
                         .value_parser(clap::value_parser!(usize)),
+                )
+                .arg(
+                    Arg::new("cookies")
+                        .short('c')
+                        .long("cookies")
+                        .help("Cookies to send with requests (bypass age verification, auth, etc.)")
+                        .long_help(
+                            "Pass cookies to bypass age verification, authentication, or other protections.\n\
+                            Cookies should be in the format: 'name1=value1; name2=value2'\n\n\
+                            HOW TO GET COOKIES:\n\
+                            1. Open the website in your browser\n\
+                            2. Complete any verification (age check, login, etc.)\n\
+                            3. Press F12 to open DevTools\n\
+                            4. Go to Console tab\n\
+                            5. Type: document.cookie\n\
+                            6. Copy the output\n\n\
+                            Examples:\n\
+                            --cookies 'accessAgeDisclaimerPH=2; age_verified=1'\n\
+                            --cookies 'session=abc123; user_id=456'\n\n\
+                            Common use cases:\n\
+                            • Login-protected content\n\
+                            • Cookie-based CAPTCHA bypass"
+                        )
+                        .value_name("COOKIES")
+                        .visible_alias("load-cookies"),
+                )
+                .subcommand(
+                    Command::new("cookies")
+                        .about("Extract cookies from browser for a URL")
+                        .long_about(
+                            "Extract cookies from your browser's cookie database for a specific URL.\n\
+                            This is useful for bypassing age verification, login walls, or CAPTCHA.\n\n\
+                            SUPPORTED BROWSERS:\n\
+                            • Chrome / Chromium\n\
+                            • Edge\n\
+                            • Firefox\n\
+                            • LibreWolf\n\
+                            • Brave\n\n\
+                            HOW TO USE:\n\
+                            1. Visit the website in your browser\n\
+                            2. Complete any verification (age check, login, CAPTCHA, etc.)\n\
+                            3. Run this command to extract cookies\n\
+                            4. Use the output with --cookies parameter\n\n\
+                            EXPORT FORMATS:\n\
+                            • wget    - Format for --cookies parameter (default)\n\
+                            • json    - JSON format\n\
+                            • netscape - Netscape cookie file format\n\n\
+                            EXAMPLES:\n\
+                            msc wget cookies https://example.com                    # Extract in wget format\n\
+                            msc wget cookies https://example.com --format json      # Export as JSON\n\
+                            msc wget cookies https://example.com --browser chrome   # From specific browser\n\
+                            msc wget cookies https://example.com --output cookies.txt  # Save to file\n\n\
+                            Then use with wget:\n\
+                            msc wget https://example.com --cookies 'cookie1=value1; cookie2=value2'\n\
+                            "
+                        )
+                        .arg(
+                            Arg::new("url")
+                                .help("URL to extract cookies for")
+                                .required(true)
+                                .index(1),
+                        )
+                        .arg(
+                            Arg::new("browser")
+                                .short('b')
+                                .long("browser")
+                                .help("Browser to extract from (chrome, firefox, librewolf, edge, brave)")
+                                .value_name("BROWSER")
+                                .default_value("chrome"),
+                        )
+                        .arg(
+                            Arg::new("format")
+                                .short('f')
+                                .long("format")
+                                .help("Export format (wget, json, netscape)")
+                                .value_name("FORMAT")
+                                .default_value("wget"),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .short('o')
+                                .long("output")
+                                .help("Output file path (prints to stdout if not specified)")
+                                .value_name("FILE"),
+                        )
+                        .arg(
+                            Arg::new("debug")
+                                .short('d')
+                                .long("debug")
+                                .help("Show database schema and sample data for debugging")
+                                .action(clap::ArgAction::SetTrue),
+                        ),
                 )
                 .subcommand(
                     Command::new("postprocessing")

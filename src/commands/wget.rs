@@ -1,4 +1,11 @@
-use crate::core::{validation, Config, WgetManager};
+use crate::core::{validation, Config};
+use crate::core::wget::{
+    WgetManager,
+    create_cookie_file, extract_cookies_from_db,
+    find_browser_cookie_db, format_cookies, debug_database_info,
+    process_html_file_complete,
+    calculate_local_path_for_url,resolve_cookie_path
+};
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use dialoguer::Input;
@@ -77,17 +84,118 @@ pub fn execute_postprocessing(matches: &clap::ArgMatches) -> Result<()> {
     Ok(())
 }
 
-/// Execute the wget command to download web pages
-pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
+/// Extract cookies from browser for a given URL
+pub fn execute_cookies(matches: &clap::ArgMatches) -> Result<()> {
+    println!();
+    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
+    println!("{}", "  Extractor de Cookies".cyan().bold());
+    println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
+    println!();
+
     // 1. Extract arguments
     let url_str = matches
         .get_one::<String>("url")
         .context("URL es requerida")?;
 
+    let browser = matches
+        .get_one::<String>("browser")
+        .map(|s| s.as_str())
+        .unwrap_or("chrome");
+
+    let format = matches
+        .get_one::<String>("format")
+        .map(|s| s.as_str())
+        .unwrap_or("wget");
+
+    let output_file = matches.get_one::<String>("output");
+    let debug_mode = matches.get_flag("debug");
+
+    // 2. Parse URL to get domain
+    let url = Url::parse(url_str).context("URL inválida")?;
+    let domain = url.domain().context("URL debe tener un dominio")?;
+
+    println!("{} {}", "🌐 URL:".cyan(), url_str);
+    println!("{} {}", "🏠 Dominio:".cyan(), domain);
+    println!("{} {}", "🌍 Navegador:".cyan(), browser);
+    println!("{} {}", "📋 Formato:".cyan(), format);
+    if debug_mode {
+        println!("{} Activado", "🐛 Modo Debug:".yellow());
+    }
+    println!();
+
+    // 3. Find browser cookie database
+    let cookie_db_path = find_browser_cookie_db(browser)?;
+    println!("{} {}", "📂 Base de datos:".green(), cookie_db_path.display());
+    println!();
+
+    // 3.5. Debug mode - show database info
+    if debug_mode {
+        debug_database_info(&cookie_db_path)?;
+        return Ok(());
+    }
+
+    // 4. Extract cookies from database
+    println!("{}", "⟳ Extrayendo cookies...".cyan());
+    let cookies = extract_cookies_from_db(&cookie_db_path, domain)?;
+
+    if cookies.is_empty() {
+        println!();
+        println!("{}", "⚠️  No se encontraron cookies para este dominio.".yellow());
+        println!();
+        println!("{}", "Posibles razones:".dimmed());
+        println!("{}", "  • No has visitado este sitio en este navegador".dimmed());
+        println!("{}", "  • Las cookies expiraron o fueron borradas".dimmed());
+        println!("{}", "  • El navegador está cerrado (cierra y vuelve a intentar)".dimmed());
+        println!();
+        return Ok(());
+    }
+
+    println!("{} {} cookies", "✓ Encontradas".green(), cookies.len());
+    println!();
+
+    // 5. Format cookies based on requested format
+    let output = format_cookies(&cookies, format, domain)?;
+
+    // 6. Output to file or stdout
+    if let Some(file_path) = output_file {
+        fs::write(file_path, &output)?;
+        println!("{} {}", "✓ Cookies guardadas en:".green().bold(), file_path);
+    } else {
+        println!("{}", "📋 Cookies en formato wget:".cyan().bold());
+        println!();
+        println!("{}", output);
+    }
+
+    println!();
+    println!();
+    println!("{}", "💡 Uso:".cyan().bold());
+    if format == "wget" {
+        println!("{}", format!("   msc wget \"{}\" --cookies '{}'", url_str, output.trim()).dimmed());
+    } else if format == "netscape" {
+        if let Some(file) = output_file {
+            println!("{}", format!("   msc wget \"{}\" --load-cookies {}", url_str, file).dimmed());
+        } else {
+            println!("{}", format!("   msc wget \"{}\" --load-cookies cookies.txt", url_str).dimmed());
+            println!("{}", "   (Recomendado guardar en archivo para sitios complejos)".yellow().dimmed());
+        }
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Execute the wget command to download web pages
+pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
+    // 1. Extract arguments
+    let url_str = matches
+        .get_one::<String>("url")
+        .context("URL es requerida. Usa: msc wget <URL> o msc wget cookies <URL>")?;
+
     let folder_name = matches.get_one::<String>("folder");
     let mirror_all = matches.get_flag("all");
     let pattern = matches.get_one::<String>("pattern").map(|s| s.as_str());
     let limit = matches.get_one::<usize>("limit").copied();
+    let cookies = matches.get_one::<String>("cookies").map(|s| s.as_str());
 
     // 2. Validate URL
     validation::validate_web_url(url_str).with_context(|| format!("URL inválida: {}", url_str))?;
@@ -110,10 +218,10 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
 
     // 6. Execute download
     if mirror_all {
-        let mut crawler = Crawler::new(url_str, target_dir, wget_path, pattern, limit)?;
+        let mut crawler = Crawler::new(url_str, target_dir, wget_path, pattern, limit, cookies)?;
         crawler.run()?;
     } else {
-        execute_download(&wget_path, url_str, &target_dir, false)?;
+        execute_download(&wget_path, url_str, &target_dir, false, cookies)?;
         // Post-processing for single page
         println!("{}", "⟳ Procesando HTML para uso offline...".cyan());
         if let Err(e) = process_downloaded_page(url_str, &target_dir) {
@@ -136,6 +244,7 @@ struct Crawler {
     pattern_regex: Option<regex::Regex>,
     limit: Option<usize>,
     downloaded_count: usize,
+    cookie_file: Option<PathBuf>,
 }
 
 impl Crawler {
@@ -145,6 +254,7 @@ impl Crawler {
         wget_path: PathBuf,
         pattern: Option<&str>,
         limit: Option<usize>,
+        cookies: Option<&str>,
     ) -> Result<Self> {
         let base_url = Url::parse(start_url)?;
         let mut queue = VecDeque::new();
@@ -170,6 +280,20 @@ impl Crawler {
             println!("{} {}", "📊 Límite de páginas:".cyan(), l);
         }
 
+        // Create cookie file if cookies provided
+        let cookie_file = if let Some(cookie_str) = cookies {
+            // Check if it's a file path
+            let path = PathBuf::from(cookie_str);
+            if path.exists() && path.is_file() {
+                println!("{} {}", "🍪 Cookies:".cyan(), "Archivo cargado".green());
+                Some(path)
+            } else {
+                Some(create_cookie_file(&base_url, cookie_str)?)
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             base_url,
             target_dir,
@@ -179,6 +303,7 @@ impl Crawler {
             pattern_regex,
             limit,
             downloaded_count: 0,
+            cookie_file,
         })
     }
 
@@ -315,8 +440,14 @@ impl Crawler {
             .arg("--adjust-extension") // Add .html
             .arg("--no-parent") // Don't go up
             .arg("--directory-prefix")
-            .arg(&self.target_dir)
-            .arg(url);
+            .arg(&self.target_dir);
+
+        // Add cookie file if provided
+        if let Some(ref cookie_file) = self.cookie_file {
+            cmd.arg("--load-cookies").arg(cookie_file);
+        }
+
+        cmd.arg(url);
 
         // Note: We do NOT use --convert-links here because we want to rewrite them ourselves
         // and wget's conversion might conflict with our logic or be incomplete for future pages.
@@ -567,11 +698,67 @@ fn ensure_directory_exists(path: &PathBuf) -> Result<()> {
 
 /// Execute the web page download using wget (Single Page Mode)
 fn execute_download(
-    wget_path: &PathBuf,
+    wget_path: &Path,
     url: &str,
-    target_dir: &PathBuf,
+    target_dir: &Path,
     _mirror_all: bool,
+    cookies: Option<&str>,
 ) -> Result<()> {
+    print_header(url, target_dir, cookies.is_some());
+
+    let cookie_file_path = resolve_cookie_path(url, cookies)?;
+
+    // --- 3. Construcción del Comando ---
+    let mut cmd = Command::new(wget_path);
+
+    cmd.args([
+            "--page-requisites",    // Descargar CSS, JS, imágenes
+            "--convert-links",      // Hacer links locales
+            "--adjust-extension",   // Asegurar .html
+            "--no-directories",     // Aplanar estructura (-nd)
+            "--directory-prefix",   // Carpeta destino
+        ]);
+
+    // Argumentos con valores dinámicos
+    cmd.arg(target_dir);
+    
+    // Cookies
+    if let Some(path) = &cookie_file_path {
+        cmd.arg("--load-cookies").arg(path);
+    }
+
+    cmd.arg(url);
+
+    println!("{} {:?}", "Ejecutando:".dimmed(), cmd);
+    println!();
+
+    // --- 4. Ejecución ---
+    let status = cmd.status().context("Error crítico al invocar el binario de wget")?;
+    let code = status.code().unwrap_or(-1);
+
+    println!();
+
+    // --- 5. Manejo de Resultados (Wget Exit Codes) ---
+    match code {
+        0 => {
+            println!("{}", "✓ Descarga completada exitosamente".green().bold());
+            print_footer(target_dir);
+            Ok(())
+        }
+        8 => {
+            println!("{}", "⚠️  La descarga completó con advertencias (archivos faltantes/404).".yellow().bold());
+            println!("{}", "   Continuando con el post-procesamiento...".yellow());
+            print_footer(target_dir);
+            Ok(())
+        }
+        _ => {
+            // Intento de recuperación: verificar si el archivo principal existe a pesar del error
+            handle_download_failure(url, target_dir, code)
+        }
+    }
+}
+
+fn print_header(url: &str, target_dir: &Path, has_cookies: bool) {
     println!();
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
     println!("{}", "  Descargando Página Web".cyan().bold());
@@ -580,65 +767,38 @@ fn execute_download(
     println!("{} {}", "🌐 URL:".cyan(), url);
     println!("{} {}", "📁 Destino:".cyan(), target_dir.display());
     println!("{} {}", "📋 Modo:".cyan(), "Página única".green());
+    if !has_cookies {
+         println!("{} {}", "🍪 Cookies:".cyan(), "Ninguna".dimmed());
+    }
+}
+
+fn print_footer(target_dir: &Path) {
     println!();
-
-    let mut cmd = Command::new(wget_path);
-
-    // Single page mode: only download the specific page and its resources
-    // We use -nd to flatten structure for single page convenience (as per original logic)
-    cmd.arg("--page-requisites") // Download all page assets (CSS, images, JS)
-        .arg("--convert-links") // Convert links for offline viewing
-        .arg("--adjust-extension") // Add .html extension to files
-        .arg("--no-directories"); // Don't create directory structure
-
-    // Common arguments
-    cmd.arg("--directory-prefix") // Set download directory
-        .arg(target_dir)
-        .arg(url);
-
-    println!("{} {:?}", "Ejecutando:".dimmed(), cmd);
+    println!("{} {}", "📁 Archivos guardados en:".green().bold(), target_dir.display());
     println!();
+    println!("{}", "Para ver la página, abre el HTML principal.".dimmed());
+}
 
-    // Execute command
-    let status = cmd.status().context("Error al ejecutar wget")?;
-
-    println!();
-
-    let success = status.success();
-    let code = status.code().unwrap_or(-1);
-
-    if success || code == 8 {
-        if success {
-            println!("{}", "✓ Descarga completada exitosamente".green().bold());
-        } else {
+fn handle_download_failure(url: &str, target_dir: &Path, code: i32) -> Result<()> {
+    let base_url = Url::parse(url)
+        .with_context(|| format!("No se pudo parsear la URL '{}' para verificar archivos locales", url))?;
+    
+    if let Some(main_file) = calculate_flat_local_path(&base_url, target_dir) {
+        if main_file.exists() {
             println!(
                 "{}",
-                "⚠️  La descarga completó con algunos errores (archivos faltantes/404)."
+                format!("⚠️  Wget falló (código {}) pero el archivo principal existe en: {:?}", code, main_file.file_name().unwrap_or_default())
                     .yellow()
-                    .bold()
             );
-            println!("{}", "   Continuando con el post-procesamiento...".yellow());
+            // Retornamos Ok(()) porque consideramos que "el archivo está ahí", así que es un éxito parcial.
+            return Ok(());
         }
-
-        println!();
-        println!(
-            "{} {}",
-            "📁 Archivos guardados en:".green().bold(),
-            target_dir.display()
-        );
-        println!();
-        println!(
-            "{}",
-            "Para ver la página offline, abre el archivo HTML principal en tu navegador.".dimmed()
-        );
-    } else {
-        return Err(anyhow!(
-            "La descarga falló con código de salida: {}",
-            status
-        ));
     }
 
-    Ok(())
+    Err(anyhow!(
+        "La descarga falló. Wget código de salida: {}. El archivo esperado no se encontró.",
+        code
+    ))
 }
 
 /// Extract links from HTML file without modifying it
@@ -731,90 +891,11 @@ fn process_downloaded_page(original_url: &str, target_dir: &PathBuf) -> Result<(
     Ok(())
 }
 
-/// Calculate possible local file paths where the URL might be saved
-/// Returns multiple possibilities to handle both flat and nested directory structures
-fn calculate_possible_local_paths(url: &Url, base_dir: &Path) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    let Some(domain) = url.domain() else {
-        return paths;
-    };
-
-    let url_path = url.path();
-
-    // Build the relative path from URL
-    let mut rel_path_parts = Vec::new();
-
-    if url_path == "/" || url_path.is_empty() {
-        rel_path_parts.push("index.html".to_string());
-    } else {
-        let rel_path = url_path.trim_start_matches('/');
-
-        if url_path.ends_with('/') {
-            rel_path_parts.push(rel_path.to_string());
-            rel_path_parts.push("index.html".to_string());
-        } else {
-            rel_path_parts.push(rel_path.to_string());
-
-            // Add .html extension if needed
-            let has_extension = rel_path.contains('.')
-                && rel_path
-                    .split('/')
-                    .next_back()
-                    .map(|f| f.contains('.'))
-                    .unwrap_or(false);
-
-            if !has_extension {
-                // Modify last part to add .html
-                if let Some(last) = rel_path_parts.last_mut() {
-                    *last = format!("{}.html", last);
-                }
-            } else if !url_path.ends_with(".html") && !url_path.ends_with(".htm") {
-                let ext = rel_path.split('.').next_back().unwrap_or("");
-                if ![
-                    "html", "htm", "css", "js", "json", "xml", "txt", "pdf", "png", "jpg", "jpeg",
-                    "gif", "svg", "ico", "woff", "woff2", "ttf", "eot",
-                ]
-                .contains(&ext)
-                {
-                    if let Some(last) = rel_path_parts.last_mut() {
-                        *last = format!("{}.html", last);
-                    }
-                }
-            }
-        }
-    }
-
-    // Build final path string
-    let final_rel_path = rel_path_parts.join("");
-
-    // Check if base_dir ends with the domain name
-    // This works for both relative (./manhwa-espanol.com) and absolute paths
-    // (C:\Users\...\manhwa-espanol.com)
-    let base_dir_name = base_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-    if base_dir_name == domain {
-        // base_dir already includes domain, so try both options:
-        // Option 1: base_dir/path (without domain duplication - CORRECT)
-        let path_without_domain = base_dir.join(&final_rel_path);
-        paths.push(path_without_domain);
-
-        // Option 2: base_dir/domain/path (with domain duplication - legacy/alternative)
-        let path_with_domain = base_dir.join(domain).join(&final_rel_path);
-        paths.push(path_with_domain);
-    } else {
-        // base_dir doesn't include domain, so only try with domain
-        let path_with_domain = base_dir.join(domain).join(&final_rel_path);
-        paths.push(path_with_domain);
-    }
-
-    paths
-}
-
 /// Calculate the local file path for a URL assuming a FLAT directory structure
 /// (used when wget is run with --no-directories)
 fn calculate_flat_local_path(url: &Url, base_dir: &Path) -> Option<PathBuf> {
     let path = url.path();
+    let query = url.query(); // Get query parameters
     let mut local_path = base_dir.to_path_buf();
 
     if path == "/" || path.is_empty() {
@@ -824,109 +905,82 @@ fn calculate_flat_local_path(url: &Url, base_dir: &Path) -> Option<PathBuf> {
         let rel_path = path.trim_start_matches('/');
 
         // In flat mode, we only care about the filename, not the directory structure
-        let file_name = if path.ends_with('/') {
-            "index.html"
+        let mut file_name = if path.ends_with('/') {
+            "index.html".to_string()
         } else {
-            rel_path.split('/').next_back().unwrap_or("index.html")
+            rel_path.split('/').next_back().unwrap_or("index.html").to_string()
         };
+
+        // If there are query parameters, wget converts them to @-notation
+        // Example: "page.php?id=123" becomes "page.php@id=123.html"
+        // Note: wget does NOT remove the original extension, it just appends @query.html
+        if let Some(query_str) = query {
+            // Append query with @ separator (keep the original extension)
+            file_name = format!("{}@{}", file_name, query_str);
+        }
 
         // Handle extension adjustments similar to wget
-        let name_buf = PathBuf::from(file_name);
+        local_path.push(&file_name);
 
-        // If it looks like a file but has no extension, wget adds .html
-        // Or if it has an extension that is not typical for files, wget might add .html
-        // But simpler logic: check if the file exists as is, or with .html
+        // wget's behavior with --adjust-extension:
+        // - If the file has query params, wget ALWAYS adds .html at the end
+        //   Example: "page.php?id=123" -> "page.php@id=123.html"
+        //   Example: "page.html?id=123" -> "page.html@id=123.html"
+        // - If no query params and no extension -> adds .html
+        // - If no query params and non-html extension (like .php) -> adds .html
 
-        local_path.push(file_name);
-
-        // If the file doesn't exist as is, maybe wget added .html?
-        // But here we are calculating where it SHOULD be.
-        // wget logic:
-        // if content-type is html and extension is not html/htm -> add .html
-        // We don't know content-type here, but we can guess.
-
-        let has_extension = file_name.contains('.');
-        if !has_extension {
-            local_path.set_extension("html");
-        } else if !file_name.ends_with(".html") && !file_name.ends_with(".htm") {
-            // Check if it's a known non-html extension
-            let ext = name_buf.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if ![
-                "css", "js", "json", "xml", "txt", "pdf", "png", "jpg", "jpeg", "gif", "svg",
-                "ico", "woff", "woff2", "ttf", "eot",
-            ]
-            .contains(&ext)
-            {
-                // It might have .html appended
-                // But we can't be sure without checking if the file exists.
-                // Since this function returns ONE path, we have to guess.
-                // Let's return the one with .html if the original doesn't look like a resource.
-                let name_str = local_path.file_name()?.to_string_lossy().to_string();
-                local_path.set_file_name(format!("{}.html", name_str));
-            }
-        }
-    }
-
-    Some(local_path)
-}
-
-/// Calculate the local file path where wget would save a given URL
-/// This mirrors wget's behavior with --adjust-extension and directory structure
-fn calculate_local_path_for_url(url: &Url, base_dir: &Path) -> Option<PathBuf> {
-    let domain = url.domain()?;
-    let path = url.path();
-
-    let mut local_path = base_dir.join(domain);
-
-    if path == "/" || path.is_empty() {
-        local_path.push("index.html");
-    } else {
-        // Remove leading slash and decode percent encoding
-        let rel_path = path.trim_start_matches('/');
-
-        if path.ends_with('/') {
-            // Directory path - wget adds index.html
-            local_path.push(rel_path);
-            local_path.push("index.html");
+        if query.is_some() {
+            // Always add .html when there are query params
+            let name_str = local_path.file_name()?.to_string_lossy().to_string();
+            local_path.set_file_name(format!("{}.html", name_str));
         } else {
-            // File path
-            local_path.push(rel_path);
-
-            // wget adds .html extension if the path doesn't have a typical file extension
-            // and content-type is text/html
-            let has_extension = rel_path.contains('.')
-                && rel_path
-                    .split('/')
-                    .next_back()
-                    .map(|f| f.contains('.'))
-                    .unwrap_or(false);
-
+            // No query params - apply normal wget logic
+            let has_extension = file_name.contains('.');
             if !has_extension {
-                // No extension - wget will add .html
                 local_path.set_extension("html");
-            } else {
-                // Has extension, but if it's not .html or .htm, wget might still add .html
-                // For simplicity, we assume HTML pages have .html/.htm or no extension
-                if !path.ends_with(".html") && !path.ends_with(".htm") {
-                    // Check if it looks like a HTML page (no other file extension)
-                    let ext = local_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("");
-                    if ext != "html"
-                        && ext != "htm"
-                        && ![
-                            "css", "js", "json", "xml", "txt", "pdf", "png", "jpg", "jpeg", "gif",
-                            "svg", "ico", "woff", "woff2", "ttf", "eot",
-                        ]
-                        .contains(&ext)
-                    {
-                        // Likely an HTML page with unusual extension - wget adds .html
-                        let new_name =
-                            format!("{}.html", local_path.file_name()?.to_string_lossy());
-                        local_path.set_file_name(new_name);
-                    }
+            } else if !file_name.ends_with(".html") && !file_name.ends_with(".htm") {
+                // Check if it's a known resource extension
+                let name_buf = PathBuf::from(&file_name);
+                let ext = name_buf.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if ![
+                    "css", "js", "json", "xml", "txt", "pdf", "png", "jpg", "jpeg", "gif", "svg",
+                    "ico", "woff", "woff2", "ttf", "eot",
+                ]
+                .contains(&ext)
+                {
+                    // Not a known resource, likely HTML content - wget adds .html
+                    let name_str = local_path.file_name()?.to_string_lossy().to_string();
+                    local_path.set_file_name(format!("{}.html", name_str));
                 }
+            }
+        }
+
+        // Try to find the file - if it doesn't exist with query params, try without
+        if !local_path.exists() && query.is_some() {
+            // Try without query params
+            let simple_name = rel_path.split('/').next_back().unwrap_or("index.html");
+            let mut fallback_path = base_dir.to_path_buf();
+            fallback_path.push(simple_name);
+
+            let simple_has_extension = simple_name.contains('.');
+            if !simple_has_extension {
+                fallback_path.set_extension("html");
+            } else if !simple_name.ends_with(".html") && !simple_name.ends_with(".htm") {
+                let simple_buf = PathBuf::from(simple_name);
+                let ext = simple_buf.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if ![
+                    "css", "js", "json", "xml", "txt", "pdf", "png", "jpg", "jpeg", "gif", "svg",
+                    "ico", "woff", "woff2", "ttf", "eot",
+                ]
+                .contains(&ext)
+                {
+                    let name_str = fallback_path.file_name()?.to_string_lossy().to_string();
+                    fallback_path.set_file_name(format!("{}.html", name_str));
+                }
+            }
+
+            if fallback_path.exists() {
+                return Some(fallback_path);
             }
         }
     }
@@ -934,515 +988,4 @@ fn calculate_local_path_for_url(url: &Url, base_dir: &Path) -> Option<PathBuf> {
     Some(local_path)
 }
 
-/// Process HTML file completely: download resources, rewrite resource URLs, and rewrite hrefs to local files
-fn process_html_file_complete(
-    file_path: &PathBuf,
-    base_dir: &PathBuf,
-    base_url: &Url,
-) -> Result<()> {
-    let content = fs::read_to_string(file_path)?;
-    let document = scraper::Html::parse_document(&content);
 
-    let mut new_content = content.clone();
-    let mut replacements = Vec::new();
-
-    let selector = scraper::Selector::parse("img, script, link, a")
-        .map_err(|e| anyhow::anyhow!("Failed to create selector: {:?}", e))?;
-
-    // Assets directory is now NEXT TO the HTML file (same directory)
-    // So the relative path is simply "assets/"
-    let parent = file_path.parent().unwrap_or(base_dir);
-    let assets_rel_path = "assets/";
-
-    for element in document.select(&selector) {
-        let tag_name = element.value().name();
-
-        // Handle lazy loading for images
-        let attr_name = match tag_name {
-            "a" | "link" => "href",
-            "img" | "script" => "src",
-            _ => continue,
-        };
-
-        let mut url_val = element.value().attr(attr_name);
-
-        // Lazy loading hydration logic for images
-        if tag_name == "img" {
-            let lazy_attrs = ["data-src", "data-original", "data-lazy-src", "data-url"];
-            for attr in lazy_attrs {
-                if let Some(val) = element.value().attr(attr) {
-                    if !val.is_empty() {
-                        url_val = Some(val);
-                        break;
-                    }
-                }
-            }
-        }
-
-        if let Some(url_str) = url_val {
-            // Check ignore rules
-            if url_str.contains("fonts.googleapis.com")
-                || url_str.contains("fonts.gstatic.com")
-                || url_str.ends_with(".php")
-                || url_str.contains("xmlrpc.php")
-            {
-                continue;
-            }
-
-            // Handle <a> links - Replace with local paths
-            if tag_name == "a" {
-                // Resolve URL
-                if let Ok(resolved_url) = base_url.join(url_str) {
-                    // Check if it's in scope (same domain)
-                    if resolved_url.domain() == base_url.domain() {
-                        // Calculate the local path where this file should be
-                        if let Some(local_link_path) =
-                            calculate_local_path_for_url(&resolved_url, base_dir)
-                        {
-                            // IMPORTANT: Only replace if the file actually exists
-                            if local_link_path.exists() {
-                                // Calculate relative path from current file to the linked file
-                                if let Some(relative_link) =
-                                    pathdiff::diff_paths(&local_link_path, parent)
-                                {
-                                    let relative_link_str =
-                                        relative_link.to_string_lossy().replace('\\', "/"); // Normalize path separators for HTML
-
-                                    // Add replacement for this link
-                                    replacements.push((
-                                        url_str.to_string(),
-                                        relative_link_str,
-                                        false,
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // Resource Downloading (Images, JS, CSS)
-            if url_str.starts_with("http://")
-                || url_str.starts_with("https://")
-                || url_str.starts_with("//")
-            {
-                let full_url = if url_str.starts_with("//") {
-                    format!("https:{}", url_str)
-                } else {
-                    url_str.to_string()
-                };
-
-                // Determine local filename
-                let file_name = match full_url.split('/').next_back() {
-                    Some(name) if !name.is_empty() => {
-                        // Remove query params
-                        name.split('?').next().unwrap_or("resource")
-                    }
-                    _ => "resource",
-                };
-
-                // Add extension if missing
-                let file_name = if !file_name.contains('.') {
-                    match tag_name {
-                        "img" => format!("{}.jpg", file_name),
-                        "script" => format!("{}.js", file_name),
-                        "link" => format!("{}.css", file_name),
-                        _ => file_name.to_string(),
-                    }
-                } else {
-                    file_name.to_string()
-                };
-
-                // Try to find or download the resource
-                // Priority: 1) local assets/ folder, 2) global assets/ folder
-                let local_assets_dir = parent.join("assets");
-                let global_assets_dir = base_dir.join("assets");
-
-                let local_path = local_assets_dir.join(&file_name);
-                let global_path = global_assets_dir.join(&file_name);
-
-                let (final_path, relative_path) = if local_path.exists() {
-                    // Already exists locally
-                    (local_path, format!("{}{}", assets_rel_path, file_name))
-                } else if global_path.exists() {
-                    // Exists in global, calculate relative path from current file to global
-                    let parent_to_base = pathdiff::diff_paths(base_dir, parent).unwrap_or_default();
-                    let mut rel_to_global = String::new();
-                    for _ in 0..parent_to_base.components().count() {
-                        rel_to_global.push_str("../");
-                    }
-                    rel_to_global.push_str("assets/");
-                    rel_to_global.push_str(&file_name);
-                    (global_path, rel_to_global)
-                } else {
-                    // Need to download - prefer local
-                    fs::create_dir_all(&local_assets_dir)?;
-                    (local_path, format!("{}{}", assets_rel_path, file_name))
-                };
-
-                // Download if needed
-                if !final_path.exists() {
-                    match download_resource(&full_url, &final_path) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            log::warn!("Failed to download {}: {}", full_url, e);
-                            continue;
-                        }
-                    }
-                }
-
-                // Record replacement
-                if tag_name == "img" {
-                    // Check if the ORIGINAL src attribute was a placeholder
-                    if let Some(original_src) = element.value().attr("src") {
-                        if is_placeholder_image(original_src) {
-                            replacements.push((
-                                original_src.to_string(),
-                                relative_path.clone(),
-                                true,
-                            ));
-                        }
-                    }
-                    replacements.push((url_str.to_string(), relative_path, true));
-                } else {
-                    replacements.push((url_str.to_string(), relative_path, false));
-                }
-            }
-        }
-    }
-
-    // Apply replacements
-    let src_pattern = regex::Regex::new(r#"src\s*=\s*["'][^"']*["']"#)
-        .context("Failed to create regex pattern")?;
-
-    for (target, replacement, is_image) in replacements {
-        if is_image {
-            // Try to find the target. It might be HTML encoded in the file (e.g. & -> &amp;)
-            let target_encoded = target.replace("&", "&amp;");
-
-            let targets_to_try = if target != target_encoded {
-                vec![target.clone(), target_encoded]
-            } else {
-                vec![target.clone()]
-            };
-
-            let mut replaced_any = false;
-
-            for curr_target in targets_to_try {
-                let mut search_start = 0;
-                while let Some(idx) = new_content[search_start..].find(&curr_target) {
-                    let absolute_idx = search_start + idx;
-
-                    let tag_start = new_content[..absolute_idx].rfind("<img");
-
-                    if let Some(start) = tag_start {
-                        let tag_end_offset = new_content[absolute_idx..].find('>');
-
-                        if let Some(end_offset) = tag_end_offset {
-                            let end = absolute_idx + end_offset + 1;
-                            let tag_content = &new_content[start..end];
-
-                            if tag_content.contains(&curr_target) {
-                                let mut new_tag = tag_content.to_string();
-                                new_tag = new_tag.replace(&curr_target, &replacement);
-
-                                new_tag = src_pattern
-                                    .replace(&new_tag, format!("src=\"{}\"", replacement).as_str())
-                                    .to_string();
-
-                                new_content.replace_range(start..end, &new_tag);
-                                search_start = start + new_tag.len();
-                                replaced_any = true;
-                                continue;
-                            }
-                        }
-                    }
-                    search_start = absolute_idx + curr_target.len();
-                }
-            }
-
-            if !replaced_any {
-                new_content = new_content.replace(&target, &replacement);
-            }
-        } else {
-            new_content = new_content.replace(&target, &replacement);
-        }
-    }
-
-    // --- Script-based Image Extraction (ts_reader) ---
-    let script_regex =
-        regex::Regex::new(r#"ts_reader\.run\((.*)\);"#).context("Failed to create script regex")?;
-    let mut script_replacements = Vec::new();
-
-    for cap in script_regex.captures_iter(&new_content) {
-        if let Some(json_match) = cap.get(1) {
-            let json_str = json_match.as_str();
-            if let Ok(mut json_data) = serde_json::from_str::<serde_json::Value>(json_str) {
-                let mut modified = false;
-
-                if let Some(obj) = json_data.as_object_mut() {
-                    obj.insert("lazyload".to_string(), serde_json::Value::Bool(false));
-                    modified = true;
-
-                    // Replace nextUrl with local path if it exists
-                    if let Some(next_url_val) = obj.get("nextUrl") {
-                        if let Some(next_url_str) = next_url_val.as_str() {
-                            // Parse and resolve the nextUrl
-                            let resolved_url = if next_url_str.starts_with("http://")
-                                || next_url_str.starts_with("https://")
-                            {
-                                Url::parse(next_url_str).ok()
-                            } else {
-                                base_url.join(next_url_str).ok()
-                            };
-
-                            if let Some(resolved_url) = resolved_url {
-                                // Check if it's in the same domain
-                                if resolved_url.domain() == base_url.domain() {
-                                    // Calculate possible local paths for this URL
-                                    let possible_paths =
-                                        calculate_possible_local_paths(&resolved_url, base_dir);
-
-                                    // Try each possible path until we find one that exists
-                                    let mut found_path: Option<PathBuf> = None;
-                                    for path in possible_paths.iter() {
-                                        if path.exists() {
-                                            found_path = Some(path.clone());
-                                            break;
-                                        }
-                                    }
-
-                                    if let Some(local_next_path) = found_path {
-                                        // Calculate relative path from current file to next file
-                                        let parent_file = file_path.parent().unwrap_or(base_dir);
-                                        if let Some(relative_next) =
-                                            pathdiff::diff_paths(&local_next_path, parent_file)
-                                        {
-                                            let relative_next_str =
-                                                relative_next.to_string_lossy().replace('\\', "/");
-
-                                            obj.insert(
-                                                "nextUrl".to_string(),
-                                                serde_json::Value::String(relative_next_str),
-                                            );
-                                            modified = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Similarly handle prevUrl if it exists
-                    if let Some(prev_url_val) = obj.get("prevUrl") {
-                        if let Some(prev_url_str) = prev_url_val.as_str() {
-                            let resolved_url = if prev_url_str.starts_with("http://")
-                                || prev_url_str.starts_with("https://")
-                            {
-                                Url::parse(prev_url_str).ok()
-                            } else {
-                                base_url.join(prev_url_str).ok()
-                            };
-
-                            if let Some(resolved_url) = resolved_url {
-                                if resolved_url.domain() == base_url.domain() {
-                                    let possible_paths =
-                                        calculate_possible_local_paths(&resolved_url, base_dir);
-
-                                    let mut found_path: Option<PathBuf> = None;
-                                    for path in possible_paths.iter() {
-                                        if path.exists() {
-                                            found_path = Some(path.clone());
-                                            break;
-                                        }
-                                    }
-
-                                    if let Some(local_prev_path) = found_path {
-                                        let parent_file = file_path.parent().unwrap_or(base_dir);
-                                        if let Some(relative_prev) =
-                                            pathdiff::diff_paths(&local_prev_path, parent_file)
-                                        {
-                                            let relative_prev_str =
-                                                relative_prev.to_string_lossy().replace('\\', "/");
-
-                                            obj.insert(
-                                                "prevUrl".to_string(),
-                                                serde_json::Value::String(relative_prev_str),
-                                            );
-                                            modified = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let Some(sources) = json_data.get_mut("sources").and_then(|s| s.as_array_mut()) {
-                    for source in sources {
-                        if let Some(images) =
-                            source.get_mut("images").and_then(|i| i.as_array_mut())
-                        {
-                            for image_val in images {
-                                if let Some(img_url) = image_val.as_str() {
-                                    // Skip if already a local relative path
-                                    if is_local_path(img_url) {
-                                        continue; // Already processed, skip
-                                    }
-
-                                    let full_url = if img_url.starts_with("//") {
-                                        format!("https:{}", img_url)
-                                    } else if img_url.starts_with("http://")
-                                        || img_url.starts_with("https://")
-                                    {
-                                        img_url.to_string()
-                                    } else {
-                                        // Relative URL that needs to be resolved against base_url
-                                        match base_url.join(img_url) {
-                                            Ok(resolved) => resolved.to_string(),
-                                            Err(_) => {
-                                                // Can't resolve, skip it
-                                                continue;
-                                            }
-                                        }
-                                    };
-
-                                    let file_name = match full_url.split('/').next_back() {
-                                        Some(name) if !name.is_empty() => {
-                                            name.split('?').next().unwrap_or("image.jpg")
-                                        }
-                                        _ => "image.jpg",
-                                    };
-
-                                    // Try to find or download the resource
-                                    // Priority: 1) local assets/ folder, 2) global assets/ folder
-                                    let local_assets_dir = parent.join("assets");
-                                    let global_assets_dir = base_dir.join("assets");
-
-                                    let local_path = local_assets_dir.join(file_name);
-                                    let global_path = global_assets_dir.join(file_name);
-
-                                    let (final_path, replacement_path) = if local_path.exists() {
-                                        // Already exists locally
-                                        (local_path, format!("{}{}", assets_rel_path, file_name))
-                                    } else if global_path.exists() {
-                                        // Exists in global, calculate relative path
-                                        let parent_to_base = pathdiff::diff_paths(base_dir, parent)
-                                            .unwrap_or_default();
-                                        let mut rel_to_global = String::new();
-                                        for _ in 0..parent_to_base.components().count() {
-                                            rel_to_global.push_str("../");
-                                        }
-                                        rel_to_global.push_str("assets/");
-                                        rel_to_global.push_str(file_name);
-                                        (global_path, rel_to_global)
-                                    } else {
-                                        // Need to download - prefer local
-                                        if fs::create_dir_all(&local_assets_dir).is_ok() {
-                                            (
-                                                local_path,
-                                                format!("{}{}", assets_rel_path, file_name),
-                                            )
-                                        } else {
-                                            continue;
-                                        }
-                                    };
-
-                                    // Download if needed
-                                    if !final_path.exists() {
-                                        match download_resource(&full_url, &final_path) {
-                                            Ok(_) => {
-                                                *image_val =
-                                                    serde_json::Value::String(replacement_path);
-                                                modified = true;
-                                            }
-                                            Err(e) => {
-                                                log::warn!(
-                                                    "Failed to download script image {}: {}",
-                                                    full_url,
-                                                    e
-                                                );
-                                            }
-                                        }
-                                    } else {
-                                        // File already exists, just update the reference
-                                        *image_val = serde_json::Value::String(replacement_path);
-                                        modified = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if modified {
-                    if let Ok(new_json_str) = serde_json::to_string(&json_data) {
-                        script_replacements.push((json_str.to_string(), new_json_str));
-                    }
-                }
-            }
-        }
-    }
-
-    for (old_json, new_json) in script_replacements {
-        new_content = new_content.replace(&old_json, &new_json);
-    }
-
-    fs::write(file_path, new_content)?;
-
-    Ok(())
-}
-
-/// Check if a path is already a local relative path (not a remote URL)
-fn is_local_path(path: &str) -> bool {
-    // Check if it's a local relative path
-    path.starts_with("./")
-        || path.starts_with("../")
-        || path.starts_with("assets/")
-        || path.starts_with("../assets/")
-        || path.starts_with("../../assets/")
-        || (!path.starts_with("http://")
-            && !path.starts_with("https://")
-            && !path.starts_with("//")
-            && !path.starts_with("/") // Absolute paths from root are not local relative
-            && path.contains("assets")) // Contains 'assets' but no protocol
-}
-
-fn is_placeholder_image(url: &str) -> bool {
-    let url_lower = url.to_lowercase();
-    let valid_extensions = [".jpg", ".png", ".gif", ".svg", ".webp"];
-    let valid_names = [
-        "loading",
-        "readerarea",
-        "reader",
-        "launching",
-        "placeholder",
-        "skeleton",
-        "spinner",
-        "indicator",
-        "loader",
-    ];
-
-    let has_valid_ext = valid_extensions.iter().any(|ext| url_lower.ends_with(ext));
-    if !has_valid_ext {
-        return false;
-    }
-
-    valid_names.iter().any(|name| url_lower.contains(name))
-}
-
-fn download_resource(url: &str, path: &PathBuf) -> Result<()> {
-    if path.exists() {
-        return Ok(());
-    }
-
-    let response = reqwest::blocking::get(url)?;
-    if !response.status().is_success() {
-        return Err(anyhow!("Status: {}", response.status()));
-    }
-
-    let bytes = response.bytes()?;
-    fs::write(path, bytes)?;
-    Ok(())
-}

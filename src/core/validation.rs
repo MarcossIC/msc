@@ -3,9 +3,11 @@
 
 use anyhow::{anyhow, ensure, Context, Result};
 use regex::Regex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 use url::Url;
+
+use super::Blacklist;
 
 /// Maximum URL length to prevent DoS attacks
 const MAX_URL_LENGTH: usize = 2048;
@@ -76,6 +78,75 @@ pub fn validate_url(url_str: &str) -> Result<()> {
 pub fn validate_web_url(url: &str) -> Result<()> {
     validate_url(url).context("Invalid web URL")?;
     Ok(())
+}
+
+/// Validate that a URL is not in the blacklist
+/// Returns an error if the URL's domain is blacklisted
+pub fn validate_url_not_blacklisted(url: &str, blacklist: &Blacklist) -> Result<()> {
+    if blacklist.is_blocked(url) {
+        // Extract domain for error message
+        let domain = Url::parse(url)
+            .ok()
+            .and_then(|u| u.domain().map(String::from))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        return Err(anyhow!(
+            "URL is blacklisted (blocked domain: {}). This domain is known for malicious or unwanted content.",
+            domain
+        ));
+    }
+
+    Ok(())
+}
+
+/// Load the default blacklist from the embedded const file
+pub fn load_default_blacklist() -> Result<Blacklist> {
+    // Get the path to the blacklist file
+    // The file is located at src/const/black_list_url relative to the project root
+    let blacklist_path = get_blacklist_path()?;
+
+    Blacklist::load_from_file(&blacklist_path)
+        .context("Failed to load blacklist file")
+}
+
+/// Get the path to the blacklist file
+fn get_blacklist_path() -> Result<PathBuf> {
+    // Try to find the blacklist file in the executable's directory first
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            // Check for blacklist next to the executable (for deployed builds)
+            let deployed_path = exe_dir.join("black_list_url");
+            if deployed_path.exists() {
+                return Ok(deployed_path);
+            }
+
+            // Check for blacklist in src/const (for development)
+            let dev_path = exe_dir.join("src").join("const").join("black_list_url");
+            if dev_path.exists() {
+                return Ok(dev_path);
+            }
+        }
+    }
+
+    // Fallback: try current directory
+    let current_dir = std::env::current_dir()
+        .context("Failed to get current directory")?;
+
+    // Try src/const/black_list_url from current directory
+    let src_path = current_dir.join("src").join("const").join("black_list_url");
+    if src_path.exists() {
+        return Ok(src_path);
+    }
+
+    // Try black_list_url in current directory
+    let current_path = current_dir.join("black_list_url");
+    if current_path.exists() {
+        return Ok(current_path);
+    }
+
+    // If none exist, return the expected development path
+    // (will be created or cause an error if needed)
+    Ok(current_dir.join("src").join("const").join("black_list_url"))
 }
 
 pub fn validate_output_path(output: &str) -> Result<()> {
@@ -199,51 +270,28 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
 /// - `http://admin:secret@192.168.1.1` -> `http://***:***@192.168.1.1`
 /// - `https://example.com/path` -> `https://example.com/path` (unchanged)
 pub fn redact_url_credentials(url_str: &str) -> String {
-    // Try to parse the URL
-    match Url::parse(url_str) {
-        Ok(url) => {
-            // Check if URL has credentials
-            if url.username().is_empty() && url.password().is_none() {
-                // No credentials to redact
-                return url_str.to_string();
-            }
+    // Intento principal: parseo con Url
+    if let Ok(mut url) = Url::parse(url_str) {
+        let has_user = !url.username().is_empty();
+        let has_pass = url.password().is_some();
 
-            // URL has credentials, need to redact
-            let scheme = url.scheme();
-            let host = url.host_str().unwrap_or("");
-            let port = url.port();
-            let path = url.path();
-            let query = url.query();
-            let fragment = url.fragment();
-
-            // Build redacted URL
-            let mut redacted = format!("{}://***:***@{}", scheme, host);
-
-            if let Some(p) = port {
-                redacted.push_str(&format!(":{}", p));
-            }
-
-            redacted.push_str(path);
-
-            if let Some(q) = query {
-                redacted.push('?');
-                redacted.push_str(q);
-            }
-
-            if let Some(f) = fragment {
-                redacted.push('#');
-                redacted.push_str(f);
-            }
-
-            redacted
+        // Si no hay credenciales, devolver original tal cual
+        if !has_user && !has_pass {
+            return url_str.to_owned();
         }
-        Err(_) => {
-            // If parsing fails, try manual regex-based redaction as fallback
-            // Pattern: protocol://username:password@host
-            let re = Regex::new(r"(https?://)([^:]+):([^@]+)@").unwrap();
-            re.replace(url_str, "${1}***:***@").to_string()
-        }
+
+        // Reemplazar credenciales de forma segura e idiomática
+        // set_username y set_password devuelven Result, pero solo fallan si el formato es inválido.
+        let _ = url.set_username("***");
+        let _ = url.set_password(Some("***"));
+
+        return url.to_string();
     }
+
+    // Fallback manual si la URL es inválida
+    // Redacta solo si hay patrón claro
+    let re = Regex::new(r"(?i)(https?://)([^:@]+):([^@]+)@").unwrap();
+    re.replace(url_str, "$1***:***@").to_string()
 }
 
 /// See docs/security.md for security considerations

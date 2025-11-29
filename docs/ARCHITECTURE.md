@@ -1539,5 +1539,3 @@ cargo check
 # Build optimizado
 cargo build --release
 ```
-
----
