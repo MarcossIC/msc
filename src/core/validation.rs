@@ -4,6 +4,7 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use regex::Regex;
 use std::path::Path;
+use unicode_normalization::UnicodeNormalization;
 use url::Url;
 
 /// Maximum URL length to prevent DoS attacks
@@ -191,28 +192,86 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Redacts credentials from URLs to prevent exposure in logs
+///
+/// Examples:
+/// - `https://user:pass@example.com/path` -> `https://***:***@example.com/path`
+/// - `http://admin:secret@192.168.1.1` -> `http://***:***@192.168.1.1`
+/// - `https://example.com/path` -> `https://example.com/path` (unchanged)
+pub fn redact_url_credentials(url_str: &str) -> String {
+    // Try to parse the URL
+    match Url::parse(url_str) {
+        Ok(url) => {
+            // Check if URL has credentials
+            if url.username().is_empty() && url.password().is_none() {
+                // No credentials to redact
+                return url_str.to_string();
+            }
+
+            // URL has credentials, need to redact
+            let scheme = url.scheme();
+            let host = url.host_str().unwrap_or("");
+            let port = url.port();
+            let path = url.path();
+            let query = url.query();
+            let fragment = url.fragment();
+
+            // Build redacted URL
+            let mut redacted = format!("{}://***:***@{}", scheme, host);
+
+            if let Some(p) = port {
+                redacted.push_str(&format!(":{}", p));
+            }
+
+            redacted.push_str(path);
+
+            if let Some(q) = query {
+                redacted.push('?');
+                redacted.push_str(q);
+            }
+
+            if let Some(f) = fragment {
+                redacted.push('#');
+                redacted.push_str(f);
+            }
+
+            redacted
+        }
+        Err(_) => {
+            // If parsing fails, try manual regex-based redaction as fallback
+            // Pattern: protocol://username:password@host
+            let re = Regex::new(r"(https?://)([^:]+):([^@]+)@").unwrap();
+            re.replace(url_str, "${1}***:***@").to_string()
+        }
+    }
+}
+
 /// See docs/security.md for security considerations
 pub fn validate_alias_command(command: &str) -> Result<()> {
-    let _safe_regex = match Regex::new(r"^[a-zA-Z0-9\s\-_./]+$") {
-        Ok(r) => r,
-        Err(_) => return Err(anyhow::anyhow!("Internal regex error")),
-    };
+    // SECURITY: Normalize Unicode to prevent homoglyph attacks
+    // NFKC (Compatibility Decomposition) converts visually similar chars to canonical form
+    // Example: Greek Question Mark (U+037E ;) becomes ASCII semicolon (U+003B ;)
+    let normalized: String = command.nfkc().collect();
 
-    let trimmed = command.trim();
+    let trimmed = normalized.trim();
 
     ensure!(!trimmed.is_empty(), "Alias command cannot be empty");
-    ensure!(!command.contains('\0'), "Alias command contains null byte");
-
     ensure!(
-        !command.contains(';'),
-        "Alias command contains semicolon (;)"
+        !normalized.contains('\0'),
+        "Alias command contains null byte"
+    );
+
+    // Run blacklist checks on NORMALIZED string
+    ensure!(
+        !normalized.contains(';'),
+        "Alias command contains semicolon (;) - detected via Unicode normalization"
     );
     ensure!(
-        !command.contains('|'),
+        !normalized.contains('|'),
         "Alias command contains pipe operator (|)"
     );
     ensure!(
-        !command.contains('&'),
+        !normalized.contains('&'),
         "Alias command contains ampersand (&)"
     );
 
@@ -223,28 +282,37 @@ pub fn validate_alias_command(command: &str) -> Result<()> {
 
     for ch in DANGEROUS_KEYWORDS {
         ensure!(
-            !command.contains(ch),
+            !normalized.contains(ch),
             "Alias command contains dangerous character '{}'",
             ch
         );
     }
 
+    // Check for control characters (0x00-0x1F, 0x7F)
+    for c in normalized.chars() {
+        ensure!(
+            !c.is_control() || c == '\n' || c == '\r' || c == '\t',
+            "Alias command contains control character (0x{:02X})",
+            c as u32
+        );
+    }
+
     ensure!(
-        !command.contains('\t'),
+        !normalized.contains('\t'),
         "Alias command contains tab character"
     );
 
     ensure!(
-        !command.contains('"') && !command.contains('\''),
+        !normalized.contains('"') && !normalized.contains('\''),
         "Alias command contains quotes"
     );
 
     ensure!(
-        !command.contains("exec"),
+        !normalized.contains("exec"),
         "Alias command contains 'exec' keyword"
     );
     ensure!(
-        !command.contains("eval"),
+        !normalized.contains("eval"),
         "Alias command contains 'eval' keyword"
     );
 
@@ -259,12 +327,17 @@ pub fn validate_alias_command(command: &str) -> Result<()> {
 
 /// See docs/security.md for security considerations
 pub fn validate_alias_command_windows(command: &str) -> Result<()> {
-    let trimmed = command.trim();
+    // SECURITY: Normalize Unicode to prevent homoglyph attacks
+    // NFKC (Compatibility Decomposition) converts visually similar chars to canonical form
+    // Example: Greek Question Mark (U+037E ;) becomes ASCII semicolon (U+003B ;)
+    let normalized: String = command.nfkc().collect();
+
+    let trimmed = normalized.trim();
 
     // Basic checks
     ensure!(!trimmed.is_empty(), "Alias command cannot be empty");
     ensure!(
-        !command.contains('\0'),
+        !normalized.contains('\0'),
         "Alias command contains null byte - security risk"
     );
 
@@ -300,7 +373,7 @@ pub fn validate_alias_command_windows(command: &str) -> Result<()> {
 
     for (ch, reason) in DANGEROUS_CHARS {
         ensure!(
-            !command.contains(ch),
+            !normalized.contains(ch),
             "Alias command contains dangerous character '{}' - {}",
             ch,
             reason
@@ -315,34 +388,44 @@ pub fn validate_alias_command_windows(command: &str) -> Result<()> {
 
     for (ch, reason) in WINDOWS_DANGEROUS {
         ensure!(
-            !command.contains(ch),
+            !normalized.contains(ch),
             "Windows alias command contains dangerous character '{}' - {}",
             ch,
             reason
         );
     }
 
+    // Check for control characters (0x00-0x1F, 0x7F)
+    for c in normalized.chars() {
+        ensure!(
+            !c.is_control() || c == '\n' || c == '\r' || c == '\t',
+            "Alias command contains control character (0x{:02X})",
+            c as u32
+        );
+    }
+
     // Additional pattern checks for obfuscated attacks
     ensure!(
-        !command.contains("exec"),
+        !normalized.contains("exec"),
         "Alias command contains 'exec' keyword - potential code execution"
     );
     ensure!(
-        !command.contains("eval"),
+        !normalized.contains("eval"),
         "Alias command contains 'eval' keyword - potential code execution"
     );
 
     // Check for PowerShell-specific patterns
+    let normalized_lower = normalized.to_lowercase();
     ensure!(
-        !command.to_lowercase().contains("invoke-expression"),
+        !normalized_lower.contains("invoke-expression"),
         "Command contains PowerShell Invoke-Expression - code execution risk"
     );
     ensure!(
-        !command.to_lowercase().contains("iex"),
+        !normalized_lower.contains("iex"),
         "Command contains PowerShell IEX - code execution risk"
     );
     ensure!(
-        !command.to_lowercase().contains("downloadstring"),
+        !normalized_lower.contains("downloadstring"),
         "Command contains DownloadString - remote code execution risk"
     );
 
@@ -541,6 +624,54 @@ mod tests {
                 "Should reject malicious Windows command: {}",
                 cmd
             );
+        }
+    }
+
+    #[test]
+    fn test_redact_url_credentials() {
+        // URLs with credentials should be redacted
+        let urls_with_creds = vec![
+            (
+                "https://admin:secretP@ssw0rd@private-server.com/video.mp4",
+                "https://***:***@private-server.com/video.mp4",
+            ),
+            (
+                "https://user:token123@api.example.com/download",
+                "https://***:***@api.example.com/download",
+            ),
+            (
+                "http://root:toor@192.168.1.100:8080/secure/file",
+                "http://***:***@192.168.1.100:8080/secure/file",
+            ),
+            (
+                "https://john:p@ssword@example.com/path?query=value",
+                "https://***:***@example.com/path?query=value",
+            ),
+            (
+                "http://user:pass@host.com:3000/api#fragment",
+                "http://***:***@host.com:3000/api#fragment",
+            ),
+        ];
+
+        for (original, expected) in urls_with_creds {
+            let redacted = redact_url_credentials(original);
+            assert_eq!(
+                redacted, expected,
+                "Failed to redact credentials from: {}",
+                original
+            );
+        }
+
+        // URLs without credentials should remain unchanged
+        let urls_without_creds = vec![
+            "https://example.com/path",
+            "http://192.168.1.1:8080/api",
+            "https://youtube.com/watch?v=abc123",
+        ];
+
+        for url in urls_without_creds {
+            let redacted = redact_url_credentials(url);
+            assert_eq!(redacted, url, "Should not modify URL without credentials");
         }
     }
 }

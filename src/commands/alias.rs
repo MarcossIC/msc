@@ -49,11 +49,11 @@ fn handle_add(matches: &ArgMatches) -> Result<()> {
         );
     }
 
-    // Create alias
+    // Create alias (this validates the command for security)
     let alias = if let Some(desc) = description {
-        Alias::with_description(name.clone(), command.clone(), desc.clone())
+        Alias::with_description(name.clone(), command.clone(), desc.clone())?
     } else {
-        Alias::new(name.clone(), command.clone())
+        Alias::new(name.clone(), command.clone())?
     };
 
     // Add to config

@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use super::alias_validator::validate_alias_command;
+
 /// Represents a single alias
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alias {
@@ -16,23 +18,44 @@ pub struct Alias {
 
 impl Alias {
     /// Create a new alias
-    pub fn new(name: String, command: String) -> Self {
-        Self {
+    ///
+    /// # Security
+    /// This function validates the command for shell injection vulnerabilities.
+    /// It will reject commands containing dangerous shell metacharacters like:
+    /// `;`, `|`, `&`, `$`, `` ` ``, `(`, `)`, `<`, `>`, etc.
+    ///
+    /// # Errors
+    /// Returns an error if the command contains dangerous patterns
+    pub fn new(name: String, command: String) -> Result<Self> {
+        // Validate command for security vulnerabilities
+        validate_alias_command(&command)?;
+
+        Ok(Self {
             name,
             command,
             description: None,
             created_at: chrono::Utc::now().to_rfc3339(),
-        }
+        })
     }
 
     /// Create a new alias with description
-    pub fn with_description(name: String, command: String, description: String) -> Self {
-        Self {
+    ///
+    /// # Security
+    /// This function validates the command for shell injection vulnerabilities.
+    /// It will reject commands containing dangerous shell metacharacters.
+    ///
+    /// # Errors
+    /// Returns an error if the command contains dangerous patterns
+    pub fn with_description(name: String, command: String, description: String) -> Result<Self> {
+        // Validate command for security vulnerabilities
+        validate_alias_command(&command)?;
+
+        Ok(Self {
             name,
             command,
             description: Some(description),
             created_at: chrono::Utc::now().to_rfc3339(),
-        }
+        })
     }
 }
 
@@ -125,7 +148,8 @@ mod tests {
 
     #[test]
     fn test_alias_creation() {
-        let alias = Alias::new("pyh".to_string(), "python3 -m http.server 5000".to_string());
+        let alias = Alias::new("pyh".to_string(), "python3 -m http.server 5000".to_string())
+            .expect("Should create alias with safe command");
 
         assert_eq!(alias.name, "pyh");
         assert_eq!(alias.command, "python3 -m http.server 5000");
@@ -139,7 +163,8 @@ mod tests {
             "gp".to_string(),
             "git push".to_string(),
             "Quick git push".to_string(),
-        );
+        )
+        .expect("Should create alias with safe command");
 
         assert_eq!(alias.description, Some("Quick git push".to_string()));
     }
@@ -148,7 +173,8 @@ mod tests {
     fn test_config_add_remove() {
         let mut config = AliasConfig::default();
 
-        let alias = Alias::new("test".to_string(), "echo test".to_string());
+        let alias = Alias::new("test".to_string(), "echo test".to_string())
+            .expect("Should create alias with safe command");
         assert!(config.add_alias(alias));
 
         assert!(config.exists("test"));
@@ -159,10 +185,10 @@ mod tests {
     #[test]
     fn test_config_serialization() {
         let mut config = AliasConfig::default();
-        config.add_alias(Alias::new(
-            "pyh".to_string(),
-            "python3 -m http.server".to_string(),
-        ));
+        config.add_alias(
+            Alias::new("pyh".to_string(), "python3 -m http.server".to_string())
+                .expect("Should create alias with safe command"),
+        );
 
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: AliasConfig = serde_json::from_str(&json).unwrap();
@@ -174,9 +200,9 @@ mod tests {
     #[test]
     fn test_list_aliases_sorted() {
         let mut config = AliasConfig::default();
-        config.add_alias(Alias::new("zebra".to_string(), "cmd1".to_string()));
-        config.add_alias(Alias::new("alpha".to_string(), "cmd2".to_string()));
-        config.add_alias(Alias::new("beta".to_string(), "cmd3".to_string()));
+        config.add_alias(Alias::new("zebra".to_string(), "cmd1".to_string()).unwrap());
+        config.add_alias(Alias::new("alpha".to_string(), "cmd2".to_string()).unwrap());
+        config.add_alias(Alias::new("beta".to_string(), "cmd3".to_string()).unwrap());
 
         let list = config.list_aliases();
         assert_eq!(list.len(), 3);

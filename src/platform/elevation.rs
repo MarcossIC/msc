@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 /// See docs/security.md for security considerations
-fn build_elevation_command(program_path: &str, arguments: &[String]) -> String {
+pub fn build_elevation_command(program_path: &str, arguments: &[String]) -> String {
     use base64::{engine::general_purpose, Engine as _};
 
     let ps_command = if arguments.is_empty() {

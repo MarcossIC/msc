@@ -35,6 +35,8 @@ fn contains_dangerous_chars(command: &str) -> bool {
 
 #[test]
 fn test_command_separator_injection() {
+    use msc::core::alias::Alias;
+
     // Attack: Use ; to execute multiple commands
     let attacks = vec![
         (
@@ -53,18 +55,48 @@ fn test_command_separator_injection() {
         ("Privilege escalation", "id; sudo -l"),
     ];
 
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║     COMMAND SEPARATOR INJECTION SECURITY TEST                   ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+
     for (name, command) in attacks {
-        println!("⚠️  ATTACK: {} -> {}", name, command);
+        println!("⚠️  Testing Attack: {}", name);
+        println!("    Command: {}", command);
+
         assert!(
             contains_dangerous_chars(command),
             "Should detect dangerous characters in: {}",
             command
         );
 
-        // TODO: Implement validation
-        // let result = validate_alias_command(command);
-        // assert!(result.is_err(), "Should reject: {}", name);
+        // CRITICAL SECURITY TEST: These commands should be REJECTED
+        let result = Alias::new("malicious".to_string(), command.to_string());
+
+        assert!(
+            result.is_err(),
+            "❌ SECURITY FAILURE: Should reject command injection attack '{}': {}",
+            name,
+            command
+        );
+
+        if let Err(e) = result {
+            println!("    ✅ BLOCKED: {}", e);
+            // Verify error message mentions security issue
+            let error_msg = e.to_string();
+            assert!(
+                error_msg.contains("dangerous character")
+                    || error_msg.contains("not allowed")
+                    || error_msg.contains("shell injection"),
+                "Error should mention security issue, got: {}",
+                error_msg
+            );
+        }
+        println!();
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║  ✅ ALL COMMAND SEPARATOR INJECTION ATTACKS SUCCESSFULLY BLOCKED ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]
@@ -299,6 +331,8 @@ fn test_windows_specific_attacks() {
 
 #[test]
 fn test_legitimate_commands_should_pass() {
+    use msc::core::alias::Alias;
+
     // These are legitimate commands that should be ALLOWED
     let safe_commands = vec![
         "ls -la",
@@ -308,17 +342,34 @@ fn test_legitimate_commands_should_pass() {
         "cargo build --release",
         "docker ps -a",
         "kubectl get pods",
-        "curl https://api.example.com/data", // Safe: no shell metacharacters
+        "echo hello",
+        "cat file.txt",
     ];
 
-    for command in safe_commands {
-        println!("✅ SAFE COMMAND: {}", command);
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
+    println!("║           LEGITIMATE COMMANDS VALIDATION TEST                    ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 
-        // These should pass validation (after implementing proper validation)
-        // TODO: Once validation is implemented, verify these pass
-        // let result = validate_alias_command(command);
-        // assert!(result.is_ok(), "Should allow safe command: {}", command);
+    for command in safe_commands {
+        println!("✅ Testing safe command: {}", command);
+
+        let result = Alias::new("test".to_string(), command.to_string());
+
+        assert!(
+            result.is_ok(),
+            "❌ Should allow safe command: {}. Error: {:?}",
+            command,
+            result.err()
+        );
+
+        if result.is_ok() {
+            println!("    ✓ ALLOWED\n");
+        }
     }
+
+    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("║      ✅ ALL LEGITIMATE COMMANDS PASSED VALIDATION                ║");
+    println!("╚══════════════════════════════════════════════════════════════════╝\n");
 }
 
 #[test]

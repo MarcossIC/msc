@@ -36,9 +36,11 @@ url = "2.5"
 base64 = "0.21"
 regex = "1.10"
 which = "6.0"
-zip = "0.6"
-scraper = "0.18"
-pathdiff = "0.2"
+zip = "6.0.0"
+scraper = "0.24"
+pathdiff = "0.2.3"
+unicode-normalization = "0.1.25"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "consoleapi", "processthreadsapi", "winnt", "securitybaseapi", "handleapi"] }
