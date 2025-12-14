@@ -10,7 +10,8 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::core::system_monitor::{
-    CollectorConfig, MetricsCollector, MetricsHistory, SystemMetrics,
+    evaluate_alerts, Alert, AlertConfig, CollectorConfig, MetricsCollector, MetricsHistory,
+    SystemMetrics,
 };
 
 use super::event_handler::MonitorEvent;
@@ -26,6 +27,10 @@ pub struct MonitorApp {
     pub selected_tab: usize,
     pub process_sort_by_memory: bool,
     pub interval_ms: u64,
+    pub show_process_tree: bool,
+    pub selected_process_index: usize,
+    pub alerts: Vec<Alert>,
+    pub alert_config: AlertConfig,
 }
 
 impl MonitorApp {
@@ -50,6 +55,10 @@ impl MonitorApp {
             selected_tab: 0,
             process_sort_by_memory: false,
             interval_ms: config.interval_ms,
+            show_process_tree: true, // Default to tree view
+            selected_process_index: 0,
+            alerts: Vec::new(),
+            alert_config: AlertConfig::default(),
         }
     }
 
@@ -73,6 +82,9 @@ impl MonitorApp {
                 .push_network(net.rx_bytes_per_sec, net.tx_bytes_per_sec);
         }
 
+        // Evaluate alerts
+        self.alerts = evaluate_alerts(&self.metrics, &self.alert_config);
+
         Ok(())
     }
 
@@ -91,6 +103,21 @@ impl MonitorApp {
             }
             MonitorEvent::ToggleProcessSort => {
                 self.process_sort_by_memory = !self.process_sort_by_memory;
+            }
+            MonitorEvent::ToggleProcessTree => {
+                self.show_process_tree = !self.show_process_tree;
+                self.selected_process_index = 0; // Reset selection
+            }
+            MonitorEvent::ProcessUp => {
+                if self.selected_process_index > 0 {
+                    self.selected_process_index -= 1;
+                }
+            }
+            MonitorEvent::ProcessDown => {
+                let max_index = self.metrics.top_processes.len().saturating_sub(1);
+                if self.selected_process_index < max_index {
+                    self.selected_process_index += 1;
+                }
             }
             MonitorEvent::None => {}
         }
@@ -167,6 +194,9 @@ pub fn run_monitor_app(config: MonitorAppConfig) -> Result<()> {
                         KeyCode::Tab => MonitorEvent::NextTab,
                         KeyCode::BackTab => MonitorEvent::PrevTab,
                         KeyCode::Char('s') => MonitorEvent::ToggleProcessSort,
+                        KeyCode::Char('t') => MonitorEvent::ToggleProcessTree,
+                        KeyCode::Up | KeyCode::Char('k') => MonitorEvent::ProcessUp,
+                        KeyCode::Down | KeyCode::Char('j') => MonitorEvent::ProcessDown,
                         _ => MonitorEvent::None,
                     };
                     app.handle_event(monitor_event);

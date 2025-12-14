@@ -100,6 +100,7 @@ impl MetricsCollector {
 
         let mut metrics = SystemMetrics {
             timestamp: chrono::Utc::now().timestamp(),
+            global: self.collect_global(),
             ..Default::default()
         };
 
@@ -137,6 +138,61 @@ impl MetricsCollector {
         Ok(metrics)
     }
 
+    fn collect_global(&self) -> super::metrics::GlobalMetrics {
+        use super::metrics::{GlobalMetrics};
+
+        let boot_time = System::boot_time() as i64;
+        let now = chrono::Utc::now().timestamp();
+        let uptime_secs = (now - boot_time).max(0) as u64;
+
+        let hostname = System::host_name().unwrap_or_else(|| "Unknown".to_string());
+
+        // Try to get battery info
+        let (power_source, battery_percent, battery_time_remaining) =
+            self.collect_battery_info();
+
+        GlobalMetrics {
+            uptime_secs,
+            hostname,
+            boot_time,
+            power_source,
+            battery_percent,
+            battery_time_remaining_secs: battery_time_remaining,
+        }
+    }
+
+    fn collect_battery_info(&self) -> (PowerSource, Option<f32>, Option<u32>) {
+        // Try using the battery crate
+        if let Ok(manager) = battery::Manager::new() {
+            if let Ok(mut batteries) = manager.batteries() {
+                if let Some(Ok(battery)) = batteries.next() {
+                    use battery::State;
+
+                    let power_source = match battery.state() {
+                        State::Charging | State::Full => PowerSource::AC,
+                        State::Discharging => PowerSource::Battery,
+                        _ => PowerSource::Unknown,
+                    };
+
+                    let battery_percent = Some(battery.state_of_charge().value * 100.0);
+
+                    let battery_time = if battery.state() == State::Discharging {
+                        battery
+                            .time_to_empty()
+                            .map(|t| t.value as u32) // value is already in seconds as f32
+                    } else {
+                        None
+                    };
+
+                    return (power_source, battery_percent, battery_time);
+                }
+            }
+        }
+
+        // Fallback: No battery detected
+        (PowerSource::AC, None, None)
+    }
+
     fn collect_cpu(&self) -> CpuMetrics {
         let cpus = self.system.cpus();
         let load = System::load_average();
@@ -156,16 +212,26 @@ impl MetricsCollector {
 
     fn collect_memory(&self) -> MemoryMetrics {
         let total = self.system.total_memory();
-        let used = self.system.used_memory();
+        let available = self.system.available_memory();
         let swap_total = self.system.total_swap();
         let swap_used = self.system.used_swap();
 
+        // Calculate real used memory (excluding cache/buffers)
+        // Real used = total - available
+        let real_used = total.saturating_sub(available);
+
+        // sysinfo's "used_memory" includes cache/buffers
+        // cache_buffers = reported_used - real_used
+        let reported_used = self.system.used_memory();
+        let cache_buffers = reported_used.saturating_sub(real_used);
+
         MemoryMetrics {
             total_bytes: total,
-            used_bytes: used,
-            available_bytes: self.system.available_memory(),
+            used_bytes: real_used,
+            cache_buffers_bytes: cache_buffers,
+            available_bytes: available,
             usage_percent: if total > 0 {
-                (used as f32 / total as f32) * 100.0
+                (real_used as f32 / total as f32) * 100.0
             } else {
                 0.0
             },
@@ -244,6 +310,10 @@ impl MetricsCollector {
                     tx_bytes_per_sec: (tx_diff as f64 / elapsed_secs) as u64,
                     rx_packets: data.packets_received(),
                     tx_packets: data.packets_transmitted(),
+                    rx_errors: data.errors_on_received(),
+                    tx_errors: data.errors_on_transmitted(),
+                    rx_drops: 0, // sysinfo doesn't provide drops directly
+                    tx_drops: 0,
                 }
             })
             .collect();
@@ -276,6 +346,7 @@ impl MetricsCollector {
                 let mem = proc.memory();
                 ProcessMetrics {
                     pid: proc.pid().as_u32(),
+                    parent_pid: proc.parent().map(|p| p.as_u32()),
                     name: proc.name().to_string_lossy().to_string(),
                     cpu_usage_percent: proc.cpu_usage(),
                     memory_bytes: mem,

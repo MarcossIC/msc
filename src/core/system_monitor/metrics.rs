@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SystemMetrics {
     pub timestamp: i64, // Unix timestamp
+    pub global: GlobalMetrics,
     pub cpu: CpuMetrics,
     pub memory: MemoryMetrics,
     pub gpu: Option<GpuMetrics>,
@@ -11,6 +12,25 @@ pub struct SystemMetrics {
     pub network: Vec<NetworkMetrics>,
     pub temperatures: Vec<TemperatureReading>,
     pub top_processes: Vec<ProcessMetrics>,
+}
+
+/// Global system-wide metrics
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GlobalMetrics {
+    pub uptime_secs: u64,
+    pub hostname: String,
+    pub boot_time: i64, // Unix timestamp
+    pub power_source: PowerSource,
+    pub battery_percent: Option<f32>,
+    pub battery_time_remaining_secs: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub enum PowerSource {
+    Battery,
+    #[default]
+    AC,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -26,7 +46,8 @@ pub struct CpuMetrics {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryMetrics {
     pub total_bytes: u64,
-    pub used_bytes: u64,
+    pub used_bytes: u64,              // Real usage (excluding cache/buffers)
+    pub cache_buffers_bytes: u64,     // Cache and buffers
     pub available_bytes: u64,
     pub usage_percent: f32,
     pub swap_total_bytes: u64,
@@ -80,6 +101,10 @@ pub struct NetworkMetrics {
     pub tx_bytes_per_sec: u64,
     pub rx_packets: u64,
     pub tx_packets: u64,
+    pub rx_errors: u64,
+    pub tx_errors: u64,
+    pub rx_drops: u64,
+    pub tx_drops: u64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -93,6 +118,7 @@ pub struct TemperatureReading {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProcessMetrics {
     pub pid: u32,
+    pub parent_pid: Option<u32>,
     pub name: String,
     pub cpu_usage_percent: f32,
     pub memory_bytes: u64,

@@ -11,6 +11,12 @@ pub enum MonitorEvent {
     PrevTab,
     /// Toggle process sort mode
     ToggleProcessSort,
+    /// Toggle process tree view
+    ToggleProcessTree,
+    /// Navigate process list up
+    ProcessUp,
+    /// Navigate process list down
+    ProcessDown,
     /// No action
     None,
 }
