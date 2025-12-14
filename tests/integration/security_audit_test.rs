@@ -29,7 +29,6 @@ fn test_critical_alias_command_injection_unix() {
     // This test validates that command injection attacks are blocked
     // while legitimate commands are allowed.
 
-    
     println!("\n🔴 Testing malicious commands (must be blocked):\n");
 
     // Command separators and chaining
@@ -174,7 +173,6 @@ fn test_critical_alias_command_injection_unix() {
         println!("  ✅ Blocked {}: {}", attack_type, cmd);
     }
 
-    
     println!("\n🟢 Testing legitimate commands (must be allowed):\n");
 
     let legitimate_commands = vec![
@@ -214,7 +212,6 @@ fn test_critical_alias_command_windows_equivalent() {
     // This test validates that command injection attacks are blocked
     // while legitimate Windows commands are allowed.
 
-    
     println!("\n🔴 Testing malicious Windows commands (must be blocked):\n");
 
     // PowerShell injection
@@ -327,7 +324,6 @@ fn test_critical_alias_command_windows_equivalent() {
         println!("  ✅ Blocked {}: {}", attack_type, cmd);
     }
 
-    
     println!("\n🟢 Testing legitimate Windows commands (must be allowed):\n");
 
     let legitimate_commands = vec![

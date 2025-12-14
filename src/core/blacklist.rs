@@ -9,6 +9,12 @@ pub struct Blacklist {
     domains: HashSet<String>,
 }
 
+impl Default for Blacklist {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Blacklist {
     /// Create a new empty blacklist
     pub fn new() -> Self {

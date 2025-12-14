@@ -1,5 +1,5 @@
 use anyhow::{ensure, Result};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io;
 use std::path::Path;
@@ -53,50 +53,50 @@ impl ChecksumManager {
             // yt-dlp checksums (Windows x64)
             // Source: https://github.com/yt-dlp/yt-dlp/releases
             ("yt-dlp", "2024.11.18") => Some(
-                "c5d27e1f0e3b7b3c1f3e7d9e3c2f5b8a9d4e6c7f8b9a0c1d2e3f4a5b6c7d8e9f0".to_string()
+                "c5d27e1f0e3b7b3c1f3e7d9e3c2f5b8a9d4e6c7f8b9a0c1d2e3f4a5b6c7d8e9f0".to_string(),
             ),
-            ("yt-dlp", "2024.10.22") => Some(
-                "d6e28f2f1e4c8c4d2f4e8e0e4d3f6c9baed5f7d8f9ca1d2e4f5b6d7e8f9a1c2".to_string()
-            ),
-            ("yt-dlp", "2024.09.27") => Some(
-                "e7f39g3g2f5d9d5e3f5f9f1f5e4g7dadbfe6g8e9fad2e3f6c7e8f9a2d3".to_string()
-            ),
+            ("yt-dlp", "2024.10.22") => {
+                Some("d6e28f2f1e4c8c4d2f4e8e0e4d3f6c9baed5f7d8f9ca1d2e4f5b6d7e8f9a1c2".to_string())
+            }
+            ("yt-dlp", "2024.09.27") => {
+                Some("e7f39g3g2f5d9d5e3f5f9f1f5e4g7dadbfe6g8e9fad2e3f6c7e8f9a2d3".to_string())
+            }
 
             // ffmpeg checksums (Windows x64 essentials build)
             // Source: https://www.gyan.dev/ffmpeg/builds/ or https://github.com/BtbN/FFmpeg-Builds/releases
-            ("ffmpeg", "7.1") => Some(
-                "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2".to_string()
-            ),
-            ("ffmpeg", "7.0.2") => Some(
-                "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3".to_string()
-            ),
-            ("ffmpeg", "7.0.1") => Some(
-                "c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4".to_string()
-            ),
-            ("ffmpeg", "7.0") => Some(
-                "d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5".to_string()
-            ),
-            ("ffmpeg", "6.1.1") => Some(
-                "e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6".to_string()
-            ),
-            ("ffmpeg", "6.1") => Some(
-                "f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7".to_string()
-            ),
-            ("ffmpeg", "6.0") => Some(
-                "a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8".to_string()
-            ),
+            ("ffmpeg", "7.1") => {
+                Some("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2".to_string())
+            }
+            ("ffmpeg", "7.0.2") => {
+                Some("b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3".to_string())
+            }
+            ("ffmpeg", "7.0.1") => {
+                Some("c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4".to_string())
+            }
+            ("ffmpeg", "7.0") => {
+                Some("d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5".to_string())
+            }
+            ("ffmpeg", "6.1.1") => {
+                Some("e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6".to_string())
+            }
+            ("ffmpeg", "6.1") => {
+                Some("f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7".to_string())
+            }
+            ("ffmpeg", "6.0") => {
+                Some("a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8".to_string())
+            }
 
             // wget checksums (Windows x64)
             // Source: https://eternallybored.org/misc/wget/ or https://github.com/mirror/wget
-            ("wget", "1.21.4") => Some(
-                "b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9".to_string()
-            ),
-            ("wget", "1.21.3") => Some(
-                "c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0".to_string()
-            ),
-            ("wget", "1.21.2") => Some(
-                "d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1".to_string()
-            ),
+            ("wget", "1.21.4") => {
+                Some("b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9".to_string())
+            }
+            ("wget", "1.21.3") => {
+                Some("c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0".to_string())
+            }
+            ("wget", "1.21.2") => {
+                Some("d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1".to_string())
+            }
 
             // Unknown tool or version
             _ => None,
@@ -174,7 +174,10 @@ mod tests {
     fn test_get_expected_hash_yt_dlp() {
         // Test known yt-dlp version
         let result = ChecksumManager::get_expected_hash("yt-dlp", "2024.11.18");
-        assert!(result.is_some(), "Should return hash for known yt-dlp version");
+        assert!(
+            result.is_some(),
+            "Should return hash for known yt-dlp version"
+        );
         assert_eq!(
             result.unwrap(),
             "c5d27e1f0e3b7b3c1f3e7d9e3c2f5b8a9d4e6c7f8b9a0c1d2e3f4a5b6c7d8e9f0"
@@ -185,7 +188,10 @@ mod tests {
     fn test_get_expected_hash_ffmpeg() {
         // Test known ffmpeg version
         let result = ChecksumManager::get_expected_hash("ffmpeg", "7.1");
-        assert!(result.is_some(), "Should return hash for known ffmpeg version");
+        assert!(
+            result.is_some(),
+            "Should return hash for known ffmpeg version"
+        );
         assert_eq!(
             result.unwrap(),
             "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
@@ -196,7 +202,10 @@ mod tests {
     fn test_get_expected_hash_wget() {
         // Test known wget version
         let result = ChecksumManager::get_expected_hash("wget", "1.21.4");
-        assert!(result.is_some(), "Should return hash for known wget version");
+        assert!(
+            result.is_some(),
+            "Should return hash for known wget version"
+        );
         assert_eq!(
             result.unwrap(),
             "b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9"

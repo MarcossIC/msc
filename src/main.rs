@@ -54,14 +54,13 @@ fn main() -> Result<()> {
         Some(("vedit", sub_matches)) => commands::vedit::execute(sub_matches),
         Some(("vget", sub_matches)) => commands::vget::execute(sub_matches),
         Some(("wget", sub_matches)) => match sub_matches.subcommand() {
-            Some(("cookies", cookie_matches)) => {
-                commands::wget::execute_cookies(cookie_matches)
-            }
+            Some(("cookies", cookie_matches)) => commands::wget::execute_cookies(cookie_matches),
             Some(("postprocessing", post_matches)) => {
                 commands::wget::execute_postprocessing(post_matches)
             }
             _ => commands::wget::execute(sub_matches),
         },
+        Some(("sys", sub_matches)) => commands::sys::execute(sub_matches),
         _ => {
             println!("Welcome to MSC CLI!");
             println!("Use 'msc --help' for more information.");
@@ -629,6 +628,8 @@ fn build_cli() -> Command {
                     msc wget \"https://example.com\" my-site --all                   # Mirror site to 'my-site' folder\n\
                     msc wget \"https://blog.com\" --all --pattern '/posts/.*'        # Only download /posts/* pages\n\
                     msc wget \"https://site.com\" --all --pattern '/t.*'             # Only pages starting with /t\n\
+                    msc wget \"https://site.com\" --all --exclude '#comment'         # Exclude comment sections\n\
+                    msc wget \"https://site.com\" --all --pattern '/posts/.*' --exclude '/feed/' # Posts except feeds\n\
                     msc wget \"https://site.com\" --all --limit 150                  # Download max 150 pages\n\
                     msc wget \"https://site.com\" --all --pattern '/posts/.*' --limit 50  # 50 pages matching pattern\n\
                     msc wget cookies https://example.com                           # Extract cookies from browser\n\
@@ -675,6 +676,23 @@ fn build_cli() -> Command {
                             --pattern '/\\d{4}/\\d{2}/.*'        # Date-based URLs like /2024/01/*"
                         )
                         .value_name("REGEX"),
+                )
+                .arg(
+                    Arg::new("exclude")
+                        .short('e')
+                        .long("exclude")
+                        .help("Exclude URLs matching this pattern (e.g., '#comment' or '/feed/')")
+                        .long_help(
+                            "Exclude URLs that match this pattern from being crawled.\n\
+                            This filter is applied AFTER the --pattern filter.\n\
+                            Useful for ignoring comment sections, feeds, or specific paths.\n\n\
+                            Examples:\n\
+                            --exclude '#comment'               # Ignore comment sections\n\
+                            --exclude '/feed/'                 # Ignore feed pages\n\
+                            --exclude '#|/feed/'               # Multiple exclusions\n\
+                            --exclude '\\?.*'                   # Ignore URLs with query params"
+                        )
+                        .value_name("PATTERN"),
                 )
                 .arg(
                     Arg::new("limit")
@@ -813,5 +831,160 @@ fn build_cli() -> Command {
                                 .value_name("URL"),
                         ),
                 ),
+        )
+        .subcommand(
+            Command::new("sys")
+                .about("System information and utilities")
+                .long_about(
+                    "Display detailed system information including hardware specs.\n\n\
+                    SUBCOMMANDS:\n\
+                    info    - Display complete system information\n\n\
+                    EXAMPLES:\n\
+                    msc sys info    # Show all system information"
+                )
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("info")
+                        .about("Display complete system information")
+                        .long_about(
+                            "Display detailed information about your system hardware and software.\n\n\
+                            Information includes:\n\
+                            • CPU (model, cores, frequency)\n\
+                            • RAM (capacity, type DDR3/4/5, speed)\n\
+                            • GPU (model, VRAM)\n\
+                            • Motherboard (manufacturer, model)\n\
+                            • Network adapters (WiFi generation, Ethernet)\n\
+                            • Storage devices (type SSD/HDD/NVMe, capacity)\n\
+                            • Operating System (version, build, architecture)\n\
+                            • NPU if available\n\
+                            • Battery (laptops only - charge, health, cycles)\n\
+                            • Power Plan (Windows power settings)\n\n\
+                            FILTERING BY COMPONENT:\n\
+                            You can filter which components to display using flags:\n\
+                            --cpu       Show only CPU information\n\
+                            --gpu       Show only GPU information\n\
+                            --ram       Show only RAM/Memory information\n\
+                            --mbo       Show only Motherboard information\n\
+                            --network   Show only Network adapters information\n\
+                            --os        Show only Operating System information\n\
+                            --energy    Show only Energy information (battery, power plan)\n\n\
+                            Flags can be combined to show multiple components:\n\
+                            --cpu --gpu    Show CPU and GPU information only\n\n\
+                            EXAMPLES:\n\
+                            msc sys info              # Display all system information\n\
+                            msc sys info --cpu        # Display only CPU information\n\
+                            msc sys info --gpu        # Display only GPU information\n\
+                            msc sys info --cpu --gpu  # Display CPU and GPU only\n\
+                            msc sys info --ram --mbo  # Display RAM and Motherboard only\n\
+                            msc sys info --os         # Display only OS information\n\
+                            msc sys info --energy     # Display only Energy information"
+                        )
+                        .arg(
+                            Arg::new("cpu")
+                                .long("cpu")
+                                .help("Show only CPU information")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("gpu")
+                                .long("gpu")
+                                .help("Show only GPU information")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("ram")
+                                .long("ram")
+                                .help("Show only RAM/Memory information")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("mbo")
+                                .long("mbo")
+                                .help("Show only Motherboard information")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("network")
+                                .long("network")
+                                .help("Show only Network adapters information")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("os")
+                                .long("os")
+                                .help("Show only Operating System information")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("energy")
+                                .long("energy")
+                                .help("Show only Energy information (battery, power plan)")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                )
+                .subcommand(
+                    Command::new("monitor")
+                        .about("Launch real-time system monitoring dashboard")
+                        .long_about("Start a TUI-based system monitor dashboard showing CPU, GPU, Memory, Network, and Disk usage in real-time.")
+                        .arg(
+                            Arg::new("interval")
+                                .short('i')
+                                .long("interval")
+                                .help("Update interval in milliseconds")
+                                .default_value("1000")
+                                .value_parser(clap::value_parser!(u64)),
+                        )
+                        .arg(
+                            Arg::new("cpu-only")
+                                .long("cpu-only")
+                                .help("Show only CPU metrics")
+                                .action(clap::ArgAction::SetTrue)
+                                .conflicts_with("gpu-only")
+                                .conflicts_with("memory-only"),
+                        )
+                        .arg(
+                            Arg::new("gpu-only")
+                                .long("gpu-only")
+                                .help("Show only GPU metrics")
+                                .action(clap::ArgAction::SetTrue)
+                                .conflicts_with("cpu-only")
+                                .conflicts_with("memory-only"),
+                        )
+                        .arg(
+                            Arg::new("memory-only")
+                                .long("memory-only")
+                                .help("Show only Memory metrics")
+                                .action(clap::ArgAction::SetTrue)
+                                .conflicts_with("cpu-only")
+                                .conflicts_with("gpu-only"),
+                        )
+                        .arg(
+                            Arg::new("network")
+                                .long("network")
+                                .help("Force show network metrics")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("disks")
+                                .long("disks")
+                                .help("Force show disk metrics")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("top-processes")
+                                .short('p')
+                                .long("top-processes")
+                                .help("Number of top processes to show")
+                                .default_value("10")
+                                .value_parser(clap::value_parser!(usize)),
+                        )
+                        .arg(
+                            Arg::new("json")
+                                .long("json")
+                                .help("Output metrics as JSON stream (non-interactive)")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                )
         )
 }

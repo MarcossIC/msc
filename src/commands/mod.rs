@@ -4,6 +4,7 @@ pub mod clean;
 pub mod config;
 pub mod hello;
 pub mod list;
+pub mod sys;
 pub mod vedit;
 pub mod version;
 pub mod vget;

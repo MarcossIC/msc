@@ -105,8 +105,7 @@ pub fn load_default_blacklist() -> Result<Blacklist> {
     // The file is located at src/const/black_list_url relative to the project root
     let blacklist_path = get_blacklist_path()?;
 
-    Blacklist::load_from_file(&blacklist_path)
-        .context("Failed to load blacklist file")
+    Blacklist::load_from_file(&blacklist_path).context("Failed to load blacklist file")
 }
 
 /// Get the path to the blacklist file
@@ -129,8 +128,7 @@ fn get_blacklist_path() -> Result<PathBuf> {
     }
 
     // Fallback: try current directory
-    let current_dir = std::env::current_dir()
-        .context("Failed to get current directory")?;
+    let current_dir = std::env::current_dir().context("Failed to get current directory")?;
 
     // Try src/const/black_list_url from current directory
     let src_path = current_dir.join("src").join("const").join("black_list_url");

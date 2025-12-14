@@ -2,7 +2,14 @@
 
 pub mod elevation;
 pub mod fs;
+pub mod gpu;
 pub mod temp_dirs;
+
+#[cfg(windows)]
+pub mod system_info_windows;
+
+#[cfg(windows)]
+pub mod nvidia_nvml;
 
 // Re-exports para imports limpios
 pub use elevation::{elevate_and_rerun, ensure_elevated, is_elevated, simulate_elevation_command};

@@ -33,6 +33,18 @@ pub enum MscError {
 
     #[error("{0}")]
     Other(String),
+
+    #[error("System monitor error: {0}")]
+    SystemMonitor(String),
+
+    #[error("GPU not available: {0}")]
+    GpuNotAvailable(String),
+
+    #[error("Metric collection failed: {0}")]
+    MetricCollection(String),
+
+    #[error("TUI error: {0}")]
+    Tui(String),
 }
 
 /// Result type alias for MSC application
@@ -67,5 +79,21 @@ impl MscError {
     /// Create a generic error
     pub fn other<S: Into<String>>(msg: S) -> Self {
         MscError::Other(msg.into())
+    }
+
+    pub fn system_monitor<S: Into<String>>(msg: S) -> Self {
+        MscError::SystemMonitor(msg.into())
+    }
+
+    pub fn gpu_not_available<S: Into<String>>(msg: S) -> Self {
+        MscError::GpuNotAvailable(msg.into())
+    }
+
+    pub fn metric_collection<S: Into<String>>(msg: S) -> Self {
+        MscError::MetricCollection(msg.into())
+    }
+
+    pub fn tui<S: Into<String>>(msg: S) -> Self {
+        MscError::Tui(msg.into())
     }
 }

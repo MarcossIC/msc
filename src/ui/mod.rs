@@ -1,8 +1,10 @@
 // UI and formatting module
 
 pub mod formatters;
+pub mod monitor_tui;
 pub mod progress;
 pub mod prompts;
+pub mod system_formatters;
 
 // Re-export commonly used items for cleaner imports
 pub use formatters::{format_permissions, format_size, format_time};

@@ -1,11 +1,9 @@
-use crate::core::{validation, Config};
 use crate::core::wget::{
+    calculate_local_path_for_url, create_cookie_file, debug_database_info, extract_cookies_from_db,
+    find_browser_cookie_db, format_cookies, process_html_file_complete, resolve_cookie_path,
     WgetManager,
-    create_cookie_file, extract_cookies_from_db,
-    find_browser_cookie_db, format_cookies, debug_database_info,
-    process_html_file_complete,
-    calculate_local_path_for_url,resolve_cookie_path
 };
+use crate::core::{validation, Config};
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use dialoguer::Input;
@@ -125,7 +123,11 @@ pub fn execute_cookies(matches: &clap::ArgMatches) -> Result<()> {
 
     // 3. Find browser cookie database
     let cookie_db_path = find_browser_cookie_db(browser)?;
-    println!("{} {}", "📂 Base de datos:".green(), cookie_db_path.display());
+    println!(
+        "{} {}",
+        "📂 Base de datos:".green(),
+        cookie_db_path.display()
+    );
     println!();
 
     // 3.5. Debug mode - show database info
@@ -140,12 +142,21 @@ pub fn execute_cookies(matches: &clap::ArgMatches) -> Result<()> {
 
     if cookies.is_empty() {
         println!();
-        println!("{}", "⚠️  No se encontraron cookies para este dominio.".yellow());
+        println!(
+            "{}",
+            "⚠️  No se encontraron cookies para este dominio.".yellow()
+        );
         println!();
         println!("{}", "Posibles razones:".dimmed());
-        println!("{}", "  • No has visitado este sitio en este navegador".dimmed());
+        println!(
+            "{}",
+            "  • No has visitado este sitio en este navegador".dimmed()
+        );
         println!("{}", "  • Las cookies expiraron o fueron borradas".dimmed());
-        println!("{}", "  • El navegador está cerrado (cierra y vuelve a intentar)".dimmed());
+        println!(
+            "{}",
+            "  • El navegador está cerrado (cierra y vuelve a intentar)".dimmed()
+        );
         println!();
         return Ok(());
     }
@@ -170,13 +181,27 @@ pub fn execute_cookies(matches: &clap::ArgMatches) -> Result<()> {
     println!();
     println!("{}", "💡 Uso:".cyan().bold());
     if format == "wget" {
-        println!("{}", format!("   msc wget \"{}\" --cookies '{}'", url_str, output.trim()).dimmed());
+        println!(
+            "{}",
+            format!("   msc wget \"{}\" --cookies '{}'", url_str, output.trim()).dimmed()
+        );
     } else if format == "netscape" {
         if let Some(file) = output_file {
-            println!("{}", format!("   msc wget \"{}\" --load-cookies {}", url_str, file).dimmed());
+            println!(
+                "{}",
+                format!("   msc wget \"{}\" --load-cookies {}", url_str, file).dimmed()
+            );
         } else {
-            println!("{}", format!("   msc wget \"{}\" --load-cookies cookies.txt", url_str).dimmed());
-            println!("{}", "   (Recomendado guardar en archivo para sitios complejos)".yellow().dimmed());
+            println!(
+                "{}",
+                format!("   msc wget \"{}\" --load-cookies cookies.txt", url_str).dimmed()
+            );
+            println!(
+                "{}",
+                "   (Recomendado guardar en archivo para sitios complejos)"
+                    .yellow()
+                    .dimmed()
+            );
         }
     }
     println!();
@@ -194,6 +219,7 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     let folder_name = matches.get_one::<String>("folder");
     let mirror_all = matches.get_flag("all");
     let pattern = matches.get_one::<String>("pattern").map(|s| s.as_str());
+    let exclude = matches.get_one::<String>("exclude").map(|s| s.as_str());
     let limit = matches.get_one::<usize>("limit").copied();
     let cookies = matches.get_one::<String>("cookies").map(|s| s.as_str());
 
@@ -218,7 +244,9 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
 
     // 6. Execute download
     if mirror_all {
-        let mut crawler = Crawler::new(url_str, target_dir, wget_path, pattern, limit, cookies)?;
+        let mut crawler = Crawler::new(
+            url_str, target_dir, wget_path, pattern, exclude, limit, cookies,
+        )?;
         crawler.run()?;
     } else {
         execute_download(&wget_path, url_str, &target_dir, false, cookies)?;
@@ -242,6 +270,7 @@ struct Crawler {
     visited: HashSet<String>,
     queue: VecDeque<String>,
     pattern_regex: Option<regex::Regex>,
+    exclude_regex: Option<regex::Regex>,
     limit: Option<usize>,
     downloaded_count: usize,
     cookie_file: Option<PathBuf>,
@@ -253,6 +282,7 @@ impl Crawler {
         target_dir: PathBuf,
         wget_path: PathBuf,
         pattern: Option<&str>,
+        exclude: Option<&str>,
         limit: Option<usize>,
         cookies: Option<&str>,
     ) -> Result<Self> {
@@ -269,6 +299,21 @@ impl Crawler {
                 }
                 Err(e) => {
                     return Err(anyhow!("Patrón regex inválido '{}': {}", p, e));
+                }
+            }
+        } else {
+            None
+        };
+
+        // Compile exclude regex if provided
+        let exclude_regex = if let Some(e) = exclude {
+            match regex::Regex::new(e) {
+                Ok(re) => {
+                    println!("{} {}", "🚫 Excluir patrón:".cyan(), e);
+                    Some(re)
+                }
+                Err(err) => {
+                    return Err(anyhow!("Patrón de exclusión inválido '{}': {}", e, err));
                 }
             }
         } else {
@@ -301,6 +346,7 @@ impl Crawler {
             visited: HashSet::new(),
             queue,
             pattern_regex,
+            exclude_regex,
             limit,
             downloaded_count: 0,
             cookie_file,
@@ -543,22 +589,29 @@ impl Crawler {
         Ok(())
     }
 
-    /// Check if a URL should be crawled based on the pattern filter
+    /// Check if a URL should be crawled based on the pattern filter and exclusion rules
     fn should_crawl_url(&self, url: &str) -> bool {
-        // If no pattern specified, accept all URLs
-        let Some(ref pattern) = self.pattern_regex else {
-            return true;
-        };
+        // First, check if URL matches exclusion pattern (if provided)
+        if let Some(ref exclude) = self.exclude_regex {
+            if exclude.is_match(url) {
+                return false; // Exclude this URL
+            }
+        }
 
         // Parse URL to get the path
         let Ok(parsed_url) = Url::parse(url) else {
             return false;
         };
 
+        // If no inclusion pattern specified, accept all URLs (that weren't excluded)
+        let Some(ref pattern) = self.pattern_regex else {
+            return true;
+        };
+
         // Get the path (e.g., "/posts/test-article")
         let path = parsed_url.path();
 
-        // Check if path matches the regex pattern
+        // Check if path matches the inclusion regex pattern
         pattern.is_match(path)
     }
 }
@@ -712,16 +765,16 @@ fn execute_download(
     let mut cmd = Command::new(wget_path);
 
     cmd.args([
-            "--page-requisites",    // Descargar CSS, JS, imágenes
-            "--convert-links",      // Hacer links locales
-            "--adjust-extension",   // Asegurar .html
-            "--no-directories",     // Aplanar estructura (-nd)
-            "--directory-prefix",   // Carpeta destino
-        ]);
+        "--page-requisites",  // Descargar CSS, JS, imágenes
+        "--convert-links",    // Hacer links locales
+        "--adjust-extension", // Asegurar .html
+        "--no-directories",   // Aplanar estructura (-nd)
+        "--directory-prefix", // Carpeta destino
+    ]);
 
     // Argumentos con valores dinámicos
     cmd.arg(target_dir);
-    
+
     // Cookies
     if let Some(path) = &cookie_file_path {
         cmd.arg("--load-cookies").arg(path);
@@ -733,7 +786,9 @@ fn execute_download(
     println!();
 
     // --- 4. Ejecución ---
-    let status = cmd.status().context("Error crítico al invocar el binario de wget")?;
+    let status = cmd
+        .status()
+        .context("Error crítico al invocar el binario de wget")?;
     let code = status.code().unwrap_or(-1);
 
     println!();
@@ -746,7 +801,12 @@ fn execute_download(
             Ok(())
         }
         8 => {
-            println!("{}", "⚠️  La descarga completó con advertencias (archivos faltantes/404).".yellow().bold());
+            println!(
+                "{}",
+                "⚠️  La descarga completó con advertencias (archivos faltantes/404)."
+                    .yellow()
+                    .bold()
+            );
             println!("{}", "   Continuando con el post-procesamiento...".yellow());
             print_footer(target_dir);
             Ok(())
@@ -768,27 +828,39 @@ fn print_header(url: &str, target_dir: &Path, has_cookies: bool) {
     println!("{} {}", "📁 Destino:".cyan(), target_dir.display());
     println!("{} {}", "📋 Modo:".cyan(), "Página única".green());
     if !has_cookies {
-         println!("{} {}", "🍪 Cookies:".cyan(), "Ninguna".dimmed());
+        println!("{} {}", "🍪 Cookies:".cyan(), "Ninguna".dimmed());
     }
 }
 
 fn print_footer(target_dir: &Path) {
     println!();
-    println!("{} {}", "📁 Archivos guardados en:".green().bold(), target_dir.display());
+    println!(
+        "{} {}",
+        "📁 Archivos guardados en:".green().bold(),
+        target_dir.display()
+    );
     println!();
     println!("{}", "Para ver la página, abre el HTML principal.".dimmed());
 }
 
 fn handle_download_failure(url: &str, target_dir: &Path, code: i32) -> Result<()> {
-    let base_url = Url::parse(url)
-        .with_context(|| format!("No se pudo parsear la URL '{}' para verificar archivos locales", url))?;
-    
+    let base_url = Url::parse(url).with_context(|| {
+        format!(
+            "No se pudo parsear la URL '{}' para verificar archivos locales",
+            url
+        )
+    })?;
+
     if let Some(main_file) = calculate_flat_local_path(&base_url, target_dir) {
         if main_file.exists() {
             println!(
                 "{}",
-                format!("⚠️  Wget falló (código {}) pero el archivo principal existe en: {:?}", code, main_file.file_name().unwrap_or_default())
-                    .yellow()
+                format!(
+                    "⚠️  Wget falló (código {}) pero el archivo principal existe en: {:?}",
+                    code,
+                    main_file.file_name().unwrap_or_default()
+                )
+                .yellow()
             );
             // Retornamos Ok(()) porque consideramos que "el archivo está ahí", así que es un éxito parcial.
             return Ok(());
@@ -807,6 +879,7 @@ fn extract_links_from_html(file_path: &PathBuf, base_url: &Url) -> Result<Vec<St
     let document = scraper::Html::parse_document(&content);
     let mut extracted_links = Vec::new();
 
+    // 1. Extract links from <a> tags
     let selector = scraper::Selector::parse("a")
         .map_err(|e| anyhow::anyhow!("Failed to create selector: {:?}", e))?;
 
@@ -817,6 +890,39 @@ fn extract_links_from_html(file_path: &PathBuf, base_url: &Url) -> Result<Vec<St
                 // Check if it's in scope (same domain)
                 if resolved_url.domain() == base_url.domain() {
                     extracted_links.push(resolved_url.to_string());
+                }
+            }
+        }
+    }
+
+    // 2. Extract URLs from JSON patterns in scripts (e.g., "nextUrl":"...", "prevUrl":"...")
+    // Common patterns in manga/manhwa readers and similar sites
+    let json_url_patterns = vec![
+        r#""nextUrl"\s*:\s*"([^"]+)""#,
+        r#""prevUrl"\s*:\s*"([^"]+)""#,
+        r#""next_url"\s*:\s*"([^"]+)""#,
+        r#""prev_url"\s*:\s*"([^"]+)""#,
+        r#""nextChapter"\s*:\s*"([^"]+)""#,
+        r#""prevChapter"\s*:\s*"([^"]+)""#,
+    ];
+
+    for pattern in json_url_patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            for cap in re.captures_iter(&content) {
+                if let Some(url_match) = cap.get(1) {
+                    let url_str = url_match.as_str();
+
+                    // Try to resolve the URL (might be relative or absolute)
+                    if let Ok(resolved_url) = base_url.join(url_str) {
+                        // Check if it's in scope (same domain)
+                        if resolved_url.domain() == base_url.domain() {
+                            let url_string = resolved_url.to_string();
+                            // Avoid duplicates
+                            if !extracted_links.contains(&url_string) {
+                                extracted_links.push(url_string);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -908,7 +1014,11 @@ fn calculate_flat_local_path(url: &Url, base_dir: &Path) -> Option<PathBuf> {
         let mut file_name = if path.ends_with('/') {
             "index.html".to_string()
         } else {
-            rel_path.split('/').next_back().unwrap_or("index.html").to_string()
+            rel_path
+                .split('/')
+                .next_back()
+                .unwrap_or("index.html")
+                .to_string()
         };
 
         // If there are query parameters, wget converts them to @-notation
@@ -967,7 +1077,10 @@ fn calculate_flat_local_path(url: &Url, base_dir: &Path) -> Option<PathBuf> {
                 fallback_path.set_extension("html");
             } else if !simple_name.ends_with(".html") && !simple_name.ends_with(".htm") {
                 let simple_buf = PathBuf::from(simple_name);
-                let ext = simple_buf.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let ext = simple_buf
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
                 if ![
                     "css", "js", "json", "xml", "txt", "pdf", "png", "jpg", "jpeg", "gif", "svg",
                     "ico", "woff", "woff2", "ttf", "eot",
@@ -987,5 +1100,3 @@ fn calculate_flat_local_path(url: &Url, base_dir: &Path) -> Option<PathBuf> {
 
     Some(local_path)
 }
-
-

@@ -32,6 +32,10 @@ crossterm = "0.29.0"
 ctrlc = "3.5.1"
 reqwest = { version = "0.12.24", features = ["blocking", "json"] }
 dialoguer = "0.12.0"
+ratatui = "0.30.0-beta.0"
+tokio = { version = "1.48.0", features = ["full"] }
+# Human-readable byte formatting
+humansize = "2.1.3"
 url = "2.5.7"
 base64 = "0.22.1"
 regex = "1.12.2"
@@ -42,16 +46,36 @@ pathdiff = "0.2.3"
 unicode-normalization = "0.1.25"
 sha2 = "0.10"
 rusqlite = { version = "0.37", features = ["bundled"] }
+# System information
+sysinfo = "0.37.2"
+raw-cpuid = "11.6.0"
+once_cell = "1.21.3"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser", "consoleapi", "processthreadsapi", "winnt", "securitybaseapi", "handleapi"] }
 winreg = "0.55.0"
+# WMI for detailed Windows hardware info
+wmi = "0.18"
+# NVIDIA Management Library (official NVIDIA GPU monitoring)
+nvml-wrapper = { version = "0.11", optional = true }
+# Windows system APIs
+windows-sys = { version = "0.61.2", features = [
+    "Win32_System_SystemInformation",
+    "Win32_NetworkManagement_WiFi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+    "Win32_Graphics_Gdi",
+] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.23"
+
+[features]
+default = ["nvml"]
+nvml = ["nvml-wrapper"]
 
 [profile.release]
 strip = true

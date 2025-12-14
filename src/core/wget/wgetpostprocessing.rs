@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::fs;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use url::Url;
 
 use super::wget_utils::{
-    calculate_local_path_for_url, calculate_possible_local_paths,
-    download_resource, extract_filename_from_url, is_local_path, is_placeholder_image
+    calculate_local_path_for_url, calculate_possible_local_paths, download_resource,
+    extract_filename_from_url, is_local_path, is_placeholder_image,
 };
 use crate::core::validation::{load_default_blacklist, validate_url_not_blacklisted};
 
@@ -26,7 +26,8 @@ pub fn process_html_file_complete(
     let blacklist = match load_default_blacklist() {
         Ok(bl) => {
             if !bl.is_empty() {
-                println!("   {} {} dominios bloqueados",
+                println!(
+                    "   {} {} dominios bloqueados",
                     "🛡️  Blacklist cargada:".dimmed(),
                     bl.len().to_string().cyan()
                 );
@@ -34,7 +35,8 @@ pub fn process_html_file_complete(
             bl
         }
         Err(e) => {
-            println!("   {} {}",
+            println!(
+                "   {} {}",
                 "⚠️  No se pudo cargar blacklist:".yellow().dimmed(),
                 e.to_string().dimmed()
             );
@@ -75,10 +77,11 @@ pub fn process_html_file_complete(
                         // Each entry is "URL SIZE" (e.g., "https://example.com/img.webp 300w")
                         // Extract just the URL part (before the space)
                         if let Some(url_part) = trimmed.split_whitespace().next() {
-                            if !url_part.is_empty() &&
-                               (url_part.starts_with("http://") ||
-                                url_part.starts_with("https://") ||
-                                url_part.starts_with("//")) {
+                            if !url_part.is_empty()
+                                && (url_part.starts_with("http://")
+                                    || url_part.starts_with("https://")
+                                    || url_part.starts_with("//"))
+                            {
                                 srcset_urls.push(url_part.to_string());
                             }
                         }
@@ -155,7 +158,8 @@ pub fn process_html_file_complete(
 
                 // Check blacklist before downloading
                 if let Err(e) = validate_url_not_blacklisted(&full_url, &blacklist) {
-                    println!("   {} {} - {}",
+                    println!(
+                        "   {} {} - {}",
                         "🚫 URL bloqueada:".red().dimmed(),
                         full_url.dimmed(),
                         e.to_string().yellow()
@@ -165,7 +169,8 @@ pub fn process_html_file_complete(
 
                 // Log external resource detection for images
                 if tag_name == "img" {
-                    println!("   {} {} ({})",
+                    println!(
+                        "   {} {} ({})",
                         "🔍 Detectada imagen externa:".blue().dimmed(),
                         full_url.dimmed(),
                         tag_name.yellow()
@@ -206,14 +211,16 @@ pub fn process_html_file_complete(
                 if !final_path.exists() {
                     match download_resource(&full_url, &final_path) {
                         Ok(_) => {
-                            println!("   {} {} -> {}",
+                            println!(
+                                "   {} {} -> {}",
                                 "✓ Descargado:".green().dimmed(),
                                 full_url.dimmed(),
                                 file_name.cyan()
                             );
                         }
                         Err(e) => {
-                            println!("   {} {} -> Error: {}",
+                            println!(
+                                "   {} {} -> Error: {}",
                                 "✗ Error descargando:".red().dimmed(),
                                 full_url.dimmed(),
                                 e.to_string().yellow()
@@ -268,7 +275,8 @@ pub fn process_html_file_complete(
 
                 // Check blacklist before downloading srcset images
                 if let Err(e) = validate_url_not_blacklisted(&full_url, &blacklist) {
-                    println!("   {} {} - {}",
+                    println!(
+                        "   {} {} - {}",
                         "🚫 URL bloqueada (srcset):".red().dimmed(),
                         full_url.dimmed(),
                         e.to_string().yellow()
@@ -276,7 +284,8 @@ pub fn process_html_file_complete(
                     continue; // Skip this srcset resource
                 }
 
-                println!("   {} {} (srcset)",
+                println!(
+                    "   {} {} (srcset)",
                     "🔍 Detectada imagen en srcset:".blue().dimmed(),
                     full_url.dimmed()
                 );
@@ -311,14 +320,16 @@ pub fn process_html_file_complete(
                 if !final_path.exists() {
                     match download_resource(&full_url, &final_path) {
                         Ok(_) => {
-                            println!("   {} {} -> {}",
+                            println!(
+                                "   {} {} -> {}",
                                 "✓ Descargado (srcset):".green().dimmed(),
                                 full_url.dimmed(),
                                 file_name.cyan()
                             );
                         }
                         Err(e) => {
-                            println!("   {} {} -> Error: {}",
+                            println!(
+                                "   {} {} -> Error: {}",
                                 "✗ Error descargando (srcset):".red().dimmed(),
                                 full_url.dimmed(),
                                 e.to_string().yellow()
@@ -332,6 +343,81 @@ pub fn process_html_file_complete(
                 // Record replacement for srcset URL
                 replacements.push((srcset_url.clone(), relative_path, true));
             }
+        }
+    }
+
+    // --- Fix absolute paths that start with "/" ---
+    // These paths are meant to be relative to the website root, but when viewing locally
+    // they need to be converted to proper relative paths from the current file's location
+    let absolute_path_regex = regex::Regex::new(r#"((?:src|href)\s*=\s*["'])(/[^"']+)(["'])"#)
+        .context("Failed to create absolute path regex")?;
+
+    let mut absolute_path_replacements = Vec::new();
+
+    // Calculate how many levels deep the current file is relative to base_dir
+    let file_parent = file_path.parent().unwrap_or(base_dir);
+    let relative_to_base = pathdiff::diff_paths(base_dir, file_parent).unwrap_or_default();
+    let depth = relative_to_base.components().count();
+
+    // Build the prefix to go up to the root (e.g., "../../../")
+    let mut prefix_to_root = String::new();
+    for _ in 0..depth {
+        prefix_to_root.push_str("../");
+    }
+
+    for cap in absolute_path_regex.captures_iter(&new_content) {
+        if let (Some(full_match), Some(attr_prefix), Some(abs_path), Some(quote_suffix)) =
+            (cap.get(0), cap.get(1), cap.get(2), cap.get(3))
+        {
+            let abs_path_str = abs_path.as_str();
+
+            // Skip protocol-relative URLs (starting with "//")
+            if abs_path_str.starts_with("//") {
+                continue;
+            }
+
+            // Skip if it's a relative path that accidentally got matched (shouldn't happen with our regex)
+            if abs_path_str.starts_with("./") || !abs_path_str.starts_with('/') {
+                continue;
+            }
+
+            // Convert the absolute path to a relative path
+            // Remove the leading "/" and prepend the path to root
+            let path_without_slash = abs_path_str.trim_start_matches('/');
+
+            // Build the new relative path
+            let new_relative_path = if depth == 0 {
+                // Already at root, just remove the leading slash
+                path_without_slash.to_string()
+            } else {
+                // Need to go up to root first
+                format!("{}{}", prefix_to_root, path_without_slash)
+            };
+
+            // Build the replacement string (attr + new path + quote)
+            let replacement = format!(
+                "{}{}{}",
+                attr_prefix.as_str(),
+                new_relative_path,
+                quote_suffix.as_str()
+            );
+
+            absolute_path_replacements.push((full_match.as_str().to_string(), replacement));
+        }
+    }
+
+    if !absolute_path_replacements.is_empty() {
+        println!(
+            "   {}",
+            format!(
+                "🔧 Corrigiendo {} rutas absolutas a rutas relativas...",
+                absolute_path_replacements.len()
+            )
+            .cyan()
+            .dimmed()
+        );
+        for (old_path, new_path) in absolute_path_replacements {
+            new_content = new_content.replace(&old_path, &new_path);
         }
     }
 
@@ -611,89 +697,136 @@ pub fn process_html_file_complete(
     // Remove scripts containing "redirectUrl =" or "createAccountUrl ="
     let script_block_regex = regex::Regex::new(r#"(?s)<script[^>]*>(.*?)</script>"#)
         .context("Failed to create script block regex")?;
-    
+
     let mut script_removals = Vec::new();
 
-for cap in script_block_regex.captures_iter(&new_content) {
-    if let (Some(full_match), Some(content_match)) = (cap.get(0), cap.get(1)) {
-        let script_content = content_match.as_str();
-        let full_script = full_match.as_str();
+    for cap in script_block_regex.captures_iter(&new_content) {
+        if let (Some(full_match), Some(content_match)) = (cap.get(0), cap.get(1)) {
+            let script_content = content_match.as_str();
+            let full_script = full_match.as_str();
 
-        // Verificar si es un script externo que carga cookie_banner.js
-        let is_cookie_banner_src = full_script.contains("src=") &&
-                                   (full_script.contains("cookie_banner.js") ||
-                                    full_script.contains("cookie_banner.min.js"));
+            // Verificar si es un script externo que carga cookie_banner.js
+            let is_cookie_banner_src = full_script.contains("src=")
+                && (full_script.contains("cookie_banner.js")
+                    || full_script.contains("cookie_banner.min.js"));
 
-        // Verificar si es un script de redirección o compra
-        let is_redirect_script = script_content.contains("redirectUrl =") ||
-                                script_content.contains("createAccountUrl =");
-                                // script_content.contains("createAccountUrl =") ||
-                                // script_content.contains("var PURCHASE_PHX =");
+            // Verificar si es un script de redirección o compra
+            let is_redirect_script = script_content.contains("redirectUrl =")
+                || script_content.contains("createAccountUrl =");
+            // script_content.contains("createAccountUrl =") ||
+            // script_content.contains("var PURCHASE_PHX =");
 
-        // Verificar si es el script del banner de cookies (inline)
-        let is_cookie_banner_script = script_content.contains("typeof CookieHelper != 'undefined'") ||
-                                     script_content.contains("typeof CookieHelper !== 'undefined'") ||
-                                     script_content.contains("var essentialCookiesListAll =") ||
-                                     script_content.contains("var customizeCookiesTemplate =");
+            // Verificar si es el script del banner de cookies (inline)
+            let is_cookie_banner_script = script_content
+                .contains("typeof CookieHelper != 'undefined'")
+                || script_content.contains("typeof CookieHelper !== 'undefined'")
+                || script_content.contains("var essentialCookiesListAll =")
+                || script_content.contains("var customizeCookiesTemplate =");
 
-        // Verificar si es un script de publicidad
-        let is_ads_script = false;
+            // Verificar si es un script de publicidad
+            let is_ads_script = false;
 
-        // Verificar si es un script de Google Tag Manager o analytics
-        let is_analytics_script = full_script.contains("https://www.googletagmanager.com/gtm.js") ||
-                                 full_script.contains("googletagmanager.com/gtm.js");
+            // Verificar si es un script de Google Tag Manager o analytics
+            let is_analytics_script = full_script
+                .contains("https://www.googletagmanager.com/gtm.js")
+                || full_script.contains("googletagmanager.com/gtm.js");
 
-        // Verificar si es un script de CAPTCHA
-        let is_captcha_script = script_content.contains("captchaType") ||
-                               script_content.contains("captchaToken") ||
-                               full_script.contains("www.google.com/recaptcha");
+            // Verificar si es un script de CAPTCHA
+            let is_captcha_script = script_content.contains("captchaType")
+                || script_content.contains("captchaToken")
+                || full_script.contains("www.google.com/recaptcha");
 
-        // Verificar si es un script con funciones de cookies/mensajes de usuario
-        let is_cookie_message_script = full_script.contains(r#"<a onclick="hideUserMessage();"#) ||
-                                       script_content.contains("setCookieAdvanced(");
+            // Verificar si es un script con funciones de cookies/mensajes de usuario
+            let is_cookie_message_script = full_script
+                .contains(r#"<a onclick="hideUserMessage();"#)
+                || script_content.contains("setCookieAdvanced(");
 
-        // Verificar si es un script relacionado con Google/bots/whitelist
-        let is_bot_whitelist_script = script_content.contains("'google'") ||
-                                      script_content.contains("'googlebot'") ||
-                                      script_content.contains("isInWhitelist");
+            // Verificar si es un script relacionado con Google/bots/whitelist
+            let is_bot_whitelist_script = script_content.contains("'google'")
+                || script_content.contains("'googlebot'")
+                || script_content.contains("isInWhitelist");
 
-        // Verificar si es un script de geo-localización
-        let is_geo_localization_script = script_content.contains("geo-localization") ||
-                                         script_content.contains("geolocalization") ||
-                                         script_content.contains("geo_localization");
+            // Verificar si es un script de geo-localización
+            let is_geo_localization_script = script_content.contains("geo-localization")
+                || script_content.contains("geolocalization")
+                || script_content.contains("geo_localization");
 
-        if is_redirect_script || is_cookie_banner_script || is_cookie_banner_src || is_ads_script || is_analytics_script || is_captcha_script || is_cookie_message_script || is_bot_whitelist_script || is_geo_localization_script {
-            script_removals.push(full_script.to_string());
+            if is_redirect_script
+                || is_cookie_banner_script
+                || is_cookie_banner_src
+                || is_ads_script
+                || is_analytics_script
+                || is_captcha_script
+                || is_cookie_message_script
+                || is_bot_whitelist_script
+                || is_geo_localization_script
+            {
+                script_removals.push(full_script.to_string());
 
-            // Mostrar mensaje específico según el tipo de script
-            if is_cookie_banner_script || is_cookie_banner_src {
-                println!("   {} {}", "🍪 Detectado script de banner de cookies".yellow().dimmed(),
-                        format!("({} bytes)", full_script.len()).dimmed());
-            } else if is_ads_script {
-                println!("   {} {}", "📢 Detectado script de publicidad".yellow().dimmed(),
-                        format!("({} bytes)", full_script.len()).dimmed());
-            } else if is_analytics_script {
-                println!("   {} {}", "📊 Detectado script de analytics/tracking".yellow().dimmed(),
-                        format!("({} bytes)", full_script.len()).dimmed());
-            } else if is_captcha_script {
-                println!("   {} {}", "🤖 Detectado script de CAPTCHA/reCAPTCHA".yellow().dimmed(),
-                        format!("({} bytes)", full_script.len()).dimmed());
-            } else if is_cookie_message_script {
-                println!("   {} {}", "💬 Detectado script de mensajes/cookies de usuario".yellow().dimmed(),
-                        format!("({} bytes)", full_script.len()).dimmed());
-            } else if is_bot_whitelist_script {
-                println!("   {} {}", "🔍 Detectado script de bot/whitelist detection".yellow().dimmed(),
-                        format!("({} bytes)", full_script.len()).dimmed());
-            } else if is_geo_localization_script {
-                println!("   {} {}", "🌍 Detectado script de geo-localización".yellow().dimmed(),
-                        format!("({} bytes)", full_script.len()).dimmed());
+                // Mostrar mensaje específico según el tipo de script
+                if is_cookie_banner_script || is_cookie_banner_src {
+                    println!(
+                        "   {} {}",
+                        "🍪 Detectado script de banner de cookies".yellow().dimmed(),
+                        format!("({} bytes)", full_script.len()).dimmed()
+                    );
+                } else if is_ads_script {
+                    println!(
+                        "   {} {}",
+                        "📢 Detectado script de publicidad".yellow().dimmed(),
+                        format!("({} bytes)", full_script.len()).dimmed()
+                    );
+                } else if is_analytics_script {
+                    println!(
+                        "   {} {}",
+                        "📊 Detectado script de analytics/tracking"
+                            .yellow()
+                            .dimmed(),
+                        format!("({} bytes)", full_script.len()).dimmed()
+                    );
+                } else if is_captcha_script {
+                    println!(
+                        "   {} {}",
+                        "🤖 Detectado script de CAPTCHA/reCAPTCHA".yellow().dimmed(),
+                        format!("({} bytes)", full_script.len()).dimmed()
+                    );
+                } else if is_cookie_message_script {
+                    println!(
+                        "   {} {}",
+                        "💬 Detectado script de mensajes/cookies de usuario"
+                            .yellow()
+                            .dimmed(),
+                        format!("({} bytes)", full_script.len()).dimmed()
+                    );
+                } else if is_bot_whitelist_script {
+                    println!(
+                        "   {} {}",
+                        "🔍 Detectado script de bot/whitelist detection"
+                            .yellow()
+                            .dimmed(),
+                        format!("({} bytes)", full_script.len()).dimmed()
+                    );
+                } else if is_geo_localization_script {
+                    println!(
+                        "   {} {}",
+                        "🌍 Detectado script de geo-localización".yellow().dimmed(),
+                        format!("({} bytes)", full_script.len()).dimmed()
+                    );
+                }
             }
         }
     }
-}
 
     if !script_removals.is_empty() {
-        println!("   {}", format!("🛡️  Eliminando {} scripts de redirección...", script_removals.len()).yellow().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "🛡️  Eliminando {} scripts de redirección...",
+                script_removals.len()
+            )
+            .yellow()
+            .dimmed()
+        );
         for script in script_removals {
             new_content = new_content.replace(&script, "");
         }
@@ -701,8 +834,9 @@ for cap in script_block_regex.captures_iter(&new_content) {
 
     // --- Remove dns-prefetch link elements ---
     // Match both <link .../> and <link ...></link> formats
-    let dns_prefetch_regex = regex::Regex::new(r#"<link[^>]*rel\s*=\s*["']dns-prefetch["'][^>]*/?>"#)
-        .context("Failed to create dns-prefetch regex")?;
+    let dns_prefetch_regex =
+        regex::Regex::new(r#"<link[^>]*rel\s*=\s*["']dns-prefetch["'][^>]*/?>"#)
+            .context("Failed to create dns-prefetch regex")?;
 
     let mut link_removals = Vec::new();
 
@@ -713,7 +847,15 @@ for cap in script_block_regex.captures_iter(&new_content) {
     }
 
     if !link_removals.is_empty() {
-        println!("   {}", format!("🔗 Eliminando {} elementos <link> dns-prefetch...", link_removals.len()).yellow().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "🔗 Eliminando {} elementos <link> dns-prefetch...",
+                link_removals.len()
+            )
+            .yellow()
+            .dimmed()
+        );
         for link in link_removals {
             new_content = new_content.replace(&link, "");
         }
@@ -722,8 +864,10 @@ for cap in script_block_regex.captures_iter(&new_content) {
     // --- Remove Google Tag Manager link elements ---
     // Match <link> elements with href containing googletagmanager.com
     // This includes preconnect, dns-prefetch, and any other link types to GTM
-    let gtm_link_regex = regex::Regex::new(r#"<link[^>]*href\s*=\s*["']https?://[^"']*googletagmanager\.com[^"']*["'][^>]*/?>"#)
-        .context("Failed to create Google Tag Manager link regex")?;
+    let gtm_link_regex = regex::Regex::new(
+        r#"<link[^>]*href\s*=\s*["']https?://[^"']*googletagmanager\.com[^"']*["'][^>]*/?>"#,
+    )
+    .context("Failed to create Google Tag Manager link regex")?;
 
     let mut gtm_link_removals = Vec::new();
 
@@ -734,15 +878,24 @@ for cap in script_block_regex.captures_iter(&new_content) {
     }
 
     if !gtm_link_removals.is_empty() {
-        println!("   {}", format!("📊 Eliminando {} elementos <link> de Google Tag Manager...", gtm_link_removals.len()).yellow().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "📊 Eliminando {} elementos <link> de Google Tag Manager...",
+                gtm_link_removals.len()
+            )
+            .yellow()
+            .dimmed()
+        );
         for link in gtm_link_removals {
             new_content = new_content.replace(&link, "");
         }
     }
 
     // --- Remove create account form elements ---
-    let create_account_regex = regex::Regex::new(r#"<v-create-account-form[^>]*>.*?</v-create-account-form>"#)
-        .context("Failed to create v-create-account-form regex")?;
+    let create_account_regex =
+        regex::Regex::new(r#"<v-create-account-form[^>]*>.*?</v-create-account-form>"#)
+            .context("Failed to create v-create-account-form regex")?;
 
     let mut form_removals = Vec::new();
 
@@ -753,7 +906,15 @@ for cap in script_block_regex.captures_iter(&new_content) {
     }
 
     if !form_removals.is_empty() {
-        println!("   {}", format!("📝 Eliminando {} elementos <v-create-account-form>...", form_removals.len()).yellow().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "📝 Eliminando {} elementos <v-create-account-form>...",
+                form_removals.len()
+            )
+            .yellow()
+            .dimmed()
+        );
         for form in form_removals {
             new_content = new_content.replace(&form, "");
         }
@@ -773,7 +934,15 @@ for cap in script_block_regex.captures_iter(&new_content) {
     }
 
     if !li_removals.is_empty() {
-        println!("   {}", format!("🍪 Eliminando {} elementos <li> con showFullCookieBanner...", li_removals.len()).yellow().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "🍪 Eliminando {} elementos <li> con showFullCookieBanner...",
+                li_removals.len()
+            )
+            .yellow()
+            .dimmed()
+        );
         for li in li_removals {
             new_content = new_content.replace(&li, "");
         }
@@ -781,8 +950,10 @@ for cap in script_block_regex.captures_iter(&new_content) {
 
     // --- Remove adBlock alert if blocks ---
     // Match: if (!getCookieAdvanced('adBlockAlertHidden')) { ... }
-    let adblock_if_regex = regex::Regex::new(r#"if\s*\(\s*!getCookieAdvanced\s*\(\s*['"]adBlockAlertHidden['"]\s*\)\s*\)\s*\{[^{}]*\}"#)
-        .context("Failed to create adblock if regex")?;
+    let adblock_if_regex = regex::Regex::new(
+        r#"if\s*\(\s*!getCookieAdvanced\s*\(\s*['"]adBlockAlertHidden['"]\s*\)\s*\)\s*\{[^{}]*\}"#,
+    )
+    .context("Failed to create adblock if regex")?;
 
     let mut if_removals = Vec::new();
 
@@ -793,7 +964,15 @@ for cap in script_block_regex.captures_iter(&new_content) {
     }
 
     if !if_removals.is_empty() {
-        println!("   {}", format!("🚫 Eliminando {} bloques if de adBlock alert...", if_removals.len()).yellow().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "🚫 Eliminando {} bloques if de adBlock alert...",
+                if_removals.len()
+            )
+            .yellow()
+            .dimmed()
+        );
         for if_block in if_removals {
             new_content = new_content.replace(&if_block, "");
         }
@@ -814,7 +993,15 @@ for cap in script_block_regex.captures_iter(&new_content) {
     }
 
     if !promo_removals.is_empty() {
-        println!("   {}", format!("🎁 Eliminando {} bloques if-else de holiday_promo_prem...", promo_removals.len()).yellow().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "🎁 Eliminando {} bloques if-else de holiday_promo_prem...",
+                promo_removals.len()
+            )
+            .yellow()
+            .dimmed()
+        );
         for promo_block in promo_removals {
             new_content = new_content.replace(&promo_block, "");
         }
@@ -828,7 +1015,9 @@ for cap in script_block_regex.captures_iter(&new_content) {
     let mut cdn_replacements = Vec::new();
 
     for cap in js_var_cdn_regex.captures_iter(&new_content) {
-        if let (Some(full_match), Some(var_name), Some(cdn_url)) = (cap.get(0), cap.get(1), cap.get(2)) {
+        if let (Some(full_match), Some(var_name), Some(cdn_url)) =
+            (cap.get(0), cap.get(1), cap.get(2))
+        {
             let var_name_str = var_name.as_str();
             let cdn_url_str = cdn_url.as_str();
             let full_match_str = full_match.as_str();
@@ -845,7 +1034,8 @@ for cap in script_block_regex.captures_iter(&new_content) {
 
             // Download if needed
             if !local_path.exists() {
-                println!("   {} {} -> {}",
+                println!(
+                    "   {} {} -> {}",
                     "📦 Descargando recurso CDN:".cyan().dimmed(),
                     var_name_str.yellow(),
                     file_name.dimmed()
@@ -859,7 +1049,8 @@ for cap in script_block_regex.captures_iter(&new_content) {
                     }
                     Err(e) => {
                         log::warn!("Failed to download CDN resource {}: {}", cdn_url_str, e);
-                        println!("   {} {}",
+                        println!(
+                            "   {} {}",
                             "⚠️  Error descargando:".yellow(),
                             e.to_string().dimmed()
                         );
@@ -892,7 +1083,8 @@ for cap in script_block_regex.captures_iter(&new_content) {
 
             // Skip if this is a Google Fonts URL (already filtered)
             if cdn_url_str.contains("fonts.googleapis.com")
-                || cdn_url_str.contains("fonts.gstatic.com") {
+                || cdn_url_str.contains("fonts.gstatic.com")
+            {
                 continue;
             }
 
@@ -908,7 +1100,8 @@ for cap in script_block_regex.captures_iter(&new_content) {
 
             // Download if needed
             if !local_path.exists() {
-                println!("   {} {}",
+                println!(
+                    "   {} {}",
                     "🌐 Descargando recurso CDN genérico:".cyan().dimmed(),
                     file_name.dimmed()
                 );
@@ -916,11 +1109,17 @@ for cap in script_block_regex.captures_iter(&new_content) {
                 match download_resource(cdn_url_str, &local_path) {
                     Ok(_) => {
                         // Create replacement with local path
-                        generic_cdn_replacements.push((cdn_url_str.to_string(), relative_path.clone()));
+                        generic_cdn_replacements
+                            .push((cdn_url_str.to_string(), relative_path.clone()));
                     }
                     Err(e) => {
-                        log::warn!("Failed to download generic CDN resource {}: {}", cdn_url_str, e);
-                        println!("   {} {}",
+                        log::warn!(
+                            "Failed to download generic CDN resource {}: {}",
+                            cdn_url_str,
+                            e
+                        );
+                        println!(
+                            "   {} {}",
                             "⚠️  Error descargando:".yellow(),
                             e.to_string().dimmed()
                         );
@@ -944,8 +1143,15 @@ for cap in script_block_regex.captures_iter(&new_content) {
         .context("Failed to create preventAutoplayForAVModal regex")?;
 
     if autoplay_regex.is_match(&new_content) {
-        println!("   {}", "🎬 Ajustando preventAutoplayForAVModal = true...".cyan().dimmed());
-        new_content = autoplay_regex.replace_all(&new_content, "preventAutoplayForAVModal = true;").to_string();
+        println!(
+            "   {}",
+            "🎬 Ajustando preventAutoplayForAVModal = true..."
+                .cyan()
+                .dimmed()
+        );
+        new_content = autoplay_regex
+            .replace_all(&new_content, "preventAutoplayForAVModal = true;")
+            .to_string();
     }
 
     // --- Fix embedCode with improperly escaped quotes in iframes ---
@@ -964,9 +1170,9 @@ for cap in script_block_regex.captures_iter(&new_content) {
             // Escape all quotes inside the iframe HTML
             // Replace " with \" and / with \/ for proper JSON escaping
             let escaped_iframe = original_iframe
-                .replace('\\', r"\\")  // Escape backslashes first
+                .replace('\\', r"\\") // Escape backslashes first
                 .replace('"', r#"\""#) // Escape double quotes
-                .replace('/', r"\/");  // Escape forward slashes for JSON
+                .replace('/', r"\/"); // Escape forward slashes for JSON
 
             // Create the corrected embedCode entry
             let corrected = format!(r#""embedCode":"{}""#, escaped_iframe);
@@ -979,7 +1185,15 @@ for cap in script_block_regex.captures_iter(&new_content) {
     }
 
     if !embed_replacements.is_empty() {
-        println!("   {}", format!("🔧 Corrigiendo {} embedCode con comillas mal escapadas...", embed_replacements.len()).cyan().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "🔧 Corrigiendo {} embedCode con comillas mal escapadas...",
+                embed_replacements.len()
+            )
+            .cyan()
+            .dimmed()
+        );
         for (old, new) in embed_replacements {
             new_content = new_content.replace(&old, &new);
         }
@@ -988,13 +1202,23 @@ for cap in script_block_regex.captures_iter(&new_content) {
     // --- Fix rel=nofollow without quotes ---
     // Pattern: rel=nofollow (without quotes)
     // Should be: rel="nofollow"
-    let rel_nofollow_regex = regex::Regex::new(r#"\brel=nofollow\b"#)
-        .context("Failed to create rel=nofollow regex")?;
+    let rel_nofollow_regex =
+        regex::Regex::new(r#"\brel=nofollow\b"#).context("Failed to create rel=nofollow regex")?;
 
     if rel_nofollow_regex.is_match(&new_content) {
         let count = rel_nofollow_regex.find_iter(&new_content).count();
-        println!("   {}", format!("🔗 Corrigiendo {} atributos rel=nofollow sin comillas...", count).cyan().dimmed());
-        new_content = rel_nofollow_regex.replace_all(&new_content, r#"rel="nofollow""#).to_string();
+        println!(
+            "   {}",
+            format!(
+                "🔗 Corrigiendo {} atributos rel=nofollow sin comillas...",
+                count
+            )
+            .cyan()
+            .dimmed()
+        );
+        new_content = rel_nofollow_regex
+            .replace_all(&new_content, r#"rel="nofollow""#)
+            .to_string();
     }
 
     // --- Remove Google Tag Manager iframes ---
@@ -1012,7 +1236,15 @@ for cap in script_block_regex.captures_iter(&new_content) {
     }
 
     if !gtm_iframe_removals.is_empty() {
-        println!("   {}", format!("📊 Eliminando {} iframes de Google Tag Manager...", gtm_iframe_removals.len()).yellow().dimmed());
+        println!(
+            "   {}",
+            format!(
+                "📊 Eliminando {} iframes de Google Tag Manager...",
+                gtm_iframe_removals.len()
+            )
+            .yellow()
+            .dimmed()
+        );
         for iframe in gtm_iframe_removals {
             new_content = new_content.replace(&iframe, "");
         }
@@ -1022,4 +1254,3 @@ for cap in script_block_regex.captures_iter(&new_content) {
 
     Ok(())
 }
-

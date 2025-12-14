@@ -104,7 +104,9 @@ pub fn calculate_local_path_for_url(url: &Url, base_dir: &Path) -> Option<PathBu
                 let orig_has_extension = original_file_name.contains('.');
                 if !orig_has_extension {
                     fallback_path.set_extension("html");
-                } else if !original_file_name.ends_with(".html") && !original_file_name.ends_with(".htm") {
+                } else if !original_file_name.ends_with(".html")
+                    && !original_file_name.ends_with(".htm")
+                {
                     let ext = fallback_path
                         .extension()
                         .and_then(|e| e.to_str())
@@ -117,7 +119,8 @@ pub fn calculate_local_path_for_url(url: &Url, base_dir: &Path) -> Option<PathBu
                         ]
                         .contains(&ext)
                     {
-                        let new_name = format!("{}.html", fallback_path.file_name()?.to_string_lossy());
+                        let new_name =
+                            format!("{}.html", fallback_path.file_name()?.to_string_lossy());
                         fallback_path.set_file_name(new_name);
                     }
                 }
@@ -236,20 +239,21 @@ pub fn extract_filename_from_url(url: &str) -> String {
 
     // List of known file extensions
     let known_extensions = [
-        ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".bmp", ".ico",
-        ".mp4", ".webm", ".ogv", ".avi", ".mov", ".m3u8", ".ts",
-        ".mp3", ".ogg", ".wav", ".m4a",
-        ".css", ".js", ".json", ".xml", ".html", ".htm",
-        ".pdf", ".txt", ".woff", ".woff2", ".ttf", ".eot", ".otf",
+        ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".bmp", ".ico", ".mp4", ".webm", ".ogv",
+        ".avi", ".mov", ".m3u8", ".ts", ".mp3", ".ogg", ".wav", ".m4a", ".css", ".js", ".json",
+        ".xml", ".html", ".htm", ".pdf", ".txt", ".woff", ".woff2", ".ttf", ".eot", ".otf",
     ];
 
     // Remove query parameters and fragments
     let url_without_query = url.split('?').next().unwrap_or(url);
-    let url_without_fragment = url_without_query.split('#').next().unwrap_or(url_without_query);
+    let url_without_fragment = url_without_query
+        .split('#')
+        .next()
+        .unwrap_or(url_without_query);
 
     // First, try to get the last path segment as a filename
     // This handles cases like: /path/to/file.png or /path/to/330px-image.svg.png
-    if let Some(last_segment) = url_without_fragment.split('/').last() {
+    if let Some(last_segment) = url_without_fragment.split('/').next_back() {
         // Check if this segment has a known extension
         let segment_lower = last_segment.to_lowercase();
 
@@ -317,7 +321,6 @@ pub fn extract_filename_from_url(url: &str) -> String {
     }
 }
 
-
 pub fn download_resource(url: &str, path: &PathBuf) -> Result<()> {
     if path.exists() {
         return Ok(());
@@ -337,7 +340,7 @@ pub fn download_resource(url: &str, path: &PathBuf) -> Result<()> {
     let bytes = response.bytes()?;
     fs::write(path, bytes)?;
     Ok(())
-}  
+}
 
 pub fn is_placeholder_image(url: &str) -> bool {
     let url_lower = url.to_lowercase();
@@ -361,4 +364,3 @@ pub fn is_placeholder_image(url: &str) -> bool {
 
     valid_names.iter().any(|name| url_lower.contains(name))
 }
-
