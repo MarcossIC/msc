@@ -27,10 +27,15 @@ static NVML: Lazy<Option<Nvml>> = Lazy::new(|| Nvml::init().ok());
 /// * `Err(MscError)` - If NVML is not available or GPU index is invalid
 ///
 /// # Example
-/// ```
-/// let metrics = get_nvidia_metrics_nvml(0)?;
-/// println!("GPU: {}", metrics.name.unwrap_or_default());
-/// println!("Temperature: {}°C", metrics.temperature_celsius.unwrap_or(0));
+/// ```no_run
+/// use msc::platform::nvidia_nvml::get_nvidia_metrics_nvml;
+///
+/// fn main() -> msc::error::Result<()> {
+///     let metrics = get_nvidia_metrics_nvml(0)?;
+///     println!("GPU: {}", metrics.name.unwrap_or_default());
+///     println!("Temperature: {}°C", metrics.temperature_celsius.unwrap_or(0));
+///     Ok(())
+/// }
 /// ```
 #[cfg(feature = "nvml")]
 pub fn get_nvidia_metrics_nvml(gpu_index: u32) -> Result<NvidiaGpuMetrics> {

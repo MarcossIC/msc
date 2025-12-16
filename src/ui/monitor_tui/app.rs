@@ -1,5 +1,6 @@
 use std::io;
 use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -10,8 +11,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::core::system_monitor::{
-    evaluate_alerts, Alert, AlertConfig, CollectorConfig, MetricsCollector, MetricsHistory,
-    SystemMetrics,
+    evaluate_alerts, Alert, AlertConfig, MetricsHistory, MetricsRuntime, SystemMetrics,
 };
 
 use super::event_handler::MonitorEvent;
@@ -19,9 +19,9 @@ use super::render::render_ui;
 
 /// Monitor application state
 pub struct MonitorApp {
-    pub metrics: SystemMetrics,
+    pub metrics: Arc<SystemMetrics>,
     pub history: MetricsHistory,
-    pub collector: MetricsCollector,
+    pub runtime: MetricsRuntime,
     pub should_quit: bool,
     pub show_help: bool,
     pub selected_tab: usize,
@@ -31,25 +31,21 @@ pub struct MonitorApp {
     pub selected_process_index: usize,
     pub alerts: Vec<Alert>,
     pub alert_config: AlertConfig,
+    // Smoothed values for fluid animations
+    pub smoothed_cpu_usage: f32,
+    pub smoothed_memory_usage: f32,
+    pub smoothed_gpu_usage: f32,
+    pub smoothed_per_core: Vec<f32>,
 }
 
 impl MonitorApp {
-    pub fn new(config: MonitorAppConfig) -> Self {
-        let collector_config = CollectorConfig {
-            collect_cpu: config.show_cpu,
-            collect_memory: config.show_memory,
-            collect_gpu: config.show_gpu,
-            collect_disks: config.show_disks,
-            collect_network: config.show_network,
-            collect_temperatures: config.show_temperatures,
-            collect_processes: config.show_processes,
-            top_processes_count: config.top_processes,
-        };
+    pub fn new(config: MonitorAppConfig) -> Result<Self> {
+        let runtime = MetricsRuntime::new()?;
 
-        Self {
-            metrics: SystemMetrics::default(),
+        Ok(Self {
+            metrics: Arc::new(SystemMetrics::default()),
             history: MetricsHistory::new(),
-            collector: MetricsCollector::with_config(collector_config),
+            runtime,
             should_quit: false,
             show_help: false,
             selected_tab: 0,
@@ -59,33 +55,88 @@ impl MonitorApp {
             selected_process_index: 0,
             alerts: Vec::new(),
             alert_config: AlertConfig::default(),
-        }
+            smoothed_cpu_usage: 0.0,
+            smoothed_memory_usage: 0.0,
+            smoothed_gpu_usage: 0.0,
+            smoothed_per_core: Vec::new(),
+        })
     }
 
-    /// Update metrics from collector
-    pub fn update_metrics(&mut self) -> Result<()> {
-        self.metrics = self
-            .collector
-            .collect()
-            .context("Failed to collect metrics")?;
+    /// Non-blocking update from async runtime
+    pub fn try_update_metrics(&mut self) -> bool {
+        if self.runtime.snapshot_rx.has_changed().unwrap_or(false) {
+            self.metrics = self.runtime.snapshot_rx.borrow().clone();
 
-        // Update history for sparklines
-        self.history.push_cpu(self.metrics.cpu.global_usage);
-        self.history.push_memory(self.metrics.memory.usage_percent);
+            // Apply smoothing to metrics (Exponential Moving Average)
+            // Alpha = 0.3 means 30% new value, 70% old value (smooth transitions)
+            const ALPHA: f32 = 0.3;
 
-        if let Some(ref gpu) = self.metrics.gpu {
-            self.history.push_gpu(gpu.utilization_percent);
+            self.smoothed_cpu_usage = self.smooth_value(
+                self.smoothed_cpu_usage,
+                self.metrics.cpu.global_usage,
+                ALPHA,
+            );
+
+            self.smoothed_memory_usage = self.smooth_value(
+                self.smoothed_memory_usage,
+                self.metrics.memory.usage_percent,
+                ALPHA,
+            );
+
+            if let Some(ref gpu) = self.metrics.gpu {
+                self.smoothed_gpu_usage = self.smooth_value(
+                    self.smoothed_gpu_usage,
+                    gpu.utilization_percent as f32,
+                    ALPHA,
+                );
+            }
+
+            // Smooth per-core CPU usage
+            if self.smoothed_per_core.len() != self.metrics.cpu.per_core_usage.len() {
+                // Initialize if size changed
+                self.smoothed_per_core = self.metrics.cpu.per_core_usage.clone();
+            } else {
+                for (i, &current) in self.metrics.cpu.per_core_usage.iter().enumerate() {
+                    self.smoothed_per_core[i] = self.smooth_value(
+                        self.smoothed_per_core[i],
+                        current,
+                        ALPHA,
+                    );
+                }
+            }
+
+            // Update history for sparklines (use smoothed values)
+            self.history.push_cpu(self.smoothed_cpu_usage);
+            self.history.push_memory(self.smoothed_memory_usage);
+
+            if self.metrics.gpu.is_some() {
+                self.history.push_gpu(self.smoothed_gpu_usage as u32);
+            }
+
+            if let Some(net) = self.metrics.network.first() {
+                self.history
+                    .push_network(net.rx_bytes_per_sec, net.tx_bytes_per_sec);
+            }
+
+            // Evaluate alerts
+            self.alerts = evaluate_alerts(&self.metrics, &self.alert_config);
+
+            return true;
         }
+        false
+    }
 
-        if let Some(net) = self.metrics.network.first() {
-            self.history
-                .push_network(net.rx_bytes_per_sec, net.tx_bytes_per_sec);
+    /// Smooth a value using Exponential Moving Average
+    /// Alpha controls smoothing: 0.0 = no change, 1.0 = instant change
+    /// Lower alpha = smoother but slower response
+    fn smooth_value(&self, old_value: f32, new_value: f32, alpha: f32) -> f32 {
+        if old_value == 0.0 {
+            // First value, no smoothing
+            new_value
+        } else {
+            // EMA: new_smoothed = alpha * new + (1 - alpha) * old
+            alpha * new_value + (1.0 - alpha) * old_value
         }
-
-        // Evaluate alerts
-        self.alerts = evaluate_alerts(&self.metrics, &self.alert_config);
-
-        Ok(())
     }
 
     /// Handle keyboard/mouse events
@@ -165,27 +216,23 @@ pub fn run_monitor_app(config: MonitorAppConfig) -> Result<()> {
     let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
     // Create app
-    let mut app = MonitorApp::new(config);
-    let tick_rate = Duration::from_millis(app.interval_ms);
-
-    // Initial metrics collection
-    // Wait for CPU measurement interval
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-    app.update_metrics()?;
-
-    let mut last_tick = Instant::now();
+    let mut app = MonitorApp::new(config)?;
+    
+    // Target 60 FPS
+    let frame_duration = Duration::from_millis(16);
+    let mut last_frame = Instant::now();
 
     // Main loop
     loop {
+        // Non-blocking metrics update
+        app.try_update_metrics();
+
         // Draw UI
         terminal.draw(|frame| render_ui(frame, &app))?;
 
-        // Handle events with timeout
-        let timeout = tick_rate
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or_else(|| Duration::from_secs(0));
-
-        if event::poll(timeout).context("Event poll failed")? {
+        // Handle events with minimal timeout (just to be responsive)
+        // We poll for a very short time to keep the loop tight but responsive
+        if event::poll(Duration::from_millis(1)).context("Event poll failed")? {
             if let Event::Key(key) = event::read().context("Event read failed")? {
                 if key.kind == KeyEventKind::Press {
                     let monitor_event = match key.code {
@@ -209,12 +256,16 @@ pub fn run_monitor_app(config: MonitorAppConfig) -> Result<()> {
             break;
         }
 
-        // Update metrics on tick
-        if last_tick.elapsed() >= tick_rate {
-            app.update_metrics()?;
-            last_tick = Instant::now();
+        // Maintain 60 FPS
+        let elapsed = last_frame.elapsed();
+        if elapsed < frame_duration {
+            std::thread::sleep(frame_duration - elapsed);
         }
+        last_frame = Instant::now();
     }
+
+    // Cleanup runtime
+    app.runtime.shutdown();
 
     // Restore terminal
     disable_raw_mode().context("Failed to disable raw mode")?;

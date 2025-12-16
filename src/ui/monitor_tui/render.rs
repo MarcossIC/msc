@@ -36,27 +36,27 @@ pub fn render_ui(frame: &mut Frame, app: &MonitorApp) {
         0
     };
 
-    // Create main layout
+    // Create main layout - use percentages for more predictable behavior
     let constraints = if has_alerts {
         vec![
             Constraint::Length(3),            // Header with global dashboard
             Constraint::Length(alert_height), // Alerts banner
-            Constraint::Length(8),            // CPU
-            Constraint::Length(7),            // Memory + GPU row
-            Constraint::Length(5),            // Network + Disk
-            Constraint::Min(8),               // Processes
-            Constraint::Length(2),            // Temperatures
+            Constraint::Percentage(25),       // CPU section
+            Constraint::Percentage(20),       // Memory + GPU row
+            Constraint::Percentage(15),       // Network + Disk
+            Constraint::Percentage(35),       // Processes
+            Constraint::Length(1),            // Temperatures
             Constraint::Length(1),            // Footer
         ]
     } else {
         vec![
-            Constraint::Length(3), // Header with global dashboard
-            Constraint::Length(8), // CPU
-            Constraint::Length(7), // Memory + GPU row
-            Constraint::Length(5), // Network + Disk
-            Constraint::Min(8),    // Processes
-            Constraint::Length(2), // Temperatures
-            Constraint::Length(1), // Footer
+            Constraint::Length(3),   // Header with global dashboard
+            Constraint::Percentage(25), // CPU section
+            Constraint::Percentage(20), // Memory + GPU row
+            Constraint::Percentage(15), // Network + Disk
+            Constraint::Percentage(35), // Processes
+            Constraint::Length(1),   // Temperatures
+            Constraint::Length(1),   // Footer
         ]
     };
 
@@ -65,26 +65,25 @@ pub fn render_ui(frame: &mut Frame, app: &MonitorApp) {
         .constraints(constraints)
         .split(area);
 
-    let mut chunk_idx = 0;
-    render_global_dashboard(frame, chunks[chunk_idx], app);
-    chunk_idx += 1;
-
+    // Render sections with proper indexing
     if has_alerts {
-        render_alerts_banner(frame, chunks[chunk_idx], app);
-        chunk_idx += 1;
+        render_global_dashboard(frame, chunks[0], app);
+        render_alerts_banner(frame, chunks[1], app);
+        render_cpu_section(frame, chunks[2], app);
+        render_memory_gpu_section(frame, chunks[3], app);
+        render_network_disk_section(frame, chunks[4], app);
+        render_processes_section(frame, chunks[5], app);
+        render_temperatures_section(frame, chunks[6], app);
+        render_footer(frame, chunks[7]);
+    } else {
+        render_global_dashboard(frame, chunks[0], app);
+        render_cpu_section(frame, chunks[1], app);
+        render_memory_gpu_section(frame, chunks[2], app);
+        render_network_disk_section(frame, chunks[3], app);
+        render_processes_section(frame, chunks[4], app);
+        render_temperatures_section(frame, chunks[5], app);
+        render_footer(frame, chunks[6]);
     }
-
-    render_cpu_section(frame, chunks[chunk_idx], app);
-    chunk_idx += 1;
-    render_memory_gpu_section(frame, chunks[chunk_idx], app);
-    chunk_idx += 1;
-    render_network_disk_section(frame, chunks[chunk_idx], app);
-    chunk_idx += 1;
-    render_processes_section(frame, chunks[chunk_idx], app);
-    chunk_idx += 1;
-    render_temperatures_section(frame, chunks[chunk_idx], app);
-    chunk_idx += 1;
-    render_footer(frame, chunks[chunk_idx]);
 
     // Render help overlay if active
     if app.show_help {
@@ -229,12 +228,19 @@ fn render_cpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
         Style::default()
     };
 
+    // Use smoothed CPU usage for display (if available, otherwise use raw)
+    let cpu_usage_display = if app.smoothed_cpu_usage > 0.0 {
+        app.smoothed_cpu_usage
+    } else {
+        cpu.global_usage
+    };
+
     let block = Block::default()
         .title(format!(
             " CPU: {} ({} cores) │ Avg: {:.1}% @ {} MHz │ Load: {:.2} {:.2} {:.2} ",
             cpu.brand,
             cpu.core_count,
-            cpu.global_usage,
+            cpu_usage_display,
             avg_freq,
             cpu.load_average.0,
             cpu.load_average.1,
@@ -246,37 +252,70 @@ fn render_cpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Split into left (cores) and right (sparkline)
-    let cpu_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(75), Constraint::Percentage(25)])
-        .split(inner);
+    // Only split if we have enough space for sparkline
+    if inner.height < 3 || inner.width < 60 {
+        // Just show cores, no sparkline (not enough space)
+        render_cpu_cores(frame, inner, app);
+    } else {
+        // Split into left (cores) and right (sparkline)
+        // Give more space to sparkline for horizontal rendering
+        let cpu_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
+            .split(inner);
 
-    // Left: Show per-core usage
-    render_cpu_cores(frame, cpu_chunks[0], cpu);
+        // Left: Show per-core usage (with smoothed values)
+        render_cpu_cores(frame, cpu_chunks[0], app);
 
-    // Right: CPU History sparkline
-    let sparkline = Sparkline::default()
-        .block(Block::default().title("History").borders(Borders::ALL))
-        .data(app.history.cpu_as_u64())
-        .style(Style::default().fg(Color::Cyan));
-    frame.render_widget(sparkline, cpu_chunks[1]);
+        // Right: CPU History sparkline (last 60 seconds of CPU usage)
+        let history_data = app.history.cpu_as_u64();
+        if !history_data.is_empty() && cpu_chunks[1].width > 4 {
+            let sparkline_block = Block::default()
+                .title("CPU History (60s)")
+                .borders(Borders::ALL);
+            let sparkline_inner = sparkline_block.inner(cpu_chunks[1]);
+            frame.render_widget(sparkline_block, cpu_chunks[1]);
+
+            // Only render if we have enough space inside the block
+            if sparkline_inner.height > 0 && sparkline_inner.width > 2 {
+                let sparkline = Sparkline::default()
+                    .data(&history_data)
+                    .style(Style::default().fg(Color::Cyan))
+                    .max(100); // CPU usage is 0-100%
+                frame.render_widget(sparkline, sparkline_inner);
+            }
+        }
+    }
 }
 
 /// Render individual CPU cores
-fn render_cpu_cores(frame: &mut Frame, area: Rect, cpu: &crate::core::system_monitor::CpuMetrics) {
+fn render_cpu_cores(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     use ratatui::widgets::Gauge;
 
+    let cpu = &app.metrics.cpu;
+
     // Determine how many cores we can display based on height
-    let available_height = area.height as usize;
-    let cores_to_show = (available_height).min(cpu.per_core_usage.len());
+    // Make sure we have at least 1 line of space
+    let available_height = area.height.max(1) as usize;
+    let cores_to_show = available_height.min(cpu.per_core_usage.len());
+
+    if cores_to_show == 0 || cpu.per_core_usage.is_empty() {
+        return; // Not enough space or no data
+    }
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![Constraint::Length(1); cores_to_show])
         .split(area);
 
-    for (i, &usage) in cpu.per_core_usage.iter().take(cores_to_show).enumerate() {
+    for i in 0..cores_to_show {
+        // Use smoothed value if available, otherwise fall back to raw value
+        let usage = if i < app.smoothed_per_core.len() {
+            app.smoothed_per_core[i]
+        } else {
+            cpu.per_core_usage.get(i).copied().unwrap_or(0.0)
+        };
+
         let freq = cpu.frequencies_mhz.get(i).copied().unwrap_or(0);
 
         // Determine color based on usage
@@ -308,6 +347,10 @@ fn render_cpu_cores(frame: &mut Frame, area: Rect, cpu: &crate::core::system_mon
 }
 
 fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
+    if area.height < 3 {
+        return; // Not enough space for memory/gpu section
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -328,48 +371,65 @@ fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     let mem_inner = mem_block.inner(chunks[0]);
     frame.render_widget(mem_block, chunks[0]);
 
-    let mem_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2), // Used RAM
-            Constraint::Length(1), // Cache/Buffers
-            Constraint::Length(2), // SWAP
-        ])
-        .split(mem_inner);
-
-    // Real used RAM (excluding cache)
-    let ram_text = format!(
-        "Used:  {} / {} ({:.1}%)",
-        format_size(mem.used_bytes),
-        format_size(mem.total_bytes),
-        mem.usage_percent
-    );
-    let ram_gauge = colored_gauge(mem.usage_percent as f64, &ram_text);
-    frame.render_widget(ram_gauge, mem_layout[0]);
-
-    // Cache/Buffers indicator
-    let cache_percent = if mem.total_bytes > 0 {
-        (mem.cache_buffers_bytes as f32 / mem.total_bytes as f32) * 100.0
+    // Only render memory details if we have enough space
+    if mem_inner.height < 3 {
+        let mem_display = if app.smoothed_memory_usage > 0.0 {
+            app.smoothed_memory_usage
+        } else {
+            mem.usage_percent
+        };
+        let summary = Paragraph::new(format!("RAM: {:.1}%", mem_display))
+            .style(Style::default().fg(Color::White));
+        frame.render_widget(summary, mem_inner);
     } else {
-        0.0
-    };
-    let cache_text = Paragraph::new(format!(
-        "Cache: {} ({:.1}%)",
-        format_size(mem.cache_buffers_bytes),
-        cache_percent
-    ))
-    .style(Style::default().fg(Color::Blue));
-    frame.render_widget(cache_text, mem_layout[1]);
+        let mem_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // Used RAM
+                Constraint::Length(1), // Cache/Buffers
+                Constraint::Length(2), // SWAP
+            ])
+            .split(mem_inner);
 
-    // SWAP
-    let swap_text = format!(
-        "Swap:  {} / {} ({:.1}%)",
-        format_size(mem.swap_used_bytes),
-        format_size(mem.swap_total_bytes),
-        mem.swap_percent
-    );
-    let swap_gauge = colored_gauge(mem.swap_percent as f64, &swap_text);
-    frame.render_widget(swap_gauge, mem_layout[2]);
+        // Real used RAM (excluding cache) - use smoothed value if available
+        let mem_display = if app.smoothed_memory_usage > 0.0 {
+            app.smoothed_memory_usage
+        } else {
+            mem.usage_percent
+        };
+        let ram_text = format!(
+            "Used:  {} / {} ({:.1}%)",
+            format_size(mem.used_bytes),
+            format_size(mem.total_bytes),
+            mem_display
+        );
+        let ram_gauge = colored_gauge(mem_display as f64, &ram_text);
+        frame.render_widget(ram_gauge, mem_layout[0]);
+
+        // Cache/Buffers indicator
+        let cache_percent = if mem.total_bytes > 0 {
+            (mem.cache_buffers_bytes as f32 / mem.total_bytes as f32) * 100.0
+        } else {
+            0.0
+        };
+        let cache_text = Paragraph::new(format!(
+            "Cache: {} ({:.1}%)",
+            format_size(mem.cache_buffers_bytes),
+            cache_percent
+        ))
+        .style(Style::default().fg(Color::Blue));
+        frame.render_widget(cache_text, mem_layout[1]);
+
+        // SWAP
+        let swap_text = format!(
+            "Swap:  {} / {} ({:.1}%)",
+            format_size(mem.swap_used_bytes),
+            format_size(mem.swap_total_bytes),
+            mem.swap_percent
+        );
+        let swap_gauge = colored_gauge(mem.swap_percent as f64, &swap_text);
+        frame.render_widget(swap_gauge, mem_layout[2]);
+    }
 
     // GPU
     let gpu_block = Block::default()
@@ -380,44 +440,62 @@ fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     frame.render_widget(gpu_block, chunks[1]);
 
     if let Some(ref gpu) = app.metrics.gpu {
-        let gpu_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Length(2),
-                Constraint::Length(1),
-            ])
-            .split(gpu_inner);
+        // Only render full GPU details if we have enough space
+        if gpu_inner.height < 3 {
+            let gpu_display = if app.smoothed_gpu_usage > 0.0 {
+                app.smoothed_gpu_usage
+            } else {
+                gpu.utilization_percent as f32
+            };
+            let summary = Paragraph::new(format!("GPU: {:.0}%", gpu_display))
+                .style(Style::default().fg(Color::Cyan));
+            frame.render_widget(summary, gpu_inner);
+        } else {
+            let gpu_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Length(2),
+                    Constraint::Length(1),
+                ])
+                .split(gpu_inner);
 
-        let name = Paragraph::new(gpu.name.clone()).style(Style::default().fg(Color::Cyan));
-        frame.render_widget(name, gpu_layout[0]);
+            let name = Paragraph::new(gpu.name.clone()).style(Style::default().fg(Color::Cyan));
+            frame.render_widget(name, gpu_layout[0]);
 
-        let usage_text = format!(
-            "Use: {}% │ VRAM: {} / {}",
-            gpu.utilization_percent,
-            format_size(gpu.memory_used_bytes),
-            format_size(gpu.memory_total_bytes)
-        );
-        let usage_gauge = colored_gauge(gpu.utilization_percent as f64, &usage_text);
-        frame.render_widget(usage_gauge, gpu_layout[1]);
+            // Use smoothed GPU usage if available
+            let gpu_display = if app.smoothed_gpu_usage > 0.0 {
+                app.smoothed_gpu_usage
+            } else {
+                gpu.utilization_percent as f32
+            };
+            let usage_text = format!(
+                "Use: {:.0}% │ VRAM: {} / {}",
+                gpu_display,
+                format_size(gpu.memory_used_bytes),
+                format_size(gpu.memory_total_bytes)
+            );
+            let usage_gauge = colored_gauge(gpu_display as f64, &usage_text);
+            frame.render_widget(usage_gauge, gpu_layout[1]);
 
-        let details = format!(
-            "Temp: {}°C │ Fan: {}% │ Power: {}W/{}W",
-            gpu.temperature_celsius
-                .map(|t| t.to_string())
-                .unwrap_or("N/A".into()),
-            gpu.fan_speed_percent
-                .map(|f| f.to_string())
-                .unwrap_or("N/A".into()),
-            gpu.power_draw_watts
-                .map(|p| p.to_string())
-                .unwrap_or("N/A".into()),
-            gpu.power_limit_watts
-                .map(|p| p.to_string())
-                .unwrap_or("N/A".into()),
-        );
-        let details_para = Paragraph::new(details).style(Style::default().fg(Color::White));
-        frame.render_widget(details_para, gpu_layout[2]);
+            let details = format!(
+                "Temp: {}°C │ Fan: {}% │ Power: {}W/{}W",
+                gpu.temperature_celsius
+                    .map(|t| t.to_string())
+                    .unwrap_or("N/A".into()),
+                gpu.fan_speed_percent
+                    .map(|f| f.to_string())
+                    .unwrap_or("N/A".into()),
+                gpu.power_draw_watts
+                    .map(|p| p.to_string())
+                    .unwrap_or("N/A".into()),
+                gpu.power_limit_watts
+                    .map(|p| p.to_string())
+                    .unwrap_or("N/A".into()),
+            );
+            let details_para = Paragraph::new(details).style(Style::default().fg(Color::White));
+            frame.render_widget(details_para, gpu_layout[2]);
+        }
     } else {
         let no_gpu = Paragraph::new("No GPU detected").style(Style::default().fg(Color::DarkGray));
         frame.render_widget(no_gpu, gpu_inner);
@@ -443,6 +521,10 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
         .border_style(border_style);
     let net_inner = net_block.inner(chunks[0]);
     frame.render_widget(net_block, chunks[0]);
+
+    if net_inner.height == 0 || net_inner.width == 0 {
+        return; // No space to render network/disk tables
+    }
 
     let net_rows: Vec<Row> = app
         .metrics
@@ -473,16 +555,22 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
         })
         .collect();
 
-    let net_table = Table::new(
-        net_rows,
-        [
-            Constraint::Percentage(30),
-            Constraint::Percentage(28),
-            Constraint::Percentage(28),
-            Constraint::Percentage(14),
-        ],
-    );
-    frame.render_widget(net_table, net_inner);
+    if !net_rows.is_empty() {
+        let net_table = Table::new(
+            net_rows,
+            [
+                Constraint::Percentage(30),
+                Constraint::Percentage(28),
+                Constraint::Percentage(28),
+                Constraint::Percentage(14),
+            ],
+        );
+        frame.render_widget(net_table, net_inner);
+    } else {
+        let no_data = Paragraph::new("No network interfaces")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(no_data, net_inner);
+    }
 
     // Disks
     let disk_block = Block::default()
@@ -510,15 +598,21 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
         })
         .collect();
 
-    let disk_table = Table::new(
-        disk_rows,
-        [
-            Constraint::Percentage(40),
-            Constraint::Percentage(20),
-            Constraint::Percentage(40),
-        ],
-    );
-    frame.render_widget(disk_table, disk_inner);
+    if !disk_rows.is_empty() {
+        let disk_table = Table::new(
+            disk_rows,
+            [
+                Constraint::Percentage(40),
+                Constraint::Percentage(20),
+                Constraint::Percentage(40),
+            ],
+        );
+        frame.render_widget(disk_table, disk_inner);
+    } else {
+        let no_data = Paragraph::new("No disks detected")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(no_data, disk_inner);
+    }
 }
 
 fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
@@ -546,6 +640,11 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Check if we have space to render
+    if inner.height < 2 {
+        return; // Not enough space for header + at least one row
+    }
+
     let header = Row::new(vec![
         Cell::from("PID").style(Style::default().add_modifier(Modifier::BOLD)),
         Cell::from("Name").style(Style::default().add_modifier(Modifier::BOLD)),
@@ -554,7 +653,9 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     ])
     .height(1);
 
-    let rows: Vec<Row> = if app.show_process_tree {
+    let rows: Vec<Row> = if app.metrics.top_processes.is_empty() {
+        vec![] // No processes to show
+    } else if app.show_process_tree {
         // Build and flatten tree
         let tree = build_process_tree(&app.metrics.top_processes);
         let flattened = flatten_tree(&tree);
@@ -625,20 +726,32 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
 }
 
 fn render_temperatures_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
-    let temps: String = app
-        .metrics
-        .temperatures
-        .iter()
-        .take(6)
-        .map(|t| {
-            let _color = temp_color(t.current_celsius);
-            format!("{}: {:.0}°C", t.label, t.current_celsius)
-        })
-        .collect::<Vec<_>>()
-        .join(" │ ");
+    if area.height == 0 {
+        return; // No space to render
+    }
 
-    let para = Paragraph::new(format!(" Temperatures: {} ", temps))
-        .style(Style::default().fg(Color::White));
+    let temps: String = if app.metrics.temperatures.is_empty() {
+        "No temperature sensors detected".to_string()
+    } else {
+        app.metrics
+            .temperatures
+            .iter()
+            .take(6)
+            .map(|t| {
+                let _color = temp_color(t.current_celsius);
+                format!("{}: {:.0}°C", t.label, t.current_celsius)
+            })
+            .collect::<Vec<_>>()
+            .join(" │ ")
+    };
+
+    let text = if temps.is_empty() {
+        " Temperatures: - ".to_string()
+    } else {
+        format!(" Temperatures: {} ", temps)
+    };
+
+    let para = Paragraph::new(text).style(Style::default().fg(Color::White));
     frame.render_widget(para, area);
 }
 

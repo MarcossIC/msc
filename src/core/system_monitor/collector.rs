@@ -11,6 +11,191 @@ use crate::platform::gpu::get_gpu_provider;
 use super::gpu::GpuProvider;
 use super::metrics::*;
 
+// ============================================================================
+// PUBLIC PURE FUNCTIONS (for use by async tasks)
+// ============================================================================
+
+/// Collect CPU metrics from a System instance.
+///
+/// This is a pure function that can be called from async tasks.
+pub fn collect_cpu(system: &System) -> CpuMetrics {
+    let cpus = system.cpus();
+    let load = System::load_average();
+
+    CpuMetrics {
+        global_usage: system.global_cpu_usage(),
+        per_core_usage: cpus.iter().map(|cpu| cpu.cpu_usage()).collect(),
+        frequencies_mhz: cpus.iter().map(|cpu| cpu.frequency()).collect(),
+        core_count: cpus.len(),
+        brand: cpus
+            .first()
+            .map(|c| c.brand().to_string())
+            .unwrap_or_default(),
+        load_average: (load.one, load.five, load.fifteen),
+    }
+}
+
+/// Collect memory metrics from a System instance.
+///
+/// This is a pure function that can be called from async tasks.
+pub fn collect_memory(system: &System) -> MemoryMetrics {
+    let total = system.total_memory();
+    let available = system.available_memory();
+    let swap_total = system.total_swap();
+    let swap_used = system.used_swap();
+
+    // Calculate real used memory (excluding cache/buffers)
+    // Real used = total - available
+    let real_used = total.saturating_sub(available);
+
+    // sysinfo's "used_memory" includes cache/buffers
+    // cache_buffers = reported_used - real_used
+    let reported_used = system.used_memory();
+    let cache_buffers = reported_used.saturating_sub(real_used);
+
+    MemoryMetrics {
+        total_bytes: total,
+        used_bytes: real_used,
+        cache_buffers_bytes: cache_buffers,
+        available_bytes: available,
+        usage_percent: if total > 0 {
+            (real_used as f32 / total as f32) * 100.0
+        } else {
+            0.0
+        },
+        swap_total_bytes: swap_total,
+        swap_used_bytes: swap_used,
+        swap_percent: if swap_total > 0 {
+            (swap_used as f32 / swap_total as f32) * 100.0
+        } else {
+            0.0
+        },
+    }
+}
+
+/// Collect battery information.
+///
+/// This is a pure function that can be called from async tasks.
+/// Returns (power_source, battery_percent, battery_time_remaining_secs)
+pub fn collect_battery_info() -> (PowerSource, Option<f32>, Option<u32>) {
+    // Try using the battery crate
+    if let Ok(manager) = battery::Manager::new() {
+        if let Ok(mut batteries) = manager.batteries() {
+            if let Some(Ok(battery)) = batteries.next() {
+                use battery::State;
+
+                let power_source = match battery.state() {
+                    State::Charging | State::Full => PowerSource::AC,
+                    State::Discharging => PowerSource::Battery,
+                    _ => PowerSource::Unknown,
+                };
+
+                let battery_percent = Some(battery.state_of_charge().value * 100.0);
+
+                let battery_time = if battery.state() == State::Discharging {
+                    battery.time_to_empty().map(|t| t.value as u32)
+                } else {
+                    None
+                };
+
+                return (power_source, battery_percent, battery_time);
+            }
+        }
+    }
+
+    // Fallback: No battery detected
+    (PowerSource::AC, None, None)
+}
+
+/// Collect disk metrics from a Disks instance.
+///
+/// This is a pure function that can be called from async tasks.
+pub fn collect_disks(disks: &Disks) -> Vec<DiskMetrics> {
+    disks
+        .iter()
+        .map(|disk| {
+            let total = disk.total_space();
+            let available = disk.available_space();
+            let used = total.saturating_sub(available);
+
+            DiskMetrics {
+                name: disk.name().to_string_lossy().to_string(),
+                mount_point: disk.mount_point().to_string_lossy().to_string(),
+                fs_type: disk.file_system().to_string_lossy().to_string(),
+                total_bytes: total,
+                available_bytes: available,
+                usage_percent: if total > 0 {
+                    (used as f32 / total as f32) * 100.0
+                } else {
+                    0.0
+                },
+                read_bytes_per_sec: None, // Requires separate tracking
+                write_bytes_per_sec: None,
+            }
+        })
+        .collect()
+}
+
+/// Collect temperature readings from a Components instance.
+///
+/// This is a pure function that can be called from async tasks.
+pub fn collect_temperatures(components: &Components) -> Vec<TemperatureReading> {
+    components
+        .iter()
+        .map(|comp| TemperatureReading {
+            label: comp.label().to_string(),
+            current_celsius: comp.temperature().unwrap_or(0.0),
+            max_celsius: comp.max().unwrap_or(0.0),
+            critical_celsius: comp.critical(),
+        })
+        .collect()
+}
+
+/// Sort and truncate processes by CPU usage.
+///
+/// This is a CPU-bound operation suitable for spawn_blocking.
+pub fn sort_and_truncate_processes(
+    processes: &std::collections::HashMap<sysinfo::Pid, sysinfo::Process>,
+    total_memory: u64,
+    top_n: usize,
+) -> Vec<ProcessMetrics> {
+    let mut procs: Vec<_> = processes
+        .values()
+        .map(|proc| {
+            let mem = proc.memory();
+            ProcessMetrics {
+                pid: proc.pid().as_u32(),
+                parent_pid: proc.parent().map(|p| p.as_u32()),
+                name: proc.name().to_string_lossy().to_string(),
+                cpu_usage_percent: proc.cpu_usage(),
+                memory_bytes: mem,
+                memory_percent: if total_memory > 0 {
+                    (mem as f32 / total_memory as f32) * 100.0
+                } else {
+                    0.0
+                },
+                status: format!("{:?}", proc.status()),
+                disk_read_bytes: proc.disk_usage().read_bytes,
+                disk_write_bytes: proc.disk_usage().written_bytes,
+            }
+        })
+        .collect();
+
+    // Sort by CPU usage descending
+    procs.sort_by(|a, b| {
+        b.cpu_usage_percent
+            .partial_cmp(&a.cpu_usage_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    procs.truncate(top_n);
+    procs
+}
+
+// ============================================================================
+// LEGACY METRICS COLLECTOR (will be deprecated)
+// ============================================================================
+
 /// Configuration for metrics collection
 #[derive(Debug, Clone)]
 pub struct CollectorConfig {
@@ -162,87 +347,15 @@ impl MetricsCollector {
     }
 
     fn collect_battery_info(&self) -> (PowerSource, Option<f32>, Option<u32>) {
-        // Try using the battery crate
-        if let Ok(manager) = battery::Manager::new() {
-            if let Ok(mut batteries) = manager.batteries() {
-                if let Some(Ok(battery)) = batteries.next() {
-                    use battery::State;
-
-                    let power_source = match battery.state() {
-                        State::Charging | State::Full => PowerSource::AC,
-                        State::Discharging => PowerSource::Battery,
-                        _ => PowerSource::Unknown,
-                    };
-
-                    let battery_percent = Some(battery.state_of_charge().value * 100.0);
-
-                    let battery_time = if battery.state() == State::Discharging {
-                        battery
-                            .time_to_empty()
-                            .map(|t| t.value as u32) // value is already in seconds as f32
-                    } else {
-                        None
-                    };
-
-                    return (power_source, battery_percent, battery_time);
-                }
-            }
-        }
-
-        // Fallback: No battery detected
-        (PowerSource::AC, None, None)
+        collect_battery_info()
     }
 
     fn collect_cpu(&self) -> CpuMetrics {
-        let cpus = self.system.cpus();
-        let load = System::load_average();
-
-        CpuMetrics {
-            global_usage: self.system.global_cpu_usage(),
-            per_core_usage: cpus.iter().map(|cpu| cpu.cpu_usage()).collect(),
-            frequencies_mhz: cpus.iter().map(|cpu| cpu.frequency()).collect(),
-            core_count: cpus.len(),
-            brand: cpus
-                .first()
-                .map(|c| c.brand().to_string())
-                .unwrap_or_default(),
-            load_average: (load.one, load.five, load.fifteen),
-        }
+        collect_cpu(&self.system)
     }
 
     fn collect_memory(&self) -> MemoryMetrics {
-        let total = self.system.total_memory();
-        let available = self.system.available_memory();
-        let swap_total = self.system.total_swap();
-        let swap_used = self.system.used_swap();
-
-        // Calculate real used memory (excluding cache/buffers)
-        // Real used = total - available
-        let real_used = total.saturating_sub(available);
-
-        // sysinfo's "used_memory" includes cache/buffers
-        // cache_buffers = reported_used - real_used
-        let reported_used = self.system.used_memory();
-        let cache_buffers = reported_used.saturating_sub(real_used);
-
-        MemoryMetrics {
-            total_bytes: total,
-            used_bytes: real_used,
-            cache_buffers_bytes: cache_buffers,
-            available_bytes: available,
-            usage_percent: if total > 0 {
-                (real_used as f32 / total as f32) * 100.0
-            } else {
-                0.0
-            },
-            swap_total_bytes: swap_total,
-            swap_used_bytes: swap_used,
-            swap_percent: if swap_total > 0 {
-                (swap_used as f32 / swap_total as f32) * 100.0
-            } else {
-                0.0
-            },
-        }
+        collect_memory(&self.system)
     }
 
     fn collect_gpu(&mut self) -> Option<GpuMetrics> {
@@ -250,29 +363,7 @@ impl MetricsCollector {
     }
 
     fn collect_disks(&self) -> Vec<DiskMetrics> {
-        self.disks
-            .iter()
-            .map(|disk| {
-                let total = disk.total_space();
-                let available = disk.available_space();
-                let used = total.saturating_sub(available);
-
-                DiskMetrics {
-                    name: disk.name().to_string_lossy().to_string(),
-                    mount_point: disk.mount_point().to_string_lossy().to_string(),
-                    fs_type: disk.file_system().to_string_lossy().to_string(),
-                    total_bytes: total,
-                    available_bytes: available,
-                    usage_percent: if total > 0 {
-                        (used as f32 / total as f32) * 100.0
-                    } else {
-                        0.0
-                    },
-                    read_bytes_per_sec: None, // Requires separate tracking
-                    write_bytes_per_sec: None,
-                }
-            })
-            .collect()
+        collect_disks(&self.disks)
     }
 
     fn collect_network(&mut self) -> Vec<NetworkMetrics> {
@@ -325,52 +416,16 @@ impl MetricsCollector {
     }
 
     fn collect_temperatures(&self) -> Vec<TemperatureReading> {
-        self.components
-            .iter()
-            .map(|comp| TemperatureReading {
-                label: comp.label().to_string(),
-                current_celsius: comp.temperature().unwrap_or(0.0),
-                max_celsius: comp.max().unwrap_or(0.0),
-                critical_celsius: comp.critical(),
-            })
-            .collect()
+        collect_temperatures(&self.components)
     }
 
     fn collect_top_processes(&self) -> Vec<ProcessMetrics> {
         let total_memory = self.system.total_memory();
-        let mut processes: Vec<_> = self
-            .system
-            .processes()
-            .values()
-            .map(|proc| {
-                let mem = proc.memory();
-                ProcessMetrics {
-                    pid: proc.pid().as_u32(),
-                    parent_pid: proc.parent().map(|p| p.as_u32()),
-                    name: proc.name().to_string_lossy().to_string(),
-                    cpu_usage_percent: proc.cpu_usage(),
-                    memory_bytes: mem,
-                    memory_percent: if total_memory > 0 {
-                        (mem as f32 / total_memory as f32) * 100.0
-                    } else {
-                        0.0
-                    },
-                    status: format!("{:?}", proc.status()),
-                    disk_read_bytes: proc.disk_usage().read_bytes,
-                    disk_write_bytes: proc.disk_usage().written_bytes,
-                }
-            })
-            .collect();
-
-        // Sort by CPU usage descending
-        processes.sort_by(|a, b| {
-            b.cpu_usage_percent
-                .partial_cmp(&a.cpu_usage_percent)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        processes.truncate(self.config.top_processes_count);
-        processes
+        sort_and_truncate_processes(
+            self.system.processes(),
+            total_memory,
+            self.config.top_processes_count,
+        )
     }
 }
 

@@ -19,6 +19,9 @@ pub enum MscError {
     #[error("Deserialization error: {0}")]
     Deserialization(#[from] bincode::error::DecodeError),
 
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
 

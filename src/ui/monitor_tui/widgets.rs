@@ -25,20 +25,3 @@ pub fn temp_color(temp: f32) -> Color {
     }
 }
 
-/// Format bytes per second for network display
-#[allow(dead_code)]
-pub fn format_speed(bytes_per_sec: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes_per_sec >= GB {
-        format!("{:.2} GB/s", bytes_per_sec as f64 / GB as f64)
-    } else if bytes_per_sec >= MB {
-        format!("{:.2} MB/s", bytes_per_sec as f64 / MB as f64)
-    } else if bytes_per_sec >= KB {
-        format!("{:.2} KB/s", bytes_per_sec as f64 / KB as f64)
-    } else {
-        format!("{} B/s", bytes_per_sec)
-    }
-}

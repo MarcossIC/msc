@@ -1,58 +1,9 @@
 use crate::core::system_info::types::*;
 use crate::error::{MscError, Result};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 #[cfg(windows)]
 use wmi::WMIConnection;
-
-// WMI Structs
-// #[derive(Deserialize, Debug)]
-// #[serde(rename_all = "PascalCase")]
-// struct Win32PhysicalMemory {
-//     capacity: Option<String>,
-//     speed: Option<u32>,
-//     manufacturer: Option<String>,
-//     part_number: Option<String>,
-//     device_locator: Option<String>,
-//     smbios_memory_type: Option<u16>,
-// }
-
-// #[derive(Deserialize, Debug)]
-// #[serde(rename_all = "PascalCase")]
-// struct Win32PhysicalMemoryArray {
-//     memory_devices: Option<u32>,
-//     max_capacity: Option<u64>,
-// }
-
-// #[derive(Deserialize, Debug)]
-// #[serde(rename_all = "PascalCase")]
-// struct Win32VideoController {
-//     name: Option<String>,
-//     adapter_ram: Option<String>,
-// }
-
-// #[derive(Deserialize, Debug)]
-// #[serde(rename_all = "PascalCase")]
-// struct Win32NetworkAdapter {
-//     name: Option<String>,
-//     adapter_type: Option<String>,
-//     speed: Option<String>,
-// }
-
-// #[derive(Deserialize, Debug)]
-// #[serde(rename_all = "PascalCase")]
-// struct Win32Battery {
-//     battery_status: Option<u16>,
-//     estimated_charge_remaining: Option<u16>,
-//     estimated_run_time: Option<u32>,
-//     design_capacity: Option<u32>,
-//     full_charge_capacity: Option<u32>,
-//     chemistry: Option<u16>,
-//     design_voltage: Option<u64>,
-//     discharge_rate: Option<i32>,
-//     manufacturer: Option<String>,
-//     serial_number: Option<String>,
-//     manufacture_date: Option<String>,
-// }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
@@ -65,14 +16,6 @@ struct Win32Processor {
     _number_of_logical_processors: Option<u32>,
 }
 
-// #[derive(Deserialize, Debug)]
-// #[serde(rename_all = "PascalCase")]
-// struct Win32DiskDrive {
-//     model: Option<String>,
-//     media_type: Option<String>,
-//     interface_type: Option<String>,
-//     caption: Option<String>,
-// }
 #[cfg(windows)]
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
@@ -98,293 +41,270 @@ pub struct MemoryDetails {
     pub max_capacity_bytes: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct PhysicalMemoryPs {
+    #[serde(rename = "Capacity")]
+    capacity: u64,
+    #[serde(rename = "Speed")]
+    speed: Option<u32>,
+    #[serde(rename = "Manufacturer")]
+    manufacturer: Option<String>,
+    #[serde(rename = "PartNumber")]
+    part_number: Option<String>,
+    #[serde(rename = "DeviceLocator")]
+    device_locator: Option<String>,
+    #[serde(rename = "SMBIOSMemoryType")]
+    smbios_type: Option<u16>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PhysicalMemoryArrayPs {
+    #[serde(rename = "MemoryDevices")]
+    memory_devices: Option<u32>,
+    #[serde(rename = "MaxCapacity")]
+    max_capacity_kb: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum GpuVendor {
+    Nvidia,
+    Amd,
+    Intel,
+    Unknown,
+}
+
+#[derive(Debug, Deserialize)]
+struct VideoControllerPs {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "AdapterRAM")]
+    adapter_ram: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct GpuTelemetry {
+    nvidia_metrics: Option<NvidiaGpuMetrics>,
+    amd_metrics: Option<AmdGpuMetrics>,
+    vram_bytes: Option<u64>,
+    core_clock_mhz: Option<u32>,
+    memory_clock_mhz: Option<u32>,
+    temperature_celsius: Option<u32>,
+    power_draw_watts: Option<f32>,
+    fan_speed_percent: Option<u32>,
+    memory_type: Option<String>,
+}
+
+fn ddr_from_smbios(value: Option<u16>) -> DdrType {
+    match value {
+        Some(18) => DdrType::DDR,
+        Some(19) => DdrType::DDR2,
+        Some(24) => DdrType::DDR3,
+        Some(26) => DdrType::DDR4,
+        Some(34) => DdrType::DDR5,
+        _ => DdrType::Unknown,
+    }
+}
+
+fn run_powershell_json<T: DeserializeOwned>(command: &str) -> Result<T> {
+    use std::process::Command;
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", command])
+        .output()
+        .map_err(|e| MscError::other(format!("PowerShell execution failed: {e}")))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    serde_json::from_str(&stdout)
+        .map_err(|e| MscError::other(format!("JSON parsing failed: {e}. Output: {stdout}")))
+}
+
+fn detect_vendor(name: &str) -> GpuVendor {
+    let name = name.to_ascii_lowercase();
+
+    if name.contains("nvidia") {
+        GpuVendor::Nvidia
+    } else if name.contains("amd") || name.contains("radeon") {
+        GpuVendor::Amd
+    } else if name.contains("intel") {
+        GpuVendor::Intel
+    } else {
+        GpuVendor::Unknown
+    }
+}
+
+fn is_integrated_gpu(name: &str, vendor: &GpuVendor) -> bool {
+    match vendor {
+        GpuVendor::Intel => !name.contains("Arc"),
+        GpuVendor::Amd => name.contains("Radeon") && !name.contains("RX"),
+        _ => false,
+    }
+}
+
+fn collect_nvidia_metrics(
+    index: &mut u32,
+    adapter_ram: Option<u64>,
+) -> GpuTelemetry {
+    #[cfg(feature = "nvml")]
+    {
+        if let Ok(nvidia) =
+            crate::platform::nvidia_nvml::get_nvidia_metrics_nvml(*index)
+        {
+            *index += 1;
+            return GpuTelemetry {
+                vram_bytes: nvidia.memory_total_bytes,
+                core_clock_mhz: nvidia.clock_graphics_mhz,
+                memory_clock_mhz: nvidia.clock_memory_mhz,
+                temperature_celsius: nvidia.temperature_celsius,
+                power_draw_watts: nvidia.power_draw_watts,
+                fan_speed_percent: nvidia.fan_speed_percent,
+                memory_type: crate::platform::nvidia_nvml::get_gpu_memory_type(None),
+                nvidia_metrics: Some(nvidia),
+                ..Default::default() 
+            };
+        }
+    }
+
+    let (core, mem, temp, power, fan) =
+        get_nvidia_realtime_metrics_by_index(*index)
+            .unwrap_or((None, None, None, None, None));
+
+    let vram = get_nvidia_vram_from_smi_by_index(*index).or(adapter_ram);
+
+    *index += 1;
+
+    GpuTelemetry {
+        vram_bytes: vram,
+        core_clock_mhz: core,
+        memory_clock_mhz: mem,
+        temperature_celsius: temp,
+        power_draw_watts: power,
+        fan_speed_percent: fan,
+        ..Default::default()
+    }
+}
+
+fn collect_amd_metrics(
+    gpu_name: &str,
+    adapter_ram: Option<u64>,
+) -> GpuTelemetry {
+    // Métricas específicas AMD (driver / sensores / etc.)
+    let amd_metrics = get_amd_metrics(gpu_name);
+    // Métricas en tiempo real genéricas
+    let (core, mem, temp, power, fan) =
+        get_gpu_realtime_metrics(gpu_name, "AMD");
+
+    GpuTelemetry {
+        amd_metrics: Some(amd_metrics),
+        vram_bytes: adapter_ram,
+        core_clock_mhz: core,
+        memory_clock_mhz: mem,
+        temperature_celsius: temp,
+        power_draw_watts: power,
+        fan_speed_percent: fan,
+        memory_type: get_amd_gpu_memory_type(gpu_name),
+        ..Default::default()
+    }
+}
+
 /// Get detailed memory information using PowerShell
 pub fn get_memory_details() -> Result<MemoryDetails> {
-    use std::process::Command;
-
-    // Query for physical memory modules
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance -ClassName Win32_PhysicalMemory | Select-Object Capacity, Speed, Manufacturer, PartNumber, DeviceLocator, SMBIOSMemoryType | ConvertTo-Json"
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to run PowerShell: {}", e)))?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    let json_value: serde_json::Value = serde_json::from_str(&output_str)
-        .map_err(|e| MscError::other(format!("Failed to parse JSON: {}", e)))?;
-
-    // Handle both single object and array
-    let mem_array = if json_value.is_array() {
-        json_value.as_array().unwrap().clone()
-    } else {
-        vec![json_value.clone()]
-    };
-
     let mut modules = Vec::new();
     let mut ddr_type = None;
     let mut speed_mhz = None;
 
-    for mem_json in mem_array.iter() {
-        let capacity = mem_json["Capacity"].as_u64().unwrap_or(0);
-        let speed = mem_json["Speed"].as_u64().map(|s| s as u32);
-        let smbios_type = mem_json["SMBIOSMemoryType"].as_u64().map(|t| t as u16);
-        let manufacturer = mem_json["Manufacturer"].as_str().map(|s| s.to_string());
-        let part_number = mem_json["PartNumber"]
-            .as_str()
-            .map(|s| s.trim().to_string());
-        let device_locator = mem_json["DeviceLocator"].as_str().map(|s| s.to_string());
+    let mem_data: serde_json::Value = run_powershell_json(
+        "Get-CimInstance Win32_PhysicalMemory \
+         | Select Capacity, Speed, Manufacturer, PartNumber, DeviceLocator, SMBIOSMemoryType \
+         | ConvertTo-Json",
+    )?;
 
-        // Determine DDR type from SMBIOSMemoryType
+    let mem_modules: Vec<PhysicalMemoryPs> = match mem_data {
+        serde_json::Value::Array(arr) => serde_json::from_value(arr.into())?,
+        value => vec![serde_json::from_value(value)?],
+    };
+
+    for mem in mem_modules {
         if ddr_type.is_none() {
-            ddr_type = Some(match smbios_type {
-                Some(18) => DdrType::DDR,
-                Some(19) => DdrType::DDR2,
-                Some(24) => DdrType::DDR3,
-                Some(26) => DdrType::DDR4,
-                Some(34) => DdrType::DDR5,
-                Some(_) => DdrType::Unknown,
-                None => DdrType::Unknown,
-            });
+            ddr_type = Some(ddr_from_smbios(mem.smbios_type));
         }
 
-        if speed_mhz.is_none() && speed.is_some() {
-            speed_mhz = speed;
+        if speed_mhz.is_none() {
+            speed_mhz = mem.speed;
         }
 
         modules.push(MemoryModule {
-            capacity_bytes: capacity,
-            speed_mhz: speed,
-            manufacturer,
-            part_number,
-            slot: device_locator,
+            capacity_bytes: mem.capacity,
+            speed_mhz: mem.speed,
+            manufacturer: mem.manufacturer,
+            part_number: mem.part_number.map(|s| s.trim().to_string()),
+            slot: mem.device_locator,
         });
     }
 
-    // Query for total slots
-    let output2 = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance -ClassName Win32_PhysicalMemoryArray | Select-Object MemoryDevices, MaxCapacity | ConvertTo-Json"
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to run PowerShell: {}", e)))?;
+    let array_data: serde_json::Value = run_powershell_json(
+        "Get-CimInstance Win32_PhysicalMemoryArray \
+         | Select MemoryDevices, MaxCapacity \
+         | ConvertTo-Json",
+    )?;
 
-    let output2_str = String::from_utf8_lossy(&output2.stdout);
-
-    let json_value2: serde_json::Value = serde_json::from_str(&output2_str)
-        .map_err(|e| MscError::other(format!("Failed to parse JSON: {}", e)))?;
-
-    let array_data = if json_value2.is_array() {
-        json_value2.as_array().and_then(|arr| arr.first())
-    } else {
-        Some(&json_value2)
+    let array_info: PhysicalMemoryArrayPs = match array_data {
+        serde_json::Value::Array(arr) => serde_json::from_value(arr[0].clone())?,
+        value => serde_json::from_value(value)?,
     };
-
-    let total_slots = array_data
-        .and_then(|a| a["MemoryDevices"].as_u64())
-        .map(|d| d as u32);
-    let max_capacity = array_data
-        .and_then(|a| a["MaxCapacity"].as_u64())
-        .map(|kb| kb * 1024); // Convert KB to bytes
-    let used_slots = Some(modules.len() as u32);
 
     Ok(MemoryDetails {
         ddr_type,
         speed_mhz,
+        total_slots: array_info.memory_devices,
+        used_slots: Some(modules.len() as u32),
+        max_capacity_bytes: array_info.max_capacity_kb.map(|kb| kb * 1024),
         modules,
-        total_slots,
-        used_slots,
-        max_capacity_bytes: max_capacity,
     })
 }
-
 /// Get GPU information using PowerShell
 pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
-    use std::process::Command;
+    let raw: serde_json::Value = run_powershell_json(
+        "Get-CimInstance Win32_VideoController \
+         | Select Name, AdapterRAM \
+         | ConvertTo-Json",
+    )?;
 
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance -ClassName Win32_VideoController | Select-Object Name, AdapterRAM | ConvertTo-Json"
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to run PowerShell: {}", e)))?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    // Parse JSON output
-    let json_value: serde_json::Value = serde_json::from_str(&output_str)
-        .map_err(|e| MscError::other(format!("Failed to parse JSON: {}", e)))?;
-
-    let mut gpus = Vec::new();
-
-    // Handle both single object and array
-    let gpu_array = if json_value.is_array() {
-        json_value.as_array().unwrap()
-    } else {
-        &vec![json_value.clone()]
+    let controllers: Vec<VideoControllerPs> = match raw {
+        serde_json::Value::Array(arr) => serde_json::from_value(serde_json::Value::Array(arr))?,
+        value => vec![serde_json::from_value(value)?],
     };
 
-    let mut nvidia_gpu_index = 0u32; // Separate counter for NVIDIA GPUs (for NVML indexing)
+    let mut gpus = Vec::new();
+    let mut nvidia_index = 0u32;
 
-    for gpu_json in gpu_array.iter() {
-        let name = gpu_json["Name"]
-            .as_str()
-            .unwrap_or("Unknown GPU")
-            .to_string();
-        let adapter_ram = gpu_json["AdapterRAM"].as_u64();
-
-        // Skip basic display adapters
-        if name.contains("Basic Display") || name.contains("Microsoft Basic") {
+    for gpu in controllers {
+        if gpu.name.contains("Basic Display") || gpu.name.contains("Microsoft Basic") {
             continue;
         }
 
-        let vendor = if name.contains("NVIDIA") {
-            "NVIDIA"
-        } else if name.contains("AMD") || name.contains("Radeon") {
-            "AMD"
-        } else if name.contains("Intel") {
-            "Intel"
-        } else {
-            "Unknown"
-        }
-        .to_string();
+        let vendor = detect_vendor(&gpu.name);
+        let is_integrated = is_integrated_gpu(&gpu.name, &vendor);
 
-        let is_integrated = name.contains("Intel") && !name.contains("Arc")
-            || (name.contains("AMD") && name.contains("Radeon") && !name.contains("RX"));
-
-        // Get advanced metrics based on vendor
-        let (
-            nvidia_metrics,
-            amd_metrics,
-            core_clock,
-            mem_clock,
-            temp,
-            power_draw,
-            fan_speed,
-            memory_type,
-            vram_bytes_corrected,
-        ) = if vendor == "NVIDIA" {
-            // Try NVML first (official NVIDIA library with real data)
-            #[cfg(feature = "nvml")]
-            {
-                if let Ok(nvidia) =
-                    crate::platform::nvidia_nvml::get_nvidia_metrics_nvml(nvidia_gpu_index)
-                {
-                    // Extract real-time metrics from NvidiaGpuMetrics
-                    let core_clock = nvidia.clock_graphics_mhz;
-                    let mem_clock = nvidia.clock_memory_mhz;
-                    let temp = nvidia.temperature_celsius;
-                    let power = nvidia.power_draw_watts;
-                    let fan = nvidia.fan_speed_percent;
-
-                    // Get REAL VRAM from NVML (fixes 4GB limit from Win32_VideoController)
-                    let vram = nvidia.memory_total_bytes;
-
-                    // Try to get memory type using smart detection
-                    let mem_type = crate::platform::nvidia_nvml::get_gpu_memory_type(None);
-
-                    // Increment NVIDIA GPU counter
-                    nvidia_gpu_index += 1;
-
-                    (
-                        Some(nvidia),
-                        None,
-                        core_clock,
-                        mem_clock,
-                        temp,
-                        power,
-                        fan,
-                        mem_type,
-                        vram,
-                    )
-                } else {
-                    // Fallback to nvidia-smi (use same nvidia_gpu_index for query)
-                    let (core, mem, temp, power, fan) =
-                        get_nvidia_realtime_metrics_by_index(nvidia_gpu_index)
-                            .unwrap_or((None, None, None, None, None));
-                    let vram_corrected =
-                        get_nvidia_vram_from_smi_by_index(nvidia_gpu_index).or(adapter_ram);
-
-                    // Increment NVIDIA GPU counter
-                    nvidia_gpu_index += 1;
-
-                    (
-                        None,
-                        None,
-                        core,
-                        mem,
-                        temp,
-                        power,
-                        fan,
-                        None,
-                        vram_corrected,
-                    )
-                }
-            }
-            #[cfg(not(feature = "nvml"))]
-            {
-                // NVML not available, use nvidia-smi
-                let (core, mem, temp, power, fan) =
-                    get_nvidia_realtime_metrics_by_index(nvidia_gpu_index)
-                        .unwrap_or((None, None, None, None, None));
-                let vram_corrected =
-                    get_nvidia_vram_from_smi_by_index(nvidia_gpu_index).or(adapter_ram);
-
-                // Increment NVIDIA GPU counter
-                nvidia_gpu_index += 1;
-
-                (
-                    None,
-                    None,
-                    core,
-                    mem,
-                    temp,
-                    power,
-                    fan,
-                    None,
-                    vram_corrected,
-                )
-            }
-        } else if vendor == "AMD" {
-            let amd = get_amd_metrics(&name);
-            let (core, mem, temp, power, fan) = get_gpu_realtime_metrics(&name, &vendor);
-            let mem_type = get_amd_gpu_memory_type(&name);
-            (
-                None,
-                Some(amd),
-                core,
-                mem,
-                temp,
-                power,
-                fan,
-                mem_type,
-                adapter_ram,
-            )
-        } else {
-            (None, None, None, None, None, None, None, None, adapter_ram)
+        let telemetry = match vendor {
+            GpuVendor::Nvidia => collect_nvidia_metrics(&mut nvidia_index, gpu.adapter_ram),
+            GpuVendor::Amd => collect_amd_metrics(&gpu.name, gpu.adapter_ram),
+            _ => GpuTelemetry::default(),
         };
 
         gpus.push(GpuInfo {
-            name,
-            vendor,
-            vram_bytes: vram_bytes_corrected,
-            memory_type,
+            name: gpu.name,
+            vendor: format!("{vendor:?}"),
+            vram_bytes: telemetry.vram_bytes,
+            memory_type: telemetry.memory_type,
             is_integrated,
-            driver_version: None, // Could be obtained from registry
-            core_clock_mhz: core_clock,
-            memory_clock_mhz: mem_clock,
-            temperature_celsius: temp,
-            power_draw_watts: power_draw,
-            fan_speed_percent: fan_speed,
-            nvidia_metrics,
-            amd_metrics,
+            driver_version: None,
+            core_clock_mhz: telemetry.core_clock_mhz,
+            memory_clock_mhz: telemetry.memory_clock_mhz,
+            temperature_celsius: telemetry.temperature_celsius,
+            power_draw_watts: telemetry.power_draw_watts,
+            fan_speed_percent: telemetry.fan_speed_percent,
+            nvidia_metrics: telemetry.nvidia_metrics,
+            amd_metrics: telemetry.amd_metrics,
         });
     }
 

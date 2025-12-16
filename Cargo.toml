@@ -33,7 +33,7 @@ ctrlc = "3.5.1"
 reqwest = { version = "0.12.24", features = ["blocking", "json"] }
 dialoguer = "0.12.0"
 ratatui = "0.30.0-beta.0"
-tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros", "time", "sync"] }
 # Human-readable byte formatting
 humansize = "2.1.3"
 url = "2.5.7"
@@ -71,6 +71,8 @@ windows-sys = { version = "0.61.2", features = [
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# AMD ROCm SMI Library (for AMD GPU monitoring on Linux)
+rocm_smi_lib = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3.23"
@@ -78,6 +80,7 @@ tempfile = "3.23"
 [features]
 default = ["nvml"]
 nvml = ["nvml-wrapper"]
+rocm = ["rocm_smi_lib"]
 
 [profile.release]
 strip = true

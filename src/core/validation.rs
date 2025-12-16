@@ -6,6 +6,7 @@ use regex::Regex;
 use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 use url::Url;
+use std::sync::OnceLock;
 
 use super::Blacklist;
 
@@ -267,29 +268,35 @@ pub fn validate_workspace_name(name: &str) -> Result<()> {
 /// - `https://user:pass@example.com/path` -> `https://***:***@example.com/path`
 /// - `http://admin:secret@192.168.1.1` -> `http://***:***@192.168.1.1`
 /// - `https://example.com/path` -> `https://example.com/path` (unchanged)
-pub fn redact_url_credentials(url_str: &str) -> String {
-    // Intento principal: parseo con Url
-    if let Ok(mut url) = Url::parse(url_str) {
-        let has_user = !url.username().is_empty();
-        let has_pass = url.password().is_some();
+pub fn redact_url_credentials(input: &str) -> String {
+    // Fast path: if there's no '@', credentials are impossible
+    if !input.contains('@') {
+        return input.to_owned();
+    }
 
-        // Si no hay credenciales, devolver original tal cual
-        if !has_user && !has_pass {
-            return url_str.to_owned();
+    // Preferred path: robust URL parsing
+    if let Ok(mut url) = Url::parse(input) {
+        if url.username().is_empty() && url.password().is_none() {
+            return input.to_owned();
         }
 
-        // Reemplazar credenciales de forma segura e idiomática
-        // set_username y set_password devuelven Result, pero solo fallan si el formato es inválido.
-        let _ = url.set_username("***");
-        let _ = url.set_password(Some("***"));
+        // These setters only fail if the URL cannot have credentials,
+        // which is not the case here because credentials already exist.
+        url.set_username("***")
+            .and_then(|_| url.set_password(Some("***")))
+            .expect("URL already contains credentials; redaction must succeed");
 
         return url.to_string();
     }
 
-    // Fallback manual si la URL es inválida
-    // Redacta solo si hay patrón claro
-    let re = Regex::new(r"(?i)(https?://)([^:@]+):([^@]+)@").unwrap();
-    re.replace(url_str, "$1***:***@").to_string()
+    // Fallback: conservative regex-based redaction
+    static CREDENTIALS_RE: OnceLock<Regex> = OnceLock::new();
+    let re = CREDENTIALS_RE.get_or_init(|| {
+        Regex::new(r"(?i)\b(https?://)([^:@/]+):([^@/]+)@")
+            .expect("Hardcoded regex must be valid")
+    });
+
+    re.replace(input, "$1***:***@").to_string()
 }
 
 /// See docs/security.md for security considerations
