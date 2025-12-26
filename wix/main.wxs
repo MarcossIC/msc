@@ -62,7 +62,7 @@
         Id='*'
         Name='msc'
         UpgradeCode='88A2DB79-2E92-43AD-8555-6679E62311BC'
-        Manufacturer='Marco'
+        Manufacturer='MSC Contributors'
         Language='1033'
         Codepage='1252'
         Version='$(var.Version)'>
@@ -70,7 +70,7 @@
         <Package Id='*'
             Keywords='Installer'
             Description='Multi-purpose CLI tool for system monitoring, media management, and productivity'
-            Manufacturer='Marco'
+            Manufacturer='MSC Contributors'
             InstallerVersion='450'
             Languages='1033'
             Compressed='yes'

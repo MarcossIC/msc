@@ -15,5 +15,5 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 include = ["README.md", "LICENSE"]
 # Checksum algorithm
 checksum = "sha256"
-# Allow custom workflow modifications (for auto-tag creation)
-allow-dirty = ["ci"]
+# Allow custom workflow modifications and wix manifest changes
+allow-dirty = ["ci", "wix"]
