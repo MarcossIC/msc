@@ -1,6 +1,6 @@
 # Maintainer: Marco <your-email@example.com>
 pkgname=msc-bin
-pkgver=0.1.6
+pkgver=0.1.7
 pkgrel=1
 pkgdesc="Multi-purpose CLI tool for system monitoring, media management, and productivity"
 arch=('x86_64' 'aarch64')
