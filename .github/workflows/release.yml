@@ -25,7 +25,7 @@ jobs:
       version: ${{ steps.create_tag.outputs.version }}
       should_release: ${{ steps.check.outputs.should_release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -101,7 +101,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.create-tag.outputs.tag }}
 
@@ -109,7 +109,7 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.sh | sh
 
       - name: Cache dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
@@ -123,7 +123,7 @@ jobs:
           echo "has-artifacts=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload plan
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: artifacts-plan
           path: plan.json
@@ -138,7 +138,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.create-tag.outputs.tag }}
 
@@ -146,7 +146,7 @@ jobs:
         run: ${{ matrix.install_dist.run }}
 
       - name: Download plan
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: artifacts-*
           path: target/distrib/
@@ -156,7 +156,7 @@ jobs:
         run: dist build --tag=${{ needs.create-tag.outputs.tag }} --output-format=json ${{ matrix.dist_args }} > build.json
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: artifacts-${{ join(matrix.targets, '_') }}
           path: |
@@ -171,12 +171,12 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.create-tag.outputs.tag }}
 
       - name: Download dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/
@@ -184,7 +184,7 @@ jobs:
       - run: chmod +x ~/.cargo/bin/dist
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: artifacts-*
           path: target/distrib/
@@ -210,7 +210,7 @@ jobs:
           echo "✅ Publish completed"
 
       - name: Upload manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-manifest
           path: release.json
@@ -222,13 +222,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
 
       - name: Download release manifest
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: release-manifest
           path: .
