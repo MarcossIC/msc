@@ -1,6 +1,6 @@
 [package]
 name = "msc"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["MSC Contributors"]
 description = "Multi-purpose CLI tool for system monitoring, media management, and productivity"
