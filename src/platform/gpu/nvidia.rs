@@ -1,5 +1,8 @@
 #[cfg(feature = "nvml")]
-use nvml_wrapper::{enum_wrappers::device::TemperatureSensor, Device, Nvml};
+use nvml_wrapper::{
+    enum_wrappers::device::{Clock, TemperatureSensor},
+    Device, Nvml,
+};
 
 use crate::core::system_monitor::{GpuMetrics, GpuProvider, GpuVendor};
 use crate::error::{MscError, Result};
@@ -104,10 +107,10 @@ impl GpuProvider for NvidiaGpuProvider {
                 .ok();
 
             let clock_graphics = device
-                .clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics)
+                .clock_info(Clock::Graphics)
                 .ok();
             let clock_memory = device
-                .clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory)
+                .clock_info(Clock::Memory)
                 .ok();
 
             Ok(GpuMetrics {

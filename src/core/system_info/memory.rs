@@ -5,6 +5,7 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 #[cfg(windows)]
 use crate::platform::system::windows::mbo::get_motherboard_info;
+#[cfg(windows)]
 use crate::platform::system::windows::ram::get_memory_details;
 
 pub fn collect() -> Result<MemoryInfo> {
