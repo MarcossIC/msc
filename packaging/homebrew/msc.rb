@@ -1,25 +1,25 @@
 class Msc < Formula
   desc "Multi-purpose CLI tool for system monitoring, media management, and productivity"
   homepage "https://github.com/MarcossIC/msc"
-  version "0.1.7"
+  version "0.1.8"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/MarcossIC/msc/releases/download/v0.1.7/msc-0.1.7-x86_64-apple-darwin.tar.xz"
+      url "https://github.com/MarcossIC/msc/releases/download/v0.1.8/msc-0.1.8-x86_64-apple-darwin.tar.xz"
       sha256 "Not"
     else
-      url "https://github.com/MarcossIC/msc/releases/download/v0.1.7/msc-0.1.7-x86_64-apple-darwin.tar.xz"
+      url "https://github.com/MarcossIC/msc/releases/download/v0.1.8/msc-0.1.8-x86_64-apple-darwin.tar.xz"
       sha256 "Not"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/MarcossIC/msc/releases/download/v0.1.7/msc-0.1.7-x86_64-apple-darwin.tar.xz"
+      url "https://github.com/MarcossIC/msc/releases/download/v0.1.8/msc-0.1.8-x86_64-apple-darwin.tar.xz"
       sha256 "Not"
     else
-      url "https://github.com/MarcossIC/msc/releases/download/v0.1.7/msc-0.1.7-x86_64-apple-darwin.tar.xz"
+      url "https://github.com/MarcossIC/msc/releases/download/v0.1.8/msc-0.1.8-x86_64-apple-darwin.tar.xz"
       sha256 "Not"
     end
   end
