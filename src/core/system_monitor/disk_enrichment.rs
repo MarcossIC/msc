@@ -169,8 +169,10 @@ impl DiskEnrichmentProvider for WindowsDiskEnrichment {
 // Fallback Implementation (Linux/macOS)
 // ============================================================================
 
+#[cfg(not(target_os = "windows"))]
 struct FallbackDiskEnrichment;
 
+#[cfg(not(target_os = "windows"))]
 impl DiskEnrichmentProvider for FallbackDiskEnrichment {
     fn enrich_disk(&self, disk: DiskMetrics) -> Result<DiskMetrics> {
         // No enrichment on unsupported platforms
@@ -187,6 +189,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(target_os = "windows"))]
     fn test_fallback_provider() {
         let provider = FallbackDiskEnrichment;
         let disk = DiskMetrics {
