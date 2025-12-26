@@ -32,15 +32,17 @@ pub fn collect() -> Result<MemoryInfo> {
 
     // Get detailed info from platform-specific code
     #[cfg(windows)]
-    let memory_details = get_memory_details().unwrap_or_default();
-    let (ddr_type, speed_mhz, modules, total_slots, used_slots, max_capacity) = (
-        memory_details.ddr_type,
-        memory_details.speed_mhz,
-        memory_details.modules,
-        memory_details.total_slots,
-        memory_details.used_slots,
-        memory_details.max_capacity_bytes,
-    );
+    let (ddr_type, speed_mhz, modules, total_slots, used_slots, max_capacity) = {
+        let memory_details = get_memory_details().unwrap_or_default();
+        (
+            memory_details.ddr_type,
+            memory_details.speed_mhz,
+            memory_details.modules,
+            memory_details.total_slots,
+            memory_details.used_slots,
+            memory_details.max_capacity_bytes,
+        )
+    };
 
     #[cfg(not(windows))]
     let (ddr_type, speed_mhz, modules, total_slots, used_slots, max_capacity) =

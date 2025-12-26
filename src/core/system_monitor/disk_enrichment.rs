@@ -5,8 +5,12 @@
 
 use crate::core::system_monitor::metrics::DiskMetrics;
 use crate::error::Result;
+
+#[cfg(target_os = "windows")]
 use std::collections::HashMap;
+#[cfg(target_os = "windows")]
 use std::sync::Mutex;
+#[cfg(target_os = "windows")]
 use std::time::Instant;
 
 /// Trait for enriching basic disk metrics with platform-specific details.

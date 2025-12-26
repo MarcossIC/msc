@@ -13,7 +13,9 @@ use anyhow::Result;
 use colored::Colorize;
 
 use crate::core::{Config, TempCleaner};
-use crate::platform::{elevate_and_rerun, get_recycle_bin_directory, is_elevated};
+use crate::platform::get_recycle_bin_directory;
+#[cfg(windows)]
+use crate::platform::{elevate_and_rerun, is_elevated};
 use crate::ui::{format_size, read_confirmation, read_exact_confirmation, select_from_list};
 
 /// Categorizes directories by whether they require admin privileges

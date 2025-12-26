@@ -46,7 +46,7 @@ pub fn collect() -> Result<Vec<StorageInfo>> {
         };
 
         #[cfg(not(windows))]
-        let disk_details: Option<()> = None;
+        let _disk_details: Option<()> = None;
 
         // Extract info from disk_details if available
         #[cfg(windows)]
