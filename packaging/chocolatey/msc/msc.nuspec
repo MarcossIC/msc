@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>msc</id>
+    <version>0.1.8</version>
+    <packageSourceUrl>https://github.com/MarcossIC/msc/tree/main/packaging/chocolatey</packageSourceUrl>
+    <owners>MarcossIC</owners>
+    <title>MSC CLI</title>
+    <authors>MSC Contributors</authors>
+    <projectUrl>https://github.com/MarcossIC/msc</projectUrl>
+    <copyright>2025 MSC Contributors</copyright>
+    <licenseUrl>https://github.com/MarcossIC/msc/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/MarcossIC/msc</projectSourceUrl>
+    <docsUrl>https://github.com/MarcossIC/msc/blob/main/README.md</docsUrl>
+    <bugTrackerUrl>https://github.com/MarcossIC/msc/issues</bugTrackerUrl>
+    <tags>cli system-monitor video-downloader productivity tools rust ffmpeg yt-dlp</tags>
+    <summary>Multi-purpose CLI tool for system monitoring, media management, and productivity</summary>
+    <description><![CDATA[
+# MSC CLI
+
+Multi-purpose command-line interface tool that combines system monitoring, media management, website archiving, and productivity utilities in a single application.
+
+## Features
+
+- **System Monitoring** - Real-time TUI dashboard with CPU, GPU, memory, network, and disk metrics
+- **Hardware Information** - Detailed system specifications (CPU, GPU, RAM, motherboard, storage, battery)
+- **Video Downloading** - Download videos from 1000+ platforms (YouTube, Vimeo, TikTok, Twitch, etc.)
+- **Video Editing** - Compress and convert videos with FFmpeg integration
+- **Website Archiving** - Mirror websites for offline viewing with link conversion
+- **System Cleanup** - Safe temporary file removal with age-based filtering
+- **Global Aliases** - Create command shortcuts accessible anywhere
+- **Workspace Management** - Configure and manage project directories
+
+## Usage
+
+```powershell
+# Show system information
+msc sys info
+
+# Real-time monitoring dashboard
+msc sys monitor
+
+# Download a video
+msc vget "https://www.youtube.com/watch?v=..."
+
+# Clean temporary files
+msc clean start
+```
+
+## Documentation
+
+For more information, see the [README](https://github.com/MarcossIC/msc/blob/main/README.md).
+]]></description>
+    <releaseNotes>https://github.com/MarcossIC/msc/releases/tag/v0.1.8</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

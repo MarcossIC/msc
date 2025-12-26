@@ -315,8 +315,86 @@ jobs:
           name: release-manifest
           path: release.json
 
-  update-packaging:
+  extract-metadata:
     needs: [create-tag, release]
+    if: success()
+    runs-on: windows-latest
+    outputs:
+      product_code: ${{ steps.extract.outputs.product_code }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: artifacts-*
+          path: artifacts/
+          merge-multiple: true
+
+      - name: List MSI files
+        shell: pwsh
+        run: |
+          Write-Host "📦 Looking for MSI files..."
+          Get-ChildItem -Path artifacts -Filter "*.msi" -Recurse | ForEach-Object {
+            Write-Host "  Found: $($_.Name) - $($_.Length / 1MB) MB"
+          }
+
+      - name: Extract ProductCode from MSI
+        id: extract
+        shell: pwsh
+        run: |
+          $VERSION = "${{ needs.create-tag.outputs.version }}"
+          $MSI_NAME = "msc-$VERSION-x86_64-pc-windows-msvc.msi"
+
+          Write-Host "🔍 Searching for MSI: $MSI_NAME"
+
+          # Find the MSI file
+          $msiFile = Get-ChildItem -Path artifacts -Filter $MSI_NAME -Recurse | Select-Object -First 1
+
+          if (-not $msiFile) {
+            Write-Host "❌ MSI file not found: $MSI_NAME" -ForegroundColor Red
+            Write-Host "Available files:"
+            Get-ChildItem -Path artifacts -Recurse
+            exit 1
+          }
+
+          Write-Host "✅ Found MSI: $($msiFile.FullName)"
+
+          # Extract ProductCode
+          try {
+            $installer = New-Object -ComObject WindowsInstaller.Installer
+            $database = $installer.GetType().InvokeMember(
+              "OpenDatabase",
+              "InvokeMethod",
+              $null,
+              $installer,
+              @($msiFile.FullName, 0)
+            )
+
+            $view = $database.GetType().InvokeMember(
+              "OpenView",
+              "InvokeMethod",
+              $null,
+              $database,
+              ("SELECT Value FROM Property WHERE Property='ProductCode'")
+            )
+
+            $view.GetType().InvokeMember("Execute", "InvokeMethod", $null, $view, $null)
+            $record = $view.GetType().InvokeMember("Fetch", "InvokeMethod", $null, $view, $null)
+            $productCode = $record.GetType().InvokeMember("StringData", "GetProperty", $null, $record, 1)
+
+            Write-Host "✅ ProductCode extracted: $productCode" -ForegroundColor Green
+
+            # Export to GitHub output
+            "product_code=$productCode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          } catch {
+            Write-Host "❌ Error extracting ProductCode: $_" -ForegroundColor Red
+            exit 1
+          }
+
+  update-packaging:
+    needs: [create-tag, release, extract-metadata]
     if: success()
     runs-on: ubuntu-latest
     permissions:
@@ -400,6 +478,11 @@ jobs:
           VERSION="${{ steps.release_info.outputs.version }}"
           TAG="${{ steps.release_info.outputs.tag }}"
           RELEASE_URL="${{ steps.release_info.outputs.release_url }}"
+          PRODUCT_CODE="${{ needs.extract-metadata.outputs.product_code }}"
+
+          echo "📋 Update info:"
+          echo "   Version: $VERSION"
+          echo "   ProductCode: $PRODUCT_CODE"
 
           if [ -f windows.sha256 ]; then
             SHA256_WIN=$(cat windows.sha256 | awk '{print $1}')
@@ -416,7 +499,10 @@ jobs:
           sed -i "s|InstallerUrl:.*|InstallerUrl: $RELEASE_URL/msc-$VERSION-x86_64-pc-windows-msvc.msi|" packaging/winget/MSC.installer.yaml
           sed -i "s/InstallerSha256:.*/InstallerSha256: $SHA256_WIN/" packaging/winget/MSC.installer.yaml
 
-          echo "✅ Updated winget manifests"
+          # Update ProductCode
+          sed -i "s/ProductCode: '{[^']*}'/ProductCode: '$PRODUCT_CODE'/" packaging/winget/MSC.installer.yaml
+
+          echo "✅ Updated winget manifests with ProductCode: $PRODUCT_CODE"
 
       - name: Update Homebrew formula
         run: |
@@ -443,6 +529,26 @@ jobs:
 
           echo "✅ Updated Homebrew formula"
 
+      - name: Update Chocolatey package
+        run: |
+          VERSION="${{ steps.release_info.outputs.version }}"
+          TAG="${{ steps.release_info.outputs.tag }}"
+
+          if [ -f windows.sha256 ]; then
+            SHA256_WIN=$(cat windows.sha256 | awk '{print $1}')
+          else
+            SHA256_WIN="CHECKSUM_PLACEHOLDER"
+          fi
+
+          # Update version in nuspec
+          sed -i "s|<version>.*</version>|<version>$VERSION</version>|" packaging/chocolatey/msc/msc.nuspec
+          sed -i "s|<releaseNotes>.*</releaseNotes>|<releaseNotes>https://github.com/MarcossIC/msc/releases/tag/$TAG</releaseNotes>|" packaging/chocolatey/msc/msc.nuspec
+
+          # Update checksum in chocolateyinstall.ps1
+          sed -i "s/\$checksum64 = '.*'/\$checksum64 = '$SHA256_WIN'/" packaging/chocolatey/msc/tools/chocolateyinstall.ps1
+
+          echo "✅ Updated Chocolatey package with checksum: $SHA256_WIN"
+
       - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
@@ -458,6 +564,7 @@ jobs:
             - Update AUR PKGBUILD with new version and checksums
             - Update winget manifests with new version and checksums
             - Update Homebrew formula with new version and checksums
+            - Update Chocolatey package with new version and checksums
 
             Auto-generated by release workflow"
 
@@ -466,7 +573,7 @@ jobs:
           fi
 
   cleanup:
-    needs: [create-tag, update-packaging]
+    needs: [create-tag, extract-metadata, update-packaging]
     if: always()
     runs-on: ubuntu-latest
     permissions:
