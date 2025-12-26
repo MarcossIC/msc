@@ -6,9 +6,6 @@ permissions:
 on:
   push:
     branches: [main]
-    paths:
-      - 'Cargo.toml'
-      - 'src/**'
   workflow_dispatch:
     inputs:
       force:
