@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, BarChart, Table},
 };
 
 // Assuming format_size is available in crate::ui::formatters or use humansize directly if needed.
@@ -22,6 +22,7 @@ fn format_size(bytes: u64) -> String {
 
 use super::app::MonitorApp;
 use super::widgets::{colored_gauge, temp_color};
+use crate::core::system_monitor::{DiskType, SmartStatus};
 
 /// Main render function
 pub fn render_ui(frame: &mut Frame, app: &MonitorApp) {
@@ -267,22 +268,40 @@ fn render_cpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
         // Left: Show per-core usage (with smoothed values)
         render_cpu_cores(frame, cpu_chunks[0], app);
 
-        // Right: CPU History sparkline (last 60 seconds of CPU usage)
+        // Right: CPU History bar chart (last 60 seconds of CPU usage)
         let history_data = app.history.cpu_as_u64();
         if !history_data.is_empty() && cpu_chunks[1].width > 4 {
-            let sparkline_block = Block::default()
-                .title("CPU History (60s)")
-                .borders(Borders::ALL);
-            let sparkline_inner = sparkline_block.inner(cpu_chunks[1]);
-            frame.render_widget(sparkline_block, cpu_chunks[1]);
+            // Calculate how many bars can fit
+            // Each bar needs: bar_width + bar_gap space
+            let inner_width = cpu_chunks[1].width.saturating_sub(2) as usize; // Subtract borders
+            let bar_width: u16 = 1;
+            let bar_gap: u16 = 1;
+            let space_per_bar = bar_width as usize + bar_gap as usize;
+            let max_bars = (inner_width / space_per_bar).min(history_data.len());
 
-            // Only render if we have enough space inside the block
-            if sparkline_inner.height > 0 && sparkline_inner.width > 2 {
-                let sparkline = Sparkline::default()
-                    .data(&history_data)
-                    .style(Style::default().fg(Color::Cyan))
-                    .max(100); // CPU usage is 0-100%
-                frame.render_widget(sparkline, sparkline_inner);
+            // Take the most recent data points
+            let start_idx = history_data.len().saturating_sub(max_bars);
+            let data_to_show: Vec<(&str, u64)> = history_data[start_idx..]
+                .iter()
+                .map(|&val| ("", val))
+                .collect();
+
+            if !data_to_show.is_empty() {
+                let chart = BarChart::default()
+                    .block(
+                        Block::default()
+                            .title("CPU History (60s)")
+                            .borders(Borders::ALL),
+                    )
+                    .direction(Direction::Vertical)
+                    .bar_width(bar_width)
+                    .bar_gap(bar_gap)
+                    .bar_style(Style::default().fg(Color::Cyan))
+                    .value_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+                    .data(&data_to_show)
+                    .max(1000); // CPU usage is 0-100% scaled by 10 (0-1000)
+
+                frame.render_widget(chart, cpu_chunks[1]);
             }
         }
     }
@@ -572,46 +591,153 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
         frame.render_widget(no_data, net_inner);
     }
 
-    // Disks
+    // Disks - Enhanced display with SMART data
     let disk_block = Block::default()
-        .title(" Disks ")
+        .title(" Storage Devices ")
         .borders(Borders::ALL)
         .border_style(border_style);
     let disk_inner = disk_block.inner(chunks[1]);
     frame.render_widget(disk_block, chunks[1]);
 
-    let disk_rows: Vec<Row> = app
-        .metrics
-        .disks
-        .iter()
-        .take(3)
-        .map(|disk| {
-            Row::new(vec![
-                Cell::from(disk.mount_point.clone()),
-                Cell::from(format!("{:.1}%", disk.usage_percent)),
-                Cell::from(format!(
-                    "{}/{}",
-                    format_size(disk.total_bytes - disk.available_bytes),
-                    format_size(disk.total_bytes)
-                )),
-            ])
-        })
-        .collect();
-
-    if !disk_rows.is_empty() {
-        let disk_table = Table::new(
-            disk_rows,
-            [
-                Constraint::Percentage(40),
-                Constraint::Percentage(20),
-                Constraint::Percentage(40),
-            ],
-        );
-        frame.render_widget(disk_table, disk_inner);
-    } else {
+    if app.metrics.disks.is_empty() {
         let no_data = Paragraph::new("No disks detected")
             .style(Style::default().fg(Color::DarkGray));
         frame.render_widget(no_data, disk_inner);
+    } else {
+        // Render up to 3 disks with detailed information
+        let available_height = disk_inner.height;
+        let lines_per_disk = 3; // Each disk takes 3 lines
+        let max_disks = ((available_height / lines_per_disk) as usize).min(3);
+
+        let mut disk_lines = Vec::new();
+
+        for (idx, disk) in app.metrics.disks.iter().take(max_disks).enumerate() {
+            // Line 1: Mount point, Type icon, SMART status icon, Temperature
+            let type_icon = match disk.disk_type.as_ref() {
+                Some(DiskType::NVMe) => "⚡",
+                Some(DiskType::SSD) => "💿",
+                Some(DiskType::HDD) => "💾",
+                _ => "📀",
+            };
+
+            let smart_icon = match disk.smart_status.as_ref() {
+                Some(SmartStatus::Healthy) => Span::styled("✓", Style::default().fg(Color::Green)),
+                Some(SmartStatus::Warning) => Span::styled("⚠", Style::default().fg(Color::Yellow)),
+                Some(SmartStatus::Critical) => Span::styled("✗", Style::default().fg(Color::Red)),
+                _ => Span::styled("?", Style::default().fg(Color::DarkGray)),
+            };
+
+            let temp_text = if let Some(temp) = disk.temperature_celsius {
+                let temp_color = if temp > 60 {
+                    Color::Red
+                } else if temp > 45 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                };
+                Span::styled(format!(" {}°C", temp), Style::default().fg(temp_color))
+            } else {
+                Span::raw("")
+            };
+
+            let line1 = Line::from(vec![
+                Span::raw(format!("{} ", type_icon)),
+                Span::styled(
+                    disk.mount_point.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                smart_icon,
+                temp_text,
+            ]);
+
+            // Line 2: Manufacturer/Model + Interface speed
+            let model_text = match (&disk.manufacturer, &disk.model) {
+                (Some(mfr), Some(model)) => format!("{} {}", mfr, model),
+                (Some(mfr), None) => mfr.clone(),
+                (None, Some(model)) => model.clone(),
+                (None, None) => disk.fs_type.clone(),
+            };
+
+            let interface_text = if let Some(ref interface) = disk.interface_speed {
+                format!(" • {}", interface)
+            } else {
+                String::new()
+            };
+
+            let line2 = Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    model_text,
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(interface_text, Style::default().fg(Color::Cyan)),
+            ]);
+
+            // Line 3: Usage bar + size + power-on hours
+            let used = disk.total_bytes - disk.available_bytes;
+            let usage_pct = disk.usage_percent;
+
+            let bar_width = disk_inner.width.saturating_sub(40).max(10) as usize;
+            let filled = ((bar_width as f32 * usage_pct / 100.0) as usize).min(bar_width);
+            let empty = bar_width.saturating_sub(filled);
+
+            let bar_color = if usage_pct > 90.0 {
+                Color::Red
+            } else if usage_pct > 75.0 {
+                Color::Yellow
+            } else {
+                Color::Green
+            };
+
+            let mut bar_spans = vec![Span::raw("  [")];
+            if filled > 0 {
+                bar_spans.push(Span::styled(
+                    "█".repeat(filled),
+                    Style::default().fg(bar_color),
+                ));
+            }
+            if empty > 0 {
+                bar_spans.push(Span::styled(
+                    "░".repeat(empty),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            bar_spans.push(Span::raw("] "));
+            bar_spans.push(Span::styled(
+                format!("{:.1}% ", usage_pct),
+                Style::default().fg(bar_color).add_modifier(Modifier::BOLD),
+            ));
+            bar_spans.push(Span::raw(format!(
+                "{}/{}",
+                format_size(used),
+                format_size(disk.total_bytes)
+            )));
+
+            if let Some(hours) = disk.power_on_hours {
+                let days = hours / 24;
+                bar_spans.push(Span::styled(
+                    format!(" • {}d", days),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+
+            let line3 = Line::from(bar_spans);
+
+            disk_lines.push(line1);
+            disk_lines.push(line2);
+            disk_lines.push(line3);
+
+            // Add separator between disks (except after last one)
+            if idx < max_disks - 1 && idx < app.metrics.disks.len() - 1 {
+                disk_lines.push(Line::from(""));
+            }
+        }
+
+        let disk_paragraph = Paragraph::new(disk_lines);
+        frame.render_widget(disk_paragraph, disk_inner);
     }
 }
 

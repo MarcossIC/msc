@@ -18,6 +18,8 @@ struct DownloadConfig<'a> {
     no_playlist: bool,
     playlist: bool,
     no_continue: bool,
+    cookies_browser: Option<&'a str>,
+    cookies_file: Option<&'a str>,
 }
 
 pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
@@ -33,6 +35,8 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     let playlist = matches.get_flag("playlist");
     let no_continue = matches.get_flag("no-continue");
     let clean_parts = matches.get_flag("clean-parts");
+    let cookies_browser = get("cb");
+    let cookies_file = get("cookies");
 
     // 2. Validar URL con validación mejorada
     validation::validate_url(url).with_context(|| format!("URL inválida: {}", url))?;
@@ -67,6 +71,8 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
         no_playlist,
         playlist,
         no_continue,
+        cookies_browser,
+        cookies_file,
     };
     execute_download(&config)?;
 
@@ -284,6 +290,20 @@ fn execute_download(config: &DownloadConfig) -> Result<()> {
         cmd.arg("--no-playlist");
     } else if config.playlist {
         cmd.arg("--yes-playlist");
+    }
+
+    // Configurar cookies del navegador
+    if let Some(browser) = config.cookies_browser {
+        cmd.arg("--cookies-from-browser").arg(browser);
+        println!("{} {}", "🍪 Usando cookies de:".cyan(), browser);
+    }
+
+    // Configurar archivo de cookies
+    if let Some(file) = config.cookies_file {
+        // Prevenir que yt-dlp intente leer cookies del navegador automáticamente
+        cmd.arg("--no-cookies-from-browser");
+        cmd.arg("--cookies").arg(file);
+        println!("{} {}", "🍪 Usando archivo de cookies:".cyan(), file);
     }
 
     // Agregar URL

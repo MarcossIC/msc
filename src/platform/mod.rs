@@ -4,6 +4,7 @@ pub mod elevation;
 pub mod fs;
 pub mod gpu;
 pub mod temp_dirs;
+pub mod system;
 
 #[cfg(windows)]
 pub mod system_info_windows;

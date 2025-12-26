@@ -1,0 +1,44 @@
+PackageIdentifier: Marco.MSC
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Marco
+PublisherUrl: https://github.com/YOUR_USERNAME
+PublisherSupportUrl: https://github.com/YOUR_USERNAME/msc/issues
+PackageName: MSC
+PackageUrl: https://github.com/YOUR_USERNAME/msc
+License: MIT
+LicenseUrl: https://github.com/YOUR_USERNAME/msc/blob/main/LICENSE
+ShortDescription: Multi-purpose CLI tool for system monitoring, media management, and productivity
+Description: |-
+  MSC is a comprehensive command-line interface tool that combines system monitoring,
+  media management, website archiving, and productivity utilities in a single application.
+
+  Features:
+  - Real-time system monitoring with TUI dashboard (CPU, GPU, RAM, Network, Storage)
+  - Video downloading from 1000+ platforms via yt-dlp integration
+  - Website archiving for offline viewing with wget
+  - Safe system cleanup utilities with age-based filtering
+  - Global command aliases for productivity
+  - Hardware information display with detailed specifications
+  - Cross-platform support (Windows, Linux, macOS)
+  - GPU monitoring for NVIDIA and AMD graphics cards
+  - Battery and power management information
+  - Network interface monitoring
+Moniker: msc
+Tags:
+  - cli
+  - system-monitor
+  - video-downloader
+  - productivity
+  - rust
+  - system-information
+  - tui
+  - hardware-monitoring
+  - wget
+  - yt-dlp
+  - ffmpeg
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
+
+# INSTRUCTIONS FOR COMPLETION:
+# Replace YOUR_USERNAME with your actual GitHub username

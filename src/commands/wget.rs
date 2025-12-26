@@ -1,7 +1,7 @@
 use crate::core::wget::{
     calculate_local_path_for_url, create_cookie_file, debug_database_info, extract_cookies_from_db,
-    find_browser_cookie_db, format_cookies, process_html_file_complete, resolve_cookie_path,
-    WgetManager,
+    extract_cookies_with_cdp, find_browser_cookie_db, format_cookies, process_html_file_complete,
+    resolve_cookie_path, WgetManager,
 };
 use crate::core::{validation, Config};
 use anyhow::{anyhow, Context, Result};
@@ -107,6 +107,8 @@ pub fn execute_cookies(matches: &clap::ArgMatches) -> Result<()> {
 
     let output_file = matches.get_one::<String>("output");
     let debug_mode = matches.get_flag("debug");
+    let use_cdp = matches.get_flag("cdp");
+    let auto_launch = matches.get_flag("auto-launch");
 
     // 2. Parse URL to get domain
     let url = Url::parse(url_str).context("URL inválida")?;
@@ -136,9 +138,22 @@ pub fn execute_cookies(matches: &clap::ArgMatches) -> Result<()> {
         return Ok(());
     }
 
-    // 4. Extract cookies from database
+    // 4. Extract cookies (with CDP support for Chrome 127+)
     println!("{}", "⟳ Extrayendo cookies...".cyan());
-    let cookies = extract_cookies_from_db(&cookie_db_path, domain)?;
+
+    let cookies = if use_cdp || auto_launch {
+        // Use async runtime for CDP extraction
+        tokio::runtime::Runtime::new()?
+            .block_on(extract_cookies_with_cdp(
+                domain,
+                &cookie_db_path,
+                use_cdp,
+                auto_launch,
+            ))?
+    } else {
+        // Standard sync extraction
+        extract_cookies_from_db(&cookie_db_path, domain)?
+    };
 
     if cookies.is_empty() {
         println!();

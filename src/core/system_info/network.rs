@@ -2,12 +2,12 @@ use crate::core::system_info::types::NetworkInfo;
 use crate::error::Result;
 
 #[cfg(windows)]
-use crate::platform::system_info_windows;
+use crate::platform::system::windows::network::get_network_info;
 
 pub fn collect() -> Result<NetworkInfo> {
     #[cfg(windows)]
     {
-        system_info_windows::get_network_info()
+        get_network_info()
     }
 
     #[cfg(not(windows))]

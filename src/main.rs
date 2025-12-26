@@ -61,6 +61,10 @@ fn main() -> Result<()> {
             _ => commands::wget::execute(sub_matches),
         },
         Some(("sys", sub_matches)) => commands::sys::execute(sub_matches),
+        Some(("completions", sub_matches)) => {
+            let mut cli = build_cli();
+            commands::completions::execute(sub_matches, &mut cli)
+        }
         _ => {
             println!("Welcome to MSC CLI!");
             println!("Use 'msc --help' for more information.");
@@ -479,7 +483,8 @@ fn build_cli() -> Command {
                     • Auto-installs yt-dlp if not present\n\
                     • Resumes interrupted downloads automatically\n\
                     • Supports playlists and multiple formats\n\
-                    • Downloads to configured video directory\n\n\
+                    • Downloads to configured video directory\n\
+                    • Import browser cookies for authenticated content\n\n\
                     EXAMPLES:\n\
                     msc vget \"https://youtube.com/watch?v=...\"          # Basic download\n\
                     msc vget \"https://vimeo.com/123456789\"              # Download from Vimeo\n\
@@ -488,7 +493,9 @@ fn build_cli() -> Command {
                     msc vget \"URL\" --audio-only                         # Audio only\n\
                     msc vget \"URL\" --playlist                           # Download playlist\n\
                     msc vget \"URL\" --no-continue                        # Force download from scratch\n\
-                    msc vget \"URL\" --clean-parts                        # Clean .part files first"
+                    msc vget \"URL\" --clean-parts                        # Clean .part files first\n\
+                    msc vget \"URL\" --cb                                 # Use Chrome cookies\n\
+                    msc vget \"URL\" --cb firefox                         # Use Firefox cookies"
                 )
                 .arg(
                     Arg::new("url")
@@ -551,6 +558,43 @@ fn build_cli() -> Command {
                         .long("clean-parts")
                         .help("Clean orphaned .part files before downloading")
                         .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    Arg::new("cb")
+                        .long("cb")
+                        .value_name("BROWSER")
+                        .help("Use cookies from browser (firefox, chrome, edge, safari, brave)")
+                        .long_help(
+                            "Import cookies from your browser to access authenticated or age-restricted content.\n\n\
+                            SUPPORTED BROWSERS:\n\
+                            • chrome:Default  - Google Chrome (default if no value specified)\n\
+                            • firefox - Mozilla Firefox\n\
+                            • edge    - Microsoft Edge\n\
+                            • safari  - Safari (macOS)\n\
+                            • brave   - Brave Browser\n\n\
+                            EXAMPLES:\n\
+                            msc vget URL --cb              # Use Chrome cookies (default)\n\
+                            msc vget URL --cb firefox      # Use Firefox cookies\n\
+                            msc vget URL --cb brave        # Use Brave cookies\n\n\
+                            NOTE: You must be logged in to the site in your browser first."
+                        )
+                        .num_args(0..=1)
+                        .default_missing_value("chrome:Default")
+                        .value_parser(["firefox", "chrome:Default", "edge", "safari", "brave"]),
+                )
+                .arg(
+                    Arg::new("cookies")
+                        .long("cookies")
+                        .visible_alias("co")
+                        .value_name("FILE")
+                        .help("Load cookies from a file (Netscape format)")
+                        .long_help(
+                            "Load cookies from a local file in Netscape format.\n\
+                            This is useful if you have exported cookies to a file (e.g., cookies.txt).\n\n\
+                            EXAMPLES:\n\
+                            msc vget URL --cookies cookies.txt\n\
+                            msc vget URL --co /path/to/cookies.txt"
+                        ),
                 ),
         )
         .subcommand(
@@ -800,6 +844,39 @@ fn build_cli() -> Command {
                                 .long("debug")
                                 .help("Show database schema and sample data for debugging")
                                 .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("cdp")
+                                .long("cdp")
+                                .help("Use Chrome DevTools Protocol (bypasses App-Bound Encryption for Chrome 127+)")
+                                .long_help(
+                                    "Force extraction via Chrome DevTools Protocol.\n\n\
+                                    Requires Chrome running with: chrome.exe --remote-debugging-port=9222\n\n\
+                                    ADVANTAGES:\n\
+                                    • Works with Chrome 127+ App-Bound Encryption\n\
+                                    • Gets cookies from memory (more recent)\n\
+                                    • No registry modifications needed\n\n\
+                                    EXAMPLE:\n\
+                                    chrome.exe --remote-debugging-port=9222\n\
+                                    msc wget cookies https://instagram.com --cdp"
+                                )
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("auto-launch")
+                                .long("auto-launch")
+                                .help("Automatically launch Chrome with CDP if not running")
+                                .long_help(
+                                    "Automatically start Chrome with DevTools Protocol enabled if not already running.\n\n\
+                                    This will:\n\
+                                    1. Check if Chrome is running with CDP (port 9222)\n\
+                                    2. If not, launch Chrome with --remote-debugging-port=9222\n\
+                                    3. Extract cookies via CDP\n\
+                                    4. Close Chrome when done (if we started it)\n\n\
+                                    EXAMPLE:\n\
+                                    msc wget cookies https://github.com --auto-launch"
+                                )
+                                .action(clap::ArgAction::SetTrue),
                         ),
                 )
                 .subcommand(
@@ -986,5 +1063,17 @@ fn build_cli() -> Command {
                                 .action(clap::ArgAction::SetTrue),
                         )
                 )
+        )
+        .subcommand(
+            Command::new("completions")
+                .about("Generate shell completions")
+                .hide(true)  // Hidden from help menu
+                .arg(
+                    Arg::new("shell")
+                        .help("Shell type")
+                        .required(true)
+                        .value_parser(["bash", "zsh", "fish", "powershell", "elvish"])
+                        .index(1),
+                ),
         )
 }

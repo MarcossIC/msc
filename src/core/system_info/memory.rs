@@ -4,7 +4,9 @@ use crate::error::Result;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 #[cfg(windows)]
-use crate::platform::system_info_windows;
+use crate::platform::system::windows::mbo::get_motherboard_info;
+use crate::platform::system::windows::ram::get_memory_details;
+
 
 pub fn collect() -> Result<MemoryInfo> {
     let refresh = RefreshKind::nothing()
@@ -30,7 +32,7 @@ pub fn collect() -> Result<MemoryInfo> {
 
     // Get detailed info from platform-specific code
     #[cfg(windows)]
-    let memory_details = system_info_windows::get_memory_details().unwrap_or_default();
+    let memory_details = get_memory_details().unwrap_or_default();
     let (ddr_type, speed_mhz, modules, total_slots, used_slots, max_capacity) = (
         memory_details.ddr_type,
         memory_details.speed_mhz,
@@ -46,7 +48,7 @@ pub fn collect() -> Result<MemoryInfo> {
 
     // Get motherboard model for chipset detection
     #[cfg(windows)]
-    let motherboard_model = system_info_windows::get_motherboard_info()
+    let motherboard_model = get_motherboard_info()
         .ok()
         .and_then(|mb| mb.product);
 

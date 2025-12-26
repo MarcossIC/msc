@@ -5,6 +5,7 @@
 
 pub mod alerts;
 mod collector;
+pub mod disk_enrichment;
 mod gpu;
 mod history;
 mod metrics;
@@ -20,8 +21,9 @@ pub use collector::{
 pub use gpu::GpuProvider;
 pub use history::MetricsHistory;
 pub use metrics::{
-    CpuMetrics, DiskMetrics, GlobalMetrics, GpuMetrics, GpuVendor, MemoryMetrics, NetworkMetrics,
-    PowerSource, ProcessMetrics, SystemMetrics, TemperatureReading,
+    BusType, CpuMetrics, DiskMetrics, DiskType, GlobalMetrics, GpuMetrics, GpuVendor,
+    InterfaceSpeed, MemoryMetrics, NetworkMetrics, PowerSource, ProcessMetrics, SmartStatus,
+    SystemMetrics, TemperatureReading,
 };
 pub use process_tree::{
     build_process_tree, flatten_tree, format_tree_indent, FlattenedProcess, ProcessTreeNode,

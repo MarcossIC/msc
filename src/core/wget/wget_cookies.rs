@@ -7,6 +7,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use url::Url;
 
+use super::chrome_decrypt::ChromeDecryptor;
+use super::chrome_manager::ChromeManager;
+// use super::cdp_cookies;
+// use super::chrome_launcher::ChromeInstance;
+
 /// Cookie structure for extraction
 #[derive(Debug, Clone)]
 pub struct Cookie {
@@ -16,6 +21,8 @@ pub struct Cookie {
     pub path: String,
     pub expires: i64,
     pub secure: bool,
+    pub http_only: bool,
+    pub same_site: String,
 }
 
 /// Create a cookie file in Netscape format from a cookie string
@@ -246,8 +253,67 @@ pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cooki
 
     let mut cookies = Vec::new();
 
+    // Detect if this is a Chromium-based browser (needs decryption)
+    let is_chromium = db_path
+        .to_str()
+        .map(|s| {
+            let s_lower = s.to_lowercase();
+            s_lower.contains("chrome")
+                || s_lower.contains("edge")
+                || s_lower.contains("brave")
+                || s_lower.contains("chromium")
+        })
+        .unwrap_or(false);
+
+    // Initialize decryptor for Chromium browsers
+    let decryptor = if is_chromium {
+        // Try to detect browser name from path
+        let browser_name = db_path
+            .to_str()
+            .and_then(|s| {
+                let s_lower = s.to_lowercase();
+                if s_lower.contains("edge") {
+                    Some("edge")
+                } else if s_lower.contains("brave") {
+                    Some("brave")
+                } else if s_lower.contains("chromium") {
+                    Some("chromium")
+                } else if s_lower.contains("chrome") {
+                    Some("chrome")
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("chrome");
+
+        match ChromeDecryptor::new(browser_name) {
+            Ok(dec) => Some(dec),
+            Err(e) => {
+                // Check for App-Bound Encryption (Chrome 127+)
+                if e.to_string().contains("App-Bound") {
+                    return Err(anyhow!(
+                        "Chrome 127+ detectado con 'App-Bound Encryption'.\n\
+                        Esta versión de Chrome requiere permisos especiales de sistema para desencriptar cookies via archivo.\n\n\
+                        SOLUCIÓN:\n\
+                        Usa el flag --auto-launch para extraer las cookies via Protocolo de Chrome (CDP).\n\n\
+                        IMPORTANTE:\n\
+                        Debes cerrar TODAS las ventanas de Chrome antes de ejecutar el comando con --auto-launch.\n\n\
+                        Ejemplo:\n\
+                        msc wget cookies google.com --auto-launch"
+                    ));
+                }
+
+                eprintln!("⚠️  No se pudo inicializar desencriptación: {}", e);
+                eprintln!("   Se intentará extraer cookies sin desencriptar (solo funcionará para cookies muy antiguas).");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Try Chrome/Edge/Brave schema first
-    let chrome_query = "SELECT name, value, host_key, path, expires_utc, is_secure FROM cookies WHERE host_key LIKE ?1 OR host_key LIKE ?2 OR host_key = ?3";
+    let chrome_query = "SELECT name, value, encrypted_value, host_key, path, expires_utc, is_secure, is_httponly, samesite FROM cookies WHERE host_key LIKE ?1 OR host_key LIKE ?2 OR host_key = ?3";
 
     // Patterns for matching domains:
     // 1. .domain.com (subdomain wildcard)
@@ -268,23 +334,47 @@ pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cooki
                 &www_domain_pattern,
             ],
             |row| {
-                Ok(Cookie {
-                    name: row.get(0)?,
-                    value: row.get(1)?,
-                    domain: row.get(2)?,
-                    path: row.get(3)?,
-                    expires: row.get(4)?,
-                    secure: row.get::<_, i64>(5)? != 0,
-                })
+                // Extract all fields as raw values
+                Ok((
+                    row.get::<_, String>(0)?,     // name
+                    row.get::<_, String>(1)?,     // value
+                    row.get::<_, Vec<u8>>(2)?,    // encrypted_value
+                    row.get::<_, String>(3)?,     // host_key (domain)
+                    row.get::<_, String>(4)?,     // path
+                    row.get::<_, i64>(5)?,        // expires_utc
+                    row.get::<_, i64>(6)? != 0,   // is_secure
+                    row.get::<_, i64>(7)? != 0,   // is_httponly
+                    row.get::<_, i64>(8)?,        // samesite
+                ))
             },
         )?;
 
-        for cookie in cookie_iter.flatten() {
-            cookies.push(cookie);
+        // Process cookies with decryption
+        for (name, value, encrypted_value, domain, path, expires, secure, http_only, same_site_int) in cookie_iter.flatten() {
+            let final_value = match resolve_cookie_value(
+                &name,
+                value,
+                encrypted_value,
+                &decryptor,
+            ) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            cookies.push(Cookie {
+                name,
+                value: final_value,
+                domain,
+                path,
+                expires,
+                secure,
+                http_only,
+                same_site: same_site_from_int(same_site_int).to_string(),
+            });
         }
     } else {
         // Try Firefox schema - match .domain.com, domain.com, or www.domain.com
-        let firefox_query = "SELECT name, value, host, path, expiry, isSecure FROM moz_cookies WHERE host = ?1 OR host = ?2 OR host = ?3";
+        let firefox_query = "SELECT name, value, host, path, expiry, isSecure, COALESCE(isHttpOnly, 0), COALESCE(sameSite, -1) FROM moz_cookies WHERE host = ?1 OR host = ?2 OR host = ?3";
 
         if let Ok(mut stmt) = conn.prepare(firefox_query) {
             let cookie_iter = stmt.query_map(
@@ -294,6 +384,18 @@ pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cooki
                     &www_domain_pattern,
                 ],
                 |row| {
+                    let http_only = row.get::<_, i64>(6)? != 0;
+                    let same_site_int = row.get::<_, i64>(7)?;
+
+                    let same_site = match same_site_int {
+                        0 => "None",
+                        1 => "Lax",
+                        2 => "Strict",
+                        -1 => "Unspecified", // COALESCE default
+                        _ => "Unspecified",
+                    }
+                    .to_string();
+
                     Ok(Cookie {
                         name: row.get(0)?,
                         value: row.get(1)?,
@@ -301,6 +403,8 @@ pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cooki
                         path: row.get(3)?,
                         expires: row.get(4)?,
                         secure: row.get::<_, i64>(5)? != 0,
+                        http_only,
+                        same_site,
                     })
                 },
             )?;
@@ -351,69 +455,101 @@ pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cooki
     Ok(cookies)
 }
 
-/// Format cookies in different formats
-pub fn format_cookies(cookies: &[Cookie], format: &str, _domain: &str) -> Result<String> {
-    match format.to_lowercase().as_str() {
-        "wget" => {
-            // Format: name1=value1; name2=value2
-            let cookie_pairs: Vec<String> = cookies
-                .iter()
-                .map(|c| format!("{}={}", c.name, c.value))
-                .collect();
-            Ok(cookie_pairs.join("; "))
-        }
-        "json" => {
-            // Format as JSON array
-            let json = serde_json::to_string_pretty(
-                &cookies
-                    .iter()
-                    .map(|c| {
-                        serde_json::json!({
-                            "name": c.name,
-                            "value": c.value,
-                            "domain": c.domain,
-                            "path": c.path,
-                            "expires": c.expires,
-                            "secure": c.secure,
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-            )?;
-            Ok(json)
-        }
-        "netscape" => {
-            // Netscape cookie file format
-            let mut output = String::new();
-            output.push_str("# Netscape HTTP Cookie File\n");
-            output.push_str("# This file was generated by msc\n\n");
 
-            for cookie in cookies {
-                let secure_flag = if cookie.secure { "TRUE" } else { "FALSE" };
-                let domain_flag = if cookie.domain.starts_with('.') {
-                    "TRUE"
-                } else {
-                    "FALSE"
-                };
-
-                output.push_str(&format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                    cookie.domain,
-                    domain_flag,
-                    cookie.path,
-                    secure_flag,
-                    cookie.expires,
-                    cookie.name,
-                    cookie.value
-                ));
-            }
-
-            Ok(output)
-        }
-        _ => Err(anyhow!(
-            "Formato no soportado: {}. Usa: wget, json, netscape",
-            format
-        )),
+fn same_site_from_int(value: i64) -> &'static str {
+    match value {
+        0 => "None",
+        1 => "Lax",
+        2 => "Strict",
+        _ => "Unspecified",
     }
+}
+
+fn resolve_cookie_value(
+    name: &str,
+    value: String,
+    encrypted_value: Vec<u8>,
+    decryptor: &Option<ChromeDecryptor>,
+) -> Option<String> {
+    if !value.is_empty() {
+        return Some(value);
+    }
+
+    if encrypted_value.is_empty() {
+        return None;
+    }
+
+    let decryptor = decryptor.as_ref()?;
+
+    match decryptor.decrypt_cookie_value(&encrypted_value) {
+        Ok(decrypted) => Some(decrypted),
+        Err(e) => {
+            eprintln!("⚠️  Cookie '{}': {}", name, e);
+            None
+        }
+    }
+}
+
+/// Extract cookies with intelligent multi-strategy approach
+///
+/// This is the NEW smart extraction function that replaces the old CDP logic.
+/// It uses ChromeManager for intelligent fallback and better error handling.
+///
+/// # Strategy (Automatic Fallback)
+/// 1. Detect Chrome state (running with/without CDP, or not running)
+/// 2. Choose best extraction strategy based on flags and state
+/// 3. Execute with automatic fallback to alternative methods
+/// 4. Provide clear, actionable error messages on failure
+///
+/// # Arguments
+/// * `domain` - Domain to extract cookies from
+/// * `db_path` - Path to browser cookie database
+/// * `use_cdp` - Force CDP usage (--cdp flag)
+/// * `auto_launch` - Launch Chrome with CDP if needed (--auto-launch flag)
+///
+/// # Returns
+/// * `Ok(Vec<Cookie>)` - Extracted cookies
+/// * `Err(...)` - All strategies failed with helpful error message
+pub async fn extract_cookies_with_cdp(
+    domain: &str,
+    db_path: &Path,
+    use_cdp: bool,
+    auto_launch: bool,
+) -> Result<Vec<Cookie>> {
+    let path = db_path
+        .to_string_lossy()
+        .to_lowercase();
+
+    let browser_type = if path.contains("edge") {
+        "edge"
+    } else if path.contains("brave") {
+        "brave"
+    } else if path.contains("chrome") {
+        "chrome"
+    } else {
+        // Non-Chromium browser (e.g. Firefox)
+        return extract_cookies_from_db(db_path, domain);
+    };
+
+    // Use the new ChromeManager for intelligent extraction
+    let manager = ChromeManager::new(browser_type, db_path.to_path_buf());
+    manager
+        .extract_cookies_smart(domain, use_cdp, auto_launch)
+        .await
+}
+
+/// Format cookies in different formats
+///
+/// This function delegates to the cookie_formats module for actual formatting.
+/// Maintained for backward compatibility.
+///
+/// # Arguments
+/// * `cookies` - Cookie array to format
+/// * `format` - Output format: "wget", "netscape", or "json"
+/// * `_domain` - Unused (kept for backward compatibility)
+pub fn format_cookies(cookies: &[Cookie], format: &str, _domain: &str) -> Result<String> {
+    // Delegate to cookie_formats module
+    super::cookie_formats::format_cookies(cookies, format)
 }
 
 /// Debug database information - shows schema and sample data

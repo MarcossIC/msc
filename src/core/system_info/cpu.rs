@@ -3,7 +3,7 @@ use crate::error::Result;
 use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 #[cfg(windows)]
-use crate::platform::system_info_windows;
+use crate::platform::system::windows::cpu::{get_cpu_details,detect_amd_topology,detect_cpu_instruction_sets};
 
 pub fn collect() -> Result<CpuInfo> {
     let refresh = RefreshKind::nothing().with_cpu(CpuRefreshKind::everything());
@@ -41,10 +41,10 @@ pub fn collect() -> Result<CpuInfo> {
         instruction_sets,
         amd_topology,
     ) = {
-        let details = system_info_windows::get_cpu_details().ok();
-        let instruction_sets = system_info_windows::detect_cpu_instruction_sets();
+        let details = get_cpu_details().ok();
+        let instruction_sets = detect_cpu_instruction_sets();
         let amd_topology =
-            system_info_windows::detect_amd_topology(first_cpu.brand(), physical_cores);
+            detect_amd_topology(first_cpu.brand(), physical_cores);
 
         (
             details.as_ref().and_then(|d| d.max_frequency_mhz),

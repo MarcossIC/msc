@@ -1,0 +1,85 @@
+# Maintainer: Marco <your-email@example.com>
+pkgname=msc-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Multi-purpose CLI tool for system monitoring, media management, and productivity"
+arch=('x86_64' 'aarch64')
+url="https://github.com/YOUR_USERNAME/msc"
+license=('MIT')
+provides=('msc')
+conflicts=('msc')
+depends=()
+optdepends=(
+    'yt-dlp: For video downloading functionality'
+    'ffmpeg: For video editing and processing'
+    'wget: For website archiving'
+)
+
+source_x86_64=("https://github.com/YOUR_USERNAME/msc/releases/download/v${pkgver}/msc-x86_64-unknown-linux-gnu.tar.xz")
+source_aarch64=("https://github.com/YOUR_USERNAME/msc/releases/download/v${pkgver}/msc-aarch64-unknown-linux-gnu.tar.xz")
+
+sha256sums_x86_64=('REPLACE_WITH_SHA256_X86_64_LINUX')
+sha256sums_aarch64=('REPLACE_WITH_SHA256_ARM64_LINUX')
+
+package() {
+    # Install binary
+    install -Dm755 msc "$pkgdir/usr/bin/msc"
+
+    # Install license
+    if [ -f LICENSE ]; then
+        install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    fi
+
+    # Install documentation
+    if [ -f README.md ]; then
+        install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    fi
+
+    # Optional: Install shell completions if they exist
+    # if [ -f completions/msc.bash ]; then
+    #     install -Dm644 completions/msc.bash "$pkgdir/usr/share/bash-completion/completions/msc"
+    # fi
+    # if [ -f completions/_msc ]; then
+    #     install -Dm644 completions/_msc "$pkgdir/usr/share/zsh/site-functions/_msc"
+    # fi
+    # if [ -f completions/msc.fish ]; then
+    #     install -Dm644 completions/msc.fish "$pkgdir/usr/share/fish/vendor_completions.d/msc.fish"
+    # fi
+}
+
+# INSTRUCTIONS FOR COMPLETION:
+#
+# 1. Replace YOUR_USERNAME with your GitHub username
+# 2. Replace your-email@example.com with your actual email
+#
+# 3. After creating release v0.1.0, get SHA256 hashes from:
+#    https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/sha256.sum
+#
+#    Or download individual .sha256 files:
+#    - msc-x86_64-unknown-linux-gnu.tar.xz.sha256
+#    - msc-aarch64-unknown-linux-gnu.tar.xz.sha256
+#
+# 4. To publish to AUR:
+#    a. Create an AUR account at https://aur.archlinux.org
+#    b. Set up SSH keys for AUR
+#    c. Clone the AUR repository:
+#       git clone ssh://aur@aur.archlinux.org/msc-bin.git
+#    d. Copy this PKGBUILD to the cloned directory
+#    e. Generate .SRCINFO:
+#       makepkg --printsrcinfo > .SRCINFO
+#    f. Commit and push:
+#       git add PKGBUILD .SRCINFO
+#       git commit -m "Initial commit: msc-bin 0.1.0"
+#       git push
+#
+# 5. Users can then install with:
+#    yay -S msc-bin
+#    # or
+#    paru -S msc-bin
+#
+# 6. For updates:
+#    - Update pkgver
+#    - Update pkgrel (set to 1 for new version)
+#    - Update SHA256 hashes
+#    - Regenerate .SRCINFO
+#    - Commit and push

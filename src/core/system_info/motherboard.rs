@@ -2,12 +2,12 @@ use crate::core::system_info::types::MotherboardInfo;
 use crate::error::Result;
 
 #[cfg(windows)]
-use crate::platform::system_info_windows;
+use crate::platform::system::windows::mbo::get_motherboard_info;
 
 pub fn collect() -> Result<MotherboardInfo> {
     #[cfg(windows)]
     {
-        system_info_windows::get_motherboard_info()
+        get_motherboard_info()
     }
 
     #[cfg(not(windows))]

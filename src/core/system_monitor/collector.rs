@@ -131,6 +131,8 @@ pub fn collect_disks(disks: &Disks) -> Vec<DiskMetrics> {
                 },
                 read_bytes_per_sec: None, // Requires separate tracking
                 write_bytes_per_sec: None,
+                // Extended fields will be populated by enrichment
+                ..Default::default()
             }
         })
         .collect()

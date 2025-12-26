@@ -82,6 +82,7 @@ pub enum GpuVendor {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DiskMetrics {
+    // Basic metrics (existing fields)
     pub name: String,
     pub mount_point: String,
     pub fs_type: String,
@@ -90,7 +91,32 @@ pub struct DiskMetrics {
     pub usage_percent: f32,
     pub read_bytes_per_sec: Option<u64>,
     pub write_bytes_per_sec: Option<u64>,
+
+    // Extended metrics (new optional fields for enriched data)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_type: Option<DiskType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manufacturer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bus_type: Option<BusType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interface_speed: Option<InterfaceSpeed>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smart_status: Option<SmartStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature_celsius: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_on_hours: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes_read: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes_written: Option<u64>,
 }
+
+// Re-export types from system_info for convenience
+pub use crate::core::system_info::types::{BusType, DiskType, InterfaceSpeed, SmartStatus};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NetworkMetrics {

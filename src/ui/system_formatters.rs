@@ -695,27 +695,38 @@ fn print_storage_info(storage: &[StorageInfo]) {
 
         println!("  {} {}: {}", "Disk".cyan().bold(), i, disk_title.bold());
 
-        // Type with bus interface
+        // Technology type (HDD/SSD/NVMe)
+        println!("    Type: {}", disk.disk_type.to_string().bold());
+
+        // Interface (Bus type and speed)
         if let Some(ref bus_type) = disk.bus_type {
-            print!("    Type: {} ({})", disk.disk_type, bus_type);
-        } else {
-            print!("    Type: {}", disk.disk_type);
+            if let Some(ref speed) = disk.interface_speed {
+                println!("    Interface: {} - {}", bus_type, speed.to_string().green());
+            } else {
+                println!("    Interface: {}", bus_type);
+            }
+        } else if let Some(ref speed) = disk.interface_speed {
+            println!("    Interface: {}", speed.to_string().green());
         }
 
-        // Interface speed
-        if let Some(ref speed) = disk.interface_speed {
-            println!(" - {}", speed.to_string().green());
-        } else {
-            println!();
+        // File System
+        if !disk.file_system.is_empty() {
+            println!("    File System: {}", disk.file_system);
         }
 
         // Mount point and capacity
         println!("    Mount Point: {}", disk.mount_point);
         println!(
-            "    Capacity: {} ({} free, {:.1}% used)",
-            format_bytes(disk.total_bytes),
-            format_bytes(disk.available_bytes),
-            disk.usage_percent
+            "    Capacity: {}",
+            format_bytes(disk.total_bytes)
+        );
+
+        // Usage bar with percentage and free space
+        println!(
+            "    Usage: {} {:.1}% ({} free)",
+            create_usage_bar(disk.usage_percent, 20),
+            disk.usage_percent,
+            format_bytes(disk.available_bytes)
         );
 
         // Temperature (if available)
@@ -785,19 +796,55 @@ fn print_storage_info(storage: &[StorageInfo]) {
                     "    SATA Ports: {} used / {} total ({})",
                     slots.sata_used, total, status
                 );
+
+                if slots.sata_hot_swap {
+                    println!("      Hot-Swap: Supported");
+                }
             }
 
-            // M.2 slots
-            if let (Some(total), Some(available)) = (slots.m2_total, slots.m2_available) {
-                let status = if available > 0 {
-                    format!("{} available", available).green()
-                } else {
-                    "full".yellow()
-                };
-                println!(
-                    "    M.2 Slots: {} used / {} total ({})",
-                    slots.m2_used, total, status
-                );
+            // M.2 slots with detailed information
+            if !slots.m2_slots.is_empty() {
+                println!("    M.2 Slots:");
+                for slot in &slots.m2_slots {
+                    let status = if slot.is_used {
+                        "Used".yellow()
+                    } else {
+                        "Available".green()
+                    };
+
+                    // Build slot type description
+                    let mut slot_types = Vec::new();
+                    if slot.supports_nvme {
+                        slot_types.push("NVMe");
+                    }
+                    if slot.supports_sata {
+                        slot_types.push("SATA");
+                    }
+                    let type_str = slot_types.join("/");
+
+                    // Build interface description
+                    let interface = if let (Some(gen), Some(lanes)) = (slot.pcie_generation, slot.pcie_lanes) {
+                        format!("PCIe {}.0 x{}", gen, lanes)
+                    } else {
+                        "Unknown".to_string()
+                    };
+
+                    // Build form factor description
+                    let form_factor = if !slot.form_factors.is_empty() {
+                        format!("({})", slot.form_factors.join(", "))
+                    } else {
+                        String::new()
+                    };
+
+                    println!(
+                        "      Slot {}: {} {} {} - {}",
+                        slot.slot_number,
+                        type_str,
+                        interface,
+                        form_factor,
+                        status
+                    );
+                }
             }
         }
     }
@@ -1071,6 +1118,34 @@ fn format_timeout(secs: u32) -> String {
     } else {
         format!("{}m", secs / 60)
     }
+}
+
+/// Create a usage bar with ASCII characters
+fn create_usage_bar(usage_percent: f32, width: usize) -> String {
+    use colored::Colorize;
+
+    let filled = ((usage_percent / 100.0) * width as f32) as usize;
+    let empty = width.saturating_sub(filled);
+
+    let filled_char = "█";
+    let empty_char = "░";
+
+    let bar = format!(
+        "{}{}",
+        filled_char.repeat(filled),
+        empty_char.repeat(empty)
+    );
+
+    // Color the bar based on usage
+    let colored_bar = if usage_percent >= 85.0 {
+        bar.red()
+    } else if usage_percent >= 70.0 {
+        bar.yellow()
+    } else {
+        bar.green()
+    };
+
+    format!("[{}]", colored_bar)
 }
 
 fn format_bytes(bytes: u64) -> String {

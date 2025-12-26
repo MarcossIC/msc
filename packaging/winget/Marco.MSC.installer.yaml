@@ -1,0 +1,27 @@
+PackageIdentifier: Marco.MSC
+PackageVersion: 0.1.0
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.0.0
+InstallerType: wix
+Scope: machine
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/msc-x86_64-pc-windows-msvc.msi
+    InstallerSha256: REPLACE_WITH_SHA256_FROM_RELEASE
+    ProductCode: '{REPLACE_WITH_PRODUCT_CODE}'
+ManifestType: installer
+ManifestVersion: 1.6.0
+
+# INSTRUCTIONS FOR COMPLETION:
+# 1. Replace YOUR_USERNAME with your GitHub username
+# 2. After creating release v0.1.0, download checksums from:
+#    https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/msc-x86_64-pc-windows-msvc.msi.sha256
+# 3. Get ProductCode by running on Windows:
+#    PowerShell: Get-AppLockerFileInformation -Path "msc-x86_64-pc-windows-msvc.msi" | Select-Object -ExpandProperty Publisher
+#    Or use: msiinfo summary msc-x86_64-pc-windows-msvc.msi

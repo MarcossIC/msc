@@ -1,13 +1,12 @@
 use crate::core::system_info::types::PowerPlanInfo;
 use crate::error::Result;
-
 #[cfg(windows)]
-use crate::platform::system_info_windows;
+use crate::platform::system::windows::battery::get_power_plan_info;
 
 pub fn collect() -> Result<PowerPlanInfo> {
     #[cfg(windows)]
     {
-        system_info_windows::get_power_plan_info()
+        get_power_plan_info()
     }
 
     #[cfg(not(windows))]
