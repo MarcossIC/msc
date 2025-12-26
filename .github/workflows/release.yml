@@ -87,7 +87,7 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.30.3/cargo-dist-installer.sh | sh
 
       - name: Cache dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
@@ -101,7 +101,7 @@ jobs:
           echo "has-artifacts=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload plan
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: artifacts-plan
           path: plan.json
@@ -134,7 +134,7 @@ jobs:
         run: dist build --tag=${{ needs.create-tag.outputs.tag }} --output-format=json ${{ matrix.dist_args }} > build.json
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: artifacts-${{ join(matrix.targets, '_') }}
           path: |
@@ -174,7 +174,7 @@ jobs:
           cat release.json
 
       - name: Upload manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-manifest
           path: release.json
