@@ -23,12 +23,11 @@ pub async fn battery_task(
                 let (power_source, battery_percent, battery_time_remaining) =
                     collect_battery_info();
 
-                if let Err(e) = update_tx.send(SubsystemUpdate::Battery {
+                if let Err(_cpu_memory_process_taske) = update_tx.send(SubsystemUpdate::Battery {
                     power_source,
                     battery_percent,
                     battery_time_remaining,
                 }).await {
-                    log::error!("Failed to send battery update: {}", e);
                     break;
                 }
             }

@@ -13,13 +13,11 @@ pub async fn gpu_task(
     update_tx: mpsc::Sender<SubsystemUpdate>,
     mut shutdown: broadcast::Receiver<()>,
 ) {
-    // log::info!("GPU monitoring task started");
-
     // Try to initialize GPU provider (exclusive ownership)
     let mut gpu_provider = match get_gpu_provider() {
         Ok(provider) => provider,
         Err(e) => {
-            log::warn!("GPU provider not available: {}", e);
+            log::warn!("GPU initialization failed: {:?}", e);
             // Send None and terminate task (no GPU available)
             let _ = update_tx.send(SubsystemUpdate::Gpu(None)).await;
             return;
@@ -45,17 +43,16 @@ pub async fn gpu_task(
                 match gpu_provider.collect_metrics() {
                     Ok(metrics) => {
                         consecutive_failures = 0;
-                        if let Err(e) = update_tx.send(SubsystemUpdate::Gpu(Some(metrics))).await {
-                            log::error!("Failed to send GPU update: {}", e);
+                        if let Err(_e) = update_tx.send(SubsystemUpdate::Gpu(Some(metrics))).await {
+                            log::warn!("GPU task: receiver dropped, shutting down");
                             break;
                         }
                     }
                     Err(e) => {
+                        log::warn!("GPU metrics collection failed (attempt {}): {:?}", consecutive_failures + 1, e);
                         consecutive_failures += 1;
-                        log::error!("GPU collection failed (attempt {}): {}", consecutive_failures, e);
-
                         if consecutive_failures >= MAX_FAILURES {
-                            // log::error!("GPU monitoring disabled after {} consecutive failures", MAX_FAILURES);
+                            log::error!("GPU monitoring disabled after {} consecutive failures", MAX_FAILURES);
                             let _ = update_tx.send(SubsystemUpdate::Gpu(None)).await;
                             break;
                         }
@@ -67,11 +64,11 @@ pub async fn gpu_task(
                 }
             }
             _ = shutdown.recv() => {
-                // log::info!("GPU task shutting down");
+                log::info!("GPU task shutting down");
                 break;
             }
         }
     }
 
-    // log::info!("GPU monitoring task terminated");
+    log::info!("GPU monitoring task terminated");
 }

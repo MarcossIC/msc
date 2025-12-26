@@ -106,12 +106,8 @@ impl GpuProvider for NvidiaGpuProvider {
                 .map(|p| p / 1000) // mW to W
                 .ok();
 
-            let clock_graphics = device
-                .clock_info(Clock::Graphics)
-                .ok();
-            let clock_memory = device
-                .clock_info(Clock::Memory)
-                .ok();
+            let clock_graphics = device.clock_info(Clock::Graphics).ok();
+            let clock_memory = device.clock_info(Clock::Memory).ok();
 
             Ok(GpuMetrics {
                 vendor: GpuVendor::Nvidia,

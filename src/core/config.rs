@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use wincode_derive::{SchemaWrite, SchemaRead};
+use wincode_derive::{SchemaRead, SchemaWrite};
 
 #[derive(Debug, Default, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct Config {
@@ -37,6 +37,8 @@ pub struct Config {
     pub excluded_default_paths: Vec<String>,
     #[serde(default)]
     pub ignored_work_folders: Vec<String>,
+    #[serde(default)]
+    pub installation_method: Option<String>,
 }
 
 impl Config {
@@ -310,5 +312,17 @@ impl Config {
     /// Get the list of user-configured ignored work folders (without "msc")
     pub fn get_user_ignored_work_folders(&self) -> &Vec<String> {
         &self.ignored_work_folders
+    }
+
+    // Installation method management
+
+    /// Set the installation method (Manual, Winget, Chocolatey, Homebrew, Cargo)
+    pub fn set_installation_method(&mut self, method: String) {
+        self.installation_method = Some(method);
+    }
+
+    /// Get the installation method if previously detected
+    pub fn get_installation_method(&self) -> Option<&String> {
+        self.installation_method.as_ref()
     }
 }

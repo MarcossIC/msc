@@ -344,7 +344,7 @@ jobs:
         shell: pwsh
         run: |
           $VERSION = "${{ needs.create-tag.outputs.version }}"
-          $MSI_NAME = "msc-$VERSION-x86_64-pc-windows-msvc.msi"
+          $MSI_NAME = "msc-x86_64-pc-windows-msvc.msi"
 
           Write-Host "🔍 Searching for MSI: $MSI_NAME"
 
@@ -439,11 +439,11 @@ jobs:
 
           # cargo-dist uses version without 'v' prefix in filenames
           echo "📥 Downloading checksums for version: $VERSION"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$VERSION-x86_64-pc-windows-msvc.msi.sha256" -o windows.sha256 || echo "⚠️ Windows checksum not found"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$VERSION-x86_64-unknown-linux-gnu.tar.xz.sha256" -o linux-x64.sha256 || echo "⚠️ Linux x64 checksum not found"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$VERSION-aarch64-unknown-linux-gnu.tar.xz.sha256" -o linux-arm64.sha256 || echo "⚠️ Linux ARM64 checksum not found"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$VERSION-x86_64-apple-darwin.tar.xz.sha256" -o macos-x64.sha256 || echo "⚠️ macOS x64 checksum not found"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$VERSION-aarch64-apple-darwin.tar.xz.sha256" -o macos-arm64.sha256 || echo "⚠️ macOS ARM64 checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-x86_64-pc-windows-msvc.msi.sha256" -o windows.sha256 || echo "⚠️ Windows checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-x86_64-unknown-linux-gnu.tar.xz.sha256" -o linux-x64.sha256 || echo "⚠️ Linux x64 checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-aarch64-unknown-linux-gnu.tar.xz.sha256" -o linux-arm64.sha256 || echo "⚠️ Linux ARM64 checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-x86_64-apple-darwin.tar.xz.sha256" -o macos-x64.sha256 || echo "⚠️ macOS x64 checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-aarch64-apple-darwin.tar.xz.sha256" -o macos-arm64.sha256 || echo "⚠️ macOS ARM64 checksum not found"
 
           # List downloaded files
           echo "📋 Downloaded files:"
@@ -496,7 +496,7 @@ jobs:
           sed -i "s/^PackageVersion:.*/PackageVersion: $VERSION/" packaging/winget/MSC.locale.en-US.yaml
 
           # Update installer URL and SHA256 (use VERSION not TAG in filename)
-          sed -i "s|InstallerUrl:.*|InstallerUrl: $RELEASE_URL/msc-$VERSION-x86_64-pc-windows-msvc.msi|" packaging/winget/MSC.installer.yaml
+          sed -i "s|InstallerUrl:.*|InstallerUrl: $RELEASE_URL/msc-x86_64-pc-windows-msvc.msi|" packaging/winget/MSC.installer.yaml
           sed -i "s/InstallerSha256:.*/InstallerSha256: $SHA256_WIN/" packaging/winget/MSC.installer.yaml
 
           # Update ProductCode
@@ -523,7 +523,7 @@ jobs:
           fi
 
           # Update Homebrew formula (use VERSION not TAG in filename)
-          sed -i "s|url \".*\"|url \"$RELEASE_URL/msc-$VERSION-x86_64-apple-darwin.tar.xz\"|" packaging/homebrew/msc.rb
+          sed -i "s|url \".*\"|url \"$RELEASE_URL/msc-x86_64-apple-darwin.tar.xz\"|" packaging/homebrew/msc.rb
           sed -i "s/sha256 \".*\"/sha256 \"$SHA256_MACOS_X64\"/" packaging/homebrew/msc.rb
           sed -i "s/version \".*\"/version \"$VERSION\"/" packaging/homebrew/msc.rb
 

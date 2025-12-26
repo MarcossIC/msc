@@ -3,49 +3,37 @@ use crate::core::system_info::{
     battery, cpu, gpu, memory, motherboard, network, os, power, storage,
 };
 use crate::error::Result;
-use log::warn;
 
 /// Collect all system information
 pub fn collect_system_info() -> Result<SystemInfo> {
-    let cpu_info = cpu::collect().unwrap_or_else(|e| {
-        warn!("Failed to collect CPU info: {}", e);
+    let cpu_info = cpu::collect().unwrap_or_else(|_e| {
         cpu::get_fallback()
     });
 
-    let memory_info = memory::collect().unwrap_or_else(|e| {
-        warn!("Failed to collect memory info: {}", e);
-        eprintln!("Warning: Failed to collect memory info: {}", e);
+    let memory_info = memory::collect().unwrap_or_else(|_e| {
         memory::get_fallback()
     });
 
-    let gpu_info = gpu::collect().unwrap_or_else(|e| {
-        warn!("Failed to collect GPU info: {}", e);
-        eprintln!("Warning: Failed to collect GPU info: {}", e);
+    let gpu_info = gpu::collect().unwrap_or_else(|_e| {
         vec![]
     });
 
     let motherboard_info = match motherboard::collect() {
         Ok(mb) => Some(mb),
-        Err(e) => {
-            warn!("Failed to collect motherboard info: {}", e);
-            eprintln!("Warning: Failed to collect motherboard info: {}", e);
+        Err(_e) => {
             None
         }
     };
 
-    let network_info = network::collect().unwrap_or_else(|e| {
-        warn!("Failed to collect network info: {}", e);
-        eprintln!("Warning: Failed to collect network info: {}", e);
+    let network_info = network::collect().unwrap_or_else(|_e| {
         network::get_fallback()
     });
 
-    let storage_info = storage::collect().unwrap_or_else(|e| {
-        warn!("Failed to collect storage info: {}", e);
+    let storage_info = storage::collect().unwrap_or_else(|_e| {
         vec![]
     });
 
-    let os_info = os::collect().unwrap_or_else(|e| {
-        warn!("Failed to collect OS info: {}", e);
+    let os_info = os::collect().unwrap_or_else(|_e| {
         os::get_fallback()
     });
 

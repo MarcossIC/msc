@@ -77,8 +77,7 @@ pub async fn network_task(
                 last_values = current_values;
 
                 // Send update
-                if let Err(e) = update_tx.send(SubsystemUpdate::Network(metrics)).await {
-                    log::error!("Failed to send network update: {}", e);
+                if let Err(_e) = update_tx.send(SubsystemUpdate::Network(metrics)).await {
                     break;
                 }
 

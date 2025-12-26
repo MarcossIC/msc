@@ -21,11 +21,6 @@ pub fn collect() -> Result<Vec<StorageInfo>> {
 
         let disk_name = disk.name().to_string_lossy().to_string();
         let mount_point = disk.mount_point().to_string_lossy().to_string();
-        eprintln!(
-            "DEBUG storage.rs: Processing disk with name: '{}'",
-            disk_name
-        );
-        eprintln!("DEBUG storage.rs: Mount point: '{}'", mount_point);
 
         // Get detailed disk information (type, manufacturer, SMART data, etc.)
         // Use mount point instead of disk name as it's more reliable
@@ -36,12 +31,7 @@ pub fn collect() -> Result<Vec<StorageInfo>> {
             } else {
                 &disk_name
             };
-            eprintln!("DEBUG storage.rs: Using identifier: '{}'", disk_identifier);
             let result = system_info_windows::get_disk_details(disk_identifier);
-            eprintln!(
-                "DEBUG storage.rs: get_disk_details result: {:?}",
-                result.is_ok()
-            );
             result.ok()
         };
 

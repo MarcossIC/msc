@@ -23,7 +23,7 @@ if (-not $Version) {
 
 # Determine MSI path
 if (-not $MsiPath) {
-    $MsiPath = "msc-$Version-x86_64-pc-windows-msvc.msi"
+    $MsiPath = "msc-x86_64-pc-windows-msvc.msi"
 
     # Try to find in target/distrib
     $targetMsi = "target\distrib\$MsiPath"

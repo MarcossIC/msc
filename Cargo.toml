@@ -1,6 +1,6 @@
 [package]
 name = "msc"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 authors = ["MSC Contributors"]
 description = "Multi-purpose CLI tool for system monitoring, media management, and productivity"
@@ -66,6 +66,8 @@ unicode-normalization = "0.1.25"
 sha2 = "0.10"
 rusqlite = { version = "0.38", features = ["bundled"] }
 aes-gcm = "0.10.3"
+tar = "0.4"
+flate2 = "1.0"
 # System information
 sysinfo = "0.37.2"
 raw-cpuid = "11.6.0"

@@ -134,34 +134,10 @@ fn get_disk_number_from_drive_letter(drive_letter: &str) -> Result<u64> {
 /// Provides REAL media type (HDD/SSD/NVMe), bus type, and SMART data including temperature.
 pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     use std::process::Command;
-
-    // Debug: print disk_name to understand what we're receiving
-    eprintln!(
-        "DEBUG: get_disk_details called with disk_name: '{}'",
-        disk_name
-    );
-
     // First, get mapping from mount point (letter) to disk number
     let disk_number = if disk_name.len() >= 2 && disk_name.chars().nth(1) == Some(':') {
         // It's a drive letter like "C:\", get the disk number
-        match get_disk_number_from_drive_letter(&disk_name[0..1]) {
-            Ok(num) => {
-                eprintln!(
-                    "DEBUG: Successfully got disk number {} for drive letter {}",
-                    num,
-                    &disk_name[0..1]
-                );
-                num
-            }
-            Err(e) => {
-                eprintln!(
-                    "DEBUG: Failed to get disk number for drive letter {}: {}",
-                    &disk_name[0..1],
-                    e
-                );
-                return Err(e);
-            }
-        }
+        get_disk_number_from_drive_letter(&disk_name[0..1])?
     } else if disk_name.contains("PhysicalDrive") {
         // Extract number from "\\.\PhysicalDrive0"
         disk_name
@@ -170,7 +146,6 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
             .and_then(|s| s.parse::<u64>().ok())
             .ok_or_else(|| MscError::other("Cannot parse PhysicalDrive number"))?
     } else {
-        eprintln!("DEBUG: disk_name doesn't match expected formats, using fallback disk 0");
         // Try first disk as fallback
         0
     };
@@ -187,25 +162,15 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
         .map_err(|e| MscError::other(format!("Failed to run PowerShell: {}", e)))?;
 
     let output_str = String::from_utf8_lossy(&output.stdout);
-    eprintln!("DEBUG: PowerShell output:\n{}", output_str);
 
-    let json_value: serde_json::Value = serde_json::from_str(&output_str).map_err(|e| {
-        eprintln!("DEBUG: Failed to parse JSON: {}", e);
-        MscError::other(format!("Failed to parse JSON: {}", e))
-    })?;
+    let json_value: serde_json::Value = serde_json::from_str(&output_str)
+        .map_err(|e| MscError::other(format!("Failed to parse JSON: {}", e)))?;
 
     let disk_array = if json_value.is_array() {
         json_value.as_array().unwrap().clone()
     } else {
         vec![json_value.clone()]
     };
-
-    eprintln!("DEBUG: Looking for disk number: {}", disk_number);
-    eprintln!(
-        "DEBUG: Found {} disks in PowerShell output",
-        disk_array.len()
-    );
-
     // Try to match disk by DeviceId (disk number)
     for disk_json in &disk_array {
         // DeviceId can be a number or a string, handle both cases
@@ -214,7 +179,6 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
                 .as_str()
                 .and_then(|s| s.parse::<u64>().ok())
         });
-        eprintln!("DEBUG: Checking disk with DeviceId: {:?}", device_id);
 
         if let Some(dev_id) = device_id {
             if dev_id == disk_number {
@@ -305,7 +269,6 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     }
 
     // Fallback if not found
-    eprintln!("DEBUG: Disk not found, returning Unknown details");
     Ok(DiskDetailsWindows {
         disk_type: DiskType::Unknown,
         manufacturer: None,

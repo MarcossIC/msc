@@ -39,8 +39,7 @@ pub async fn global_metrics_task(
                     battery_time_remaining_secs: None,
                 };
 
-                if let Err(e) = update_tx.send(SubsystemUpdate::Global(global)).await {
-                    log::error!("Failed to send global metrics update: {}", e);
+                if let Err(_e) = update_tx.send(SubsystemUpdate::Global(global)).await {
                     break;
                 }
 

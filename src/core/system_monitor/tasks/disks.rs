@@ -58,8 +58,7 @@ pub async fn disks_task(
                     // log::debug!("Disk metrics enriched with SMART data");
                 }
 
-                if let Err(e) = update_tx.send(SubsystemUpdate::Disks(disk_metrics)).await {
-                    log::error!("Failed to send disks update: {}", e);
+                if let Err(_e) = update_tx.send(SubsystemUpdate::Disks(disk_metrics)).await {
                     break;
                 }
 

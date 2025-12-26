@@ -54,9 +54,7 @@ pub fn format_system_info(info: &SystemInfo, filter: &DisplayFilter) {
             Some(mb) => {
                 print_motherboard_info(mb);
             }
-            None => {
-                eprintln!("DEBUG: Motherboard info is None");
-            }
+            None => {}
         }
     }
 

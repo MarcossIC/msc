@@ -61,6 +61,7 @@ fn main() -> Result<()> {
             _ => commands::wget::execute(sub_matches),
         },
         Some(("sys", sub_matches)) => commands::sys::execute(sub_matches),
+        Some(("update", sub_matches)) => commands::update::execute(sub_matches),
         Some(("completions", sub_matches)) => {
             let mut cli = build_cli();
             commands::completions::execute(sub_matches, &mut cli)
@@ -1062,6 +1063,18 @@ fn build_cli() -> Command {
                                 .help("Output metrics as JSON stream (non-interactive)")
                                 .action(clap::ArgAction::SetTrue),
                         )
+                )
+        )
+        .subcommand(
+            Command::new("update")
+                .about("Update MSC to the latest version")
+                .long_about(
+                    "Check for and install MSC updates from GitHub releases.\n\n\
+                    Automatically downloads, verifies, and installs the latest version.\n\
+                    Note: If installed via package manager (winget, chocolatey, homebrew),\n\
+                    use the package manager's update command instead.\n\n\
+                    EXAMPLES:\n\
+                    msc update    # Check and install updates"
                 )
         )
         .subcommand(

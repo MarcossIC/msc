@@ -160,8 +160,7 @@ impl DiskEnrichmentProvider for WindowsDiskEnrichment {
 
                 Ok(disk)
             }
-            Err(e) => {
-                log::warn!("Failed to enrich disk '{}': {}", disk.name, e);
+            Err(_e) => {
                 // Return original disk without extended data
                 Ok(disk)
             }

@@ -58,6 +58,7 @@ fn test_config_workspaces() {
         custom_paths: Vec::new(),
         excluded_default_paths: Vec::new(),
         ignored_work_folders: Vec::new(),
+        installation_method: None,
     };
 
     assert_eq!(config.workspaces.len(), 2);

@@ -13,6 +13,7 @@ pub mod path_manager;
 pub mod path_validator;
 pub mod system_info;
 pub mod system_monitor;
+pub mod update;
 pub mod validation;
 pub mod wget;
 pub mod workspace;

@@ -63,7 +63,7 @@ pub async fn cpu_memory_process_task(
                 );
 
                 // Send update
-                if let Err(e) = update_tx
+                if let Err(_e) = update_tx
                     .send(SubsystemUpdate::CpuMemoryProcess {
                         cpu,
                         memory,
@@ -71,7 +71,6 @@ pub async fn cpu_memory_process_task(
                     })
                     .await
                 {
-                    log::error!("Failed to send CPU/Memory/Process update: {}", e);
                     break;
                 }
 
