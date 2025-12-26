@@ -1,6 +1,5 @@
-
-use crate::error::{MscError, Result};
 use crate::core::system_info::types::MotherboardInfo;
+use crate::error::{MscError, Result};
 
 #[cfg(not(windows))]
 pub fn get_motherboard_info() -> Result<MotherboardInfo> {
@@ -125,10 +124,7 @@ fn extract_chipset_name(device_name: &str) -> String {
             let rest = &device_name[start..];
             if let Some(end) = rest.find("Chipset") {
                 let mut chipset = rest[..end + 7].to_string(); // Include "Chipset"
-                chipset = chipset
-                    .replace("(R)", "")
-                    .trim()
-                    .to_string();
+                chipset = chipset.replace("(R)", "").trim().to_string();
                 return chipset;
             }
         }

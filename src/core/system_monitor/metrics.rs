@@ -46,8 +46,8 @@ pub struct CpuMetrics {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemoryMetrics {
     pub total_bytes: u64,
-    pub used_bytes: u64,              // Real usage (excluding cache/buffers)
-    pub cache_buffers_bytes: u64,     // Cache and buffers
+    pub used_bytes: u64,          // Real usage (excluding cache/buffers)
+    pub cache_buffers_bytes: u64, // Cache and buffers
     pub available_bytes: u64,
     pub usage_percent: f32,
     pub swap_total_bytes: u64,

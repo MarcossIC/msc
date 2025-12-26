@@ -3,8 +3,8 @@
 pub mod elevation;
 pub mod fs;
 pub mod gpu;
-pub mod temp_dirs;
 pub mod system;
+pub mod temp_dirs;
 
 #[cfg(windows)]
 pub mod system_info_windows;

@@ -47,9 +47,7 @@ impl ChromeDecryptor {
         let local_state_path = Self::get_local_state_path(browser)?;
         let aes_key = Self::extract_aes_key(&local_state_path, browser)?;
 
-        Ok(Self {
-            aes_key
-        })
+        Ok(Self { aes_key })
     }
 
     /// Find the Local State file path for a given browser
@@ -112,8 +110,8 @@ impl ChromeDecryptor {
     /// * `Err(...)` - Failed to read or decrypt
     fn extract_aes_key(local_state_path: &PathBuf, browser: &str) -> Result<Option<Vec<u8>>> {
         // Read Local State JSON
-        let content = std::fs::read_to_string(local_state_path)
-            .context("Failed to read Local State file")?;
+        let content =
+            std::fs::read_to_string(local_state_path).context("Failed to read Local State file")?;
 
         let json: serde_json::Value =
             serde_json::from_str(&content).context("Local State is not valid JSON")?;
@@ -249,7 +247,8 @@ impl ChromeDecryptor {
         let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
 
         // Create AES-256-GCM cipher
-        let cipher = Aes256Gcm::new_from_slice(key).context("Failed to create AES-256-GCM cipher (invalid key length)")?;
+        let cipher = Aes256Gcm::new_from_slice(key)
+            .context("Failed to create AES-256-GCM cipher (invalid key length)")?;
 
         // Create nonce from first 12 bytes
         let nonce = Nonce::from_slice(nonce_bytes);
@@ -272,7 +271,10 @@ impl ChromeDecryptor {
         // Attempt 1: Try as plaintext
         if let Ok(text) = String::from_utf8(data.to_vec()) {
             // Check if it looks like valid text (no excessive control characters)
-            if text.chars().all(|c| !c.is_control() || c == '\n' || c == '\t') {
+            if text
+                .chars()
+                .all(|c| !c.is_control() || c == '\n' || c == '\t')
+            {
                 return Ok(text);
             }
         }
@@ -470,9 +472,7 @@ mod tests {
     #[test]
     fn test_decrypt_cookie_value_no_key_legacy() {
         // Test legacy decryption when no AES key is present
-        let decryptor = ChromeDecryptor {
-            aes_key: None,
-        };
+        let decryptor = ChromeDecryptor { aes_key: None };
 
         // Try plaintext
         let plaintext = b"plaintext_cookie_value";
@@ -487,9 +487,7 @@ mod tests {
     #[test]
     fn test_try_legacy_decrypt_plaintext() {
         // Test that plaintext values are handled correctly
-        let decryptor = ChromeDecryptor {
-            aes_key: None,
-        };
+        let decryptor = ChromeDecryptor { aes_key: None };
 
         let plaintext = b"simple_value";
         let result = decryptor.try_legacy_decrypt(plaintext);
@@ -501,9 +499,7 @@ mod tests {
     #[test]
     fn test_try_legacy_decrypt_invalid() {
         // Test that invalid binary data is rejected
-        let decryptor = ChromeDecryptor {
-            aes_key: None,
-        };
+        let decryptor = ChromeDecryptor { aes_key: None };
 
         // Invalid UTF-8 and not DPAPI-encrypted
         let invalid = &[0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
@@ -544,9 +540,9 @@ mod tests {
                 let err_msg = e.to_string();
                 // Error should be informative
                 assert!(
-                    err_msg.contains("Local State") ||
-                    err_msg.contains("not found") ||
-                    err_msg.contains("App-Bound"),
+                    err_msg.contains("Local State")
+                        || err_msg.contains("not found")
+                        || err_msg.contains("App-Bound"),
                     "Error should be informative: {}",
                     err_msg
                 );

@@ -47,7 +47,10 @@ impl ChromeInstance {
 
         // Check if already running with CDP
         if Self::is_cdp_active() {
-            println!("{}", format!("✓ {} ya está corriendo con CDP", browser_display).green());
+            println!(
+                "{}",
+                format!("✓ {} ya está corriendo con CDP", browser_display).green()
+            );
             return Ok(Self {
                 process: None,
                 was_running: true,
@@ -55,18 +58,35 @@ impl ChromeInstance {
             });
         }
 
-        println!("{}", format!("🚀 Configurando {} con CDP...", browser_display).cyan().bold());
+        println!(
+            "{}",
+            format!("🚀 Configurando {} con CDP...", browser_display)
+                .cyan()
+                .bold()
+        );
         println!();
 
         // Get original profile path
-        println!("{}", "   [1/3] Obteniendo ruta del perfil original...".dimmed());
+        println!(
+            "{}",
+            "   [1/3] Obteniendo ruta del perfil original...".dimmed()
+        );
         let original_profile = get_original_profile_path(browser)?;
-        println!("{}", format!("         ✓ Perfil: {}", original_profile.display()).dimmed());
+        println!(
+            "{}",
+            format!("         ✓ Perfil: {}", original_profile.display()).dimmed()
+        );
 
         // Launch browser with ORIGINAL profile
-        println!("{}", "   [2/3] Iniciando navegador con perfil original...".dimmed());
+        println!(
+            "{}",
+            "   [2/3] Iniciando navegador con perfil original...".dimmed()
+        );
         let mut process = launch_with_original_profile(browser, &original_profile)?;
-        println!("{}", format!("         ✓ {} iniciado", browser_display).dimmed());
+        println!(
+            "{}",
+            format!("         ✓ {} iniciado", browser_display).dimmed()
+        );
 
         // Wait for CDP with progress feedback
         println!("{}", "   [3/3] Esperando conexión CDP...".dimmed());
@@ -81,7 +101,14 @@ impl ChromeInstance {
                 // Verify we can actually get targets
                 if Self::verify_cdp_ready().is_ok() {
                     println!();
-                    println!("{}", format!("         ✓ {} listo con CDP en puerto {}", browser_display, CDP_PORT).green());
+                    println!(
+                        "{}",
+                        format!(
+                            "         ✓ {} listo con CDP en puerto {}",
+                            browser_display, CDP_PORT
+                        )
+                        .green()
+                    );
                     break;
                 }
             }
@@ -187,8 +214,7 @@ impl ChromeInstance {
             .send()
             .context("Failed to query CDP targets")?;
 
-        let targets: Vec<serde_json::Value> = response.json()
-            .context("Invalid CDP response")?;
+        let targets: Vec<serde_json::Value> = response.json().context("Invalid CDP response")?;
 
         if targets.is_empty() {
             return Err(anyhow::anyhow!("No CDP targets available yet"));
@@ -206,10 +232,7 @@ impl ChromeInstance {
 
         // Check %LOCALAPPDATA%
         if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-            let local_chrome = format!(
-                r"{}\Google\Chrome\Application\chrome.exe",
-                local_app_data
-            );
+            let local_chrome = format!(r"{}\Google\Chrome\Application\chrome.exe", local_app_data);
             if PathBuf::from(&local_chrome).exists() {
                 return Ok(local_chrome);
             }
@@ -225,7 +248,7 @@ impl ChromeInstance {
                 Rutas buscadas:\n\
                 - C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\n\
                 - C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe\n\
-                - %LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"
+                - %LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe",
             )
     }
 
@@ -255,7 +278,7 @@ impl ChromeInstance {
                 "Edge no encontrado.\n\
                 Rutas buscadas:\n\
                 - C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe\n\
-                - C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+                - C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
             )
     }
 
@@ -269,9 +292,16 @@ impl Drop for ChromeInstance {
     fn drop(&mut self) {
         // Kill process if we started it
         if let Some(ref mut process) = self.process {
-            let browser_display = if self.browser_type == "edge" { "Edge" } else { "Chrome" };
+            let browser_display = if self.browser_type == "edge" {
+                "Edge"
+            } else {
+                "Chrome"
+            };
             println!();
-            println!("{}", format!("🛑 Cerrando {} temporal...", browser_display).dimmed());
+            println!(
+                "{}",
+                format!("🛑 Cerrando {} temporal...", browser_display).dimmed()
+            );
             let _ = process.kill();
             let _ = process.wait(); // Wait for process to fully terminate
         }
@@ -294,16 +324,16 @@ impl Drop for ChromeInstance {
 /// * `Ok(())` if processes were killed or none were running
 /// * `Err(...)` if killing failed
 pub fn kill_all_chrome_processes(browser: &str) -> Result<()> {
-    use sysinfo::{System, ProcessRefreshKind, ProcessesToUpdate};
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
     let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing(),
-    );
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
 
-    let process_name = if browser == "edge" { "msedge.exe" } else { "chrome.exe" };
+    let process_name = if browser == "edge" {
+        "msedge.exe"
+    } else {
+        "chrome.exe"
+    };
 
     let chrome_pids: Vec<_> = system
         .processes()
@@ -338,11 +368,7 @@ pub fn kill_all_chrome_processes(browser: &str) -> Result<()> {
     std::thread::sleep(Duration::from_secs(2));
 
     // Check if any processes remain
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing(),
-    );
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     let remaining: Vec<_> = system
         .processes()
         .iter()
@@ -357,8 +383,11 @@ pub fn kill_all_chrome_processes(browser: &str) -> Result<()> {
     if !remaining.is_empty() {
         println!(
             "{}",
-            format!("   ⚠️  {} procesos no respondieron al cierre graceful", remaining.len())
-                .yellow()
+            format!(
+                "   ⚠️  {} procesos no respondieron al cierre graceful",
+                remaining.len()
+            )
+            .yellow()
         );
 
         // On Windows, use taskkill /F as last resort
@@ -376,7 +405,8 @@ pub fn kill_all_chrome_processes(browser: &str) -> Result<()> {
                     if !output.status.success() {
                         println!(
                             "{}",
-                            "   ⚠️  taskkill falló. Algunos procesos pueden seguir activos.".yellow()
+                            "   ⚠️  taskkill falló. Algunos procesos pueden seguir activos."
+                                .yellow()
                         );
                     } else {
                         println!("{}", "   ✓ Procesos terminados forzadamente".green());
@@ -453,10 +483,7 @@ pub fn wait_for_file_release(db_path: &PathBuf) -> Result<()> {
 /// # Returns
 /// * `Ok(Child)` - The Chrome process handle
 /// * `Err(...)` if launch failed
-pub fn launch_with_original_profile(
-    browser: &str,
-    original_profile: &PathBuf,
-) -> Result<Child> {
+pub fn launch_with_original_profile(browser: &str, original_profile: &PathBuf) -> Result<Child> {
     let browser_path = if browser == "edge" {
         ChromeInstance::find_edge_executable()
     } else {
@@ -478,10 +505,7 @@ pub fn launch_with_original_profile(
 
     let mut process = Command::new(&browser_path)
         .arg(format!("--remote-debugging-port={}", CDP_PORT))
-        .arg(format!(
-            "--user-data-dir={}",
-            original_profile.display()
-        ))
+        .arg(format!("--user-data-dir={}", original_profile.display()))
         .arg("--headless=new") // New headless mode (supports extensions & sessions)
         .arg("--disable-gpu")
         .arg("--disable-software-rasterizer")
@@ -493,11 +517,18 @@ pub fn launch_with_original_profile(
 
     println!(
         "{}",
-        format!("   ✓ {} iniciado con CDP en puerto {}", browser_display, CDP_PORT).green()
+        format!(
+            "   ✓ {} iniciado con CDP en puerto {}",
+            browser_display, CDP_PORT
+        )
+        .green()
     );
 
     // Wait for CDP to be fully ready with active verification
-    println!("{}", "   ⏳ Esperando a que CDP esté disponible...".dimmed());
+    println!(
+        "{}",
+        "   ⏳ Esperando a que CDP esté disponible...".dimmed()
+    );
 
     let max_wait_time = Duration::from_secs(15); // Total: 15 segundos
     let check_interval = Duration::from_millis(500);
@@ -522,7 +553,9 @@ pub fn launch_with_original_profile(
         if std::net::TcpStream::connect_timeout(
             &format!("127.0.0.1:{}", CDP_PORT).parse().unwrap(),
             Duration::from_millis(200),
-        ).is_ok() {
+        )
+        .is_ok()
+        {
             // CDP port is open, verify it's actually ready
             if let Ok(response) = reqwest::blocking::Client::new()
                 .get(format!("http://127.0.0.1:{}/json/version", CDP_PORT))
@@ -574,8 +607,8 @@ pub fn launch_with_original_profile(
 /// * `Ok(PathBuf)` - Path to "User Data" directory
 /// * `Err(...)` if not found
 pub fn get_original_profile_path(browser: &str) -> Result<PathBuf> {
-    let local_app_data = env::var("LOCALAPPDATA")
-        .context("LOCALAPPDATA environment variable not set")?;
+    let local_app_data =
+        env::var("LOCALAPPDATA").context("LOCALAPPDATA environment variable not set")?;
 
     let base_path = PathBuf::from(local_app_data);
 
@@ -626,7 +659,10 @@ mod tests {
         // If Chrome is installed, path should exist
         if let Ok(path) = result {
             assert!(path.exists(), "Chrome User Data directory should exist");
-            assert!(path.ends_with("User Data"), "Path should end with 'User Data'");
+            assert!(
+                path.ends_with("User Data"),
+                "Path should end with 'User Data'"
+            );
 
             // Verify it's NOT a temp directory
             let temp_dir = env::temp_dir();
@@ -645,7 +681,10 @@ mod tests {
         // If Edge is installed, path should exist
         if let Ok(path) = result {
             assert!(path.exists(), "Edge User Data directory should exist");
-            assert!(path.ends_with("User Data"), "Path should end with 'User Data'");
+            assert!(
+                path.ends_with("User Data"),
+                "Path should end with 'User Data'"
+            );
         }
     }
 
@@ -655,7 +694,10 @@ mod tests {
         let result = kill_all_chrome_processes("chrome");
 
         // Should succeed even if Chrome isn't running
-        assert!(result.is_ok(), "kill_all_chrome_processes should not fail when Chrome isn't running");
+        assert!(
+            result.is_ok(),
+            "kill_all_chrome_processes should not fail when Chrome isn't running"
+        );
     }
 
     #[test]
@@ -665,7 +707,10 @@ mod tests {
         let result = wait_for_file_release(&fake_path);
 
         // Should fail gracefully for non-existent files
-        assert!(result.is_err(), "wait_for_file_release should fail for non-existent files");
+        assert!(
+            result.is_err(),
+            "wait_for_file_release should fail for non-existent files"
+        );
     }
 
     #[test]
@@ -677,8 +722,8 @@ mod tests {
         // 2. Will launch a real Chrome instance
         // 3. May interfere with user's work
 
-        let original_profile = get_original_profile_path("chrome")
-            .expect("Chrome should be installed for this test");
+        let original_profile =
+            get_original_profile_path("chrome").expect("Chrome should be installed for this test");
 
         let result = launch_with_original_profile("chrome", &original_profile);
 
@@ -687,7 +732,10 @@ mod tests {
             std::thread::sleep(Duration::from_secs(2));
 
             // Verify CDP is active
-            assert!(ChromeInstance::is_cdp_active(), "CDP should be active after launch");
+            assert!(
+                ChromeInstance::is_cdp_active(),
+                "CDP should be active after launch"
+            );
 
             // Clean up
             let _ = process.kill();

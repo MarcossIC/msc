@@ -16,8 +16,7 @@ pub struct ProcessTreeNode {
 /// Build a process tree from a flat list of processes
 pub fn build_process_tree(processes: &[ProcessMetrics]) -> Vec<ProcessTreeNode> {
     // Create a map of PID -> Process for quick lookup
-    let process_map: HashMap<u32, &ProcessMetrics> =
-        processes.iter().map(|p| (p.pid, p)).collect();
+    let process_map: HashMap<u32, &ProcessMetrics> = processes.iter().map(|p| (p.pid, p)).collect();
 
     // Group processes by parent PID
     let mut children_map: HashMap<Option<u32>, Vec<&ProcessMetrics>> = HashMap::new();

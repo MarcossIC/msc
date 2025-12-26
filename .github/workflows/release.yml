@@ -6,6 +6,8 @@ permissions:
 on:
   push:
     branches: [main]
+    paths:
+      - 'Cargo.toml'
   workflow_dispatch:
     inputs:
       force:
@@ -20,6 +22,7 @@ jobs:
       contents: write
     outputs:
       tag: ${{ steps.create_tag.outputs.tag }}
+      version: ${{ steps.create_tag.outputs.version }}
       should_release: ${{ steps.check.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
@@ -33,8 +36,29 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "📦 Detected version: $VERSION"
 
+      - name: Check version change
+        id: check_version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Get latest tag version
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          LATEST_VERSION=${LATEST_TAG#v}
+
+          echo "📊 Current version: $VERSION"
+          echo "📊 Latest tag version: $LATEST_VERSION"
+
+          # Check if version changed or force is true
+          if [[ "$VERSION" != "$LATEST_VERSION" ]] || [[ "${{ github.event.inputs.force }}" == "true" ]]; then
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️ Version unchanged, skipping release"
+          fi
+
       - name: Check tag
         id: check
+        if: steps.check_version.outputs.version_changed == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v$VERSION"
@@ -56,7 +80,7 @@ jobs:
 
       - name: Create tag
         id: create_tag
-        if: steps.check.outputs.should_release == 'true'
+        if: steps.check_version.outputs.version_changed == 'true' && steps.check.outputs.should_release == 'true'
         run: |
           TAG="${{ steps.check.outputs.tag }}"
           git config user.name "github-actions[bot]"
@@ -64,6 +88,7 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${{ steps.version.outputs.version }}" >> "$GITHUB_OUTPUT"
 
   plan:
     needs: create-tag
@@ -176,9 +201,147 @@ jobs:
           name: release-manifest
           path: release.json
 
-  announce:
+  update-packaging:
     needs: [create-tag, release]
     if: success()
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - run: echo "🎉 Release ${{ needs.create-tag.outputs.tag }} published!"
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: release-manifest
+          path: .
+
+      - name: Extract release info
+        id: release_info
+        run: |
+          VERSION="${{ needs.create-tag.outputs.version }}"
+          TAG="${{ needs.create-tag.outputs.tag }}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Get release URL
+          RELEASE_URL="https://github.com/MarcossIC/msc/releases/download/$TAG"
+          echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
+
+          echo "📦 Version: $VERSION"
+          echo "🏷️ Tag: $TAG"
+          echo "🔗 Release URL: $RELEASE_URL"
+
+      - name: Download checksums
+        run: |
+          TAG="${{ needs.create-tag.outputs.tag }}"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$TAG-x86_64-pc-windows-msvc.msi.sha256" -o windows.sha256 || echo "Windows checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$TAG-x86_64-unknown-linux-gnu.tar.xz.sha256" -o linux-x64.sha256 || echo "Linux x64 checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$TAG-aarch64-unknown-linux-gnu.tar.xz.sha256" -o linux-arm64.sha256 || echo "Linux ARM64 checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$TAG-x86_64-apple-darwin.tar.xz.sha256" -o macos-x64.sha256 || echo "macOS x64 checksum not found"
+          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-$TAG-aarch64-apple-darwin.tar.xz.sha256" -o macos-arm64.sha256 || echo "macOS ARM64 checksum not found"
+
+      - name: Update AUR PKGBUILD
+        run: |
+          VERSION="${{ steps.release_info.outputs.version }}"
+          TAG="${{ steps.release_info.outputs.tag }}"
+
+          if [ -f linux-x64.sha256 ]; then
+            SHA256_X64=$(cat linux-x64.sha256 | awk '{print $1}')
+          else
+            SHA256_X64="REPLACE_WITH_SHA256_X86_64_LINUX"
+          fi
+
+          if [ -f linux-arm64.sha256 ]; then
+            SHA256_ARM64=$(cat linux-arm64.sha256 | awk '{print $1}')
+          else
+            SHA256_ARM64="REPLACE_WITH_SHA256_ARM64_LINUX"
+          fi
+
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" packaging/aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" packaging/aur/PKGBUILD
+          sed -i "s|sha256sums_x86_64=.*|sha256sums_x86_64=('$SHA256_X64')|" packaging/aur/PKGBUILD
+          sed -i "s|sha256sums_aarch64=.*|sha256sums_aarch64=('$SHA256_ARM64')|" packaging/aur/PKGBUILD
+
+          echo "✅ Updated AUR PKGBUILD"
+
+      - name: Update winget manifest
+        run: |
+          VERSION="${{ steps.release_info.outputs.version }}"
+          TAG="${{ steps.release_info.outputs.tag }}"
+          RELEASE_URL="${{ steps.release_info.outputs.release_url }}"
+
+          if [ -f windows.sha256 ]; then
+            SHA256_WIN=$(cat windows.sha256 | awk '{print $1}')
+          else
+            SHA256_WIN="REPLACE_WITH_SHA256_FROM_RELEASE"
+          fi
+
+          # Update version in all manifests
+          sed -i "s/^PackageVersion:.*/PackageVersion: $VERSION/" packaging/winget/MSC.yaml
+          sed -i "s/^PackageVersion:.*/PackageVersion: $VERSION/" packaging/winget/MSC.installer.yaml
+          sed -i "s/^PackageVersion:.*/PackageVersion: $VERSION/" packaging/winget/MSC.locale.en-US.yaml
+
+          # Update installer URL and SHA256
+          sed -i "s|InstallerUrl:.*|InstallerUrl: $RELEASE_URL/msc-$TAG-x86_64-pc-windows-msvc.msi|" packaging/winget/MSC.installer.yaml
+          sed -i "s/InstallerSha256:.*/InstallerSha256: $SHA256_WIN/" packaging/winget/MSC.installer.yaml
+
+          echo "✅ Updated winget manifests"
+
+      - name: Update Homebrew formula
+        run: |
+          VERSION="${{ steps.release_info.outputs.version }}"
+          TAG="${{ steps.release_info.outputs.tag }}"
+          RELEASE_URL="${{ steps.release_info.outputs.release_url }}"
+
+          if [ -f macos-x64.sha256 ]; then
+            SHA256_MACOS_X64=$(cat macos-x64.sha256 | awk '{print $1}')
+          else
+            SHA256_MACOS_X64="REPLACE_WITH_SHA256_X86_64_MACOS"
+          fi
+
+          if [ -f macos-arm64.sha256 ]; then
+            SHA256_MACOS_ARM64=$(cat macos-arm64.sha256 | awk '{print $1}')
+          else
+            SHA256_MACOS_ARM64="REPLACE_WITH_SHA256_ARM64_MACOS"
+          fi
+
+          # Update Homebrew formula
+          sed -i "s|url \".*\"|url \"$RELEASE_URL/msc-$TAG-x86_64-apple-darwin.tar.xz\"|" packaging/homebrew/msc.rb
+          sed -i "s/sha256 \".*\"/sha256 \"$SHA256_MACOS_X64\"/" packaging/homebrew/msc.rb
+          sed -i "s/version \".*\"/version \"$VERSION\"/" packaging/homebrew/msc.rb
+
+          echo "✅ Updated Homebrew formula"
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add packaging/
+
+          if git diff --staged --quiet; then
+            echo "📭 No changes to commit"
+          else
+            git commit -m "chore: update packaging manifests for v${{ steps.release_info.outputs.version }}
+
+            - Update AUR PKGBUILD with new version and checksums
+            - Update winget manifests with new version and checksums
+            - Update Homebrew formula with new version and checksums
+
+            Auto-generated by release workflow"
+
+            git push origin main
+            echo "✅ Pushed packaging updates to main"
+          fi
+
+  announce:
+    needs: [create-tag, update-packaging]
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "🎉 Release ${{ needs.create-tag.outputs.tag }} published and packaging updated!"

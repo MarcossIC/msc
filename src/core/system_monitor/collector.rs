@@ -326,7 +326,7 @@ impl MetricsCollector {
     }
 
     fn collect_global(&self) -> super::metrics::GlobalMetrics {
-        use super::metrics::{GlobalMetrics};
+        use super::metrics::GlobalMetrics;
 
         let boot_time = System::boot_time() as i64;
         let now = chrono::Utc::now().timestamp();
@@ -335,8 +335,7 @@ impl MetricsCollector {
         let hostname = System::host_name().unwrap_or_else(|| "Unknown".to_string());
 
         // Try to get battery info
-        let (power_source, battery_percent, battery_time_remaining) =
-            self.collect_battery_info();
+        let (power_source, battery_percent, battery_time_remaining) = self.collect_battery_info();
 
         GlobalMetrics {
             uptime_secs,

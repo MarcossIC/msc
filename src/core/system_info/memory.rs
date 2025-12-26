@@ -7,7 +7,6 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use crate::platform::system::windows::mbo::get_motherboard_info;
 use crate::platform::system::windows::ram::get_memory_details;
 
-
 pub fn collect() -> Result<MemoryInfo> {
     let refresh = RefreshKind::nothing()
         .with_memory(MemoryRefreshKind::everything())
@@ -48,9 +47,7 @@ pub fn collect() -> Result<MemoryInfo> {
 
     // Get motherboard model for chipset detection
     #[cfg(windows)]
-    let motherboard_model = get_motherboard_info()
-        .ok()
-        .and_then(|mb| mb.product);
+    let motherboard_model = get_motherboard_info().ok().and_then(|mb| mb.product);
 
     #[cfg(not(windows))]
     let motherboard_model: Option<String> = None;

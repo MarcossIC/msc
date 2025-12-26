@@ -1,9 +1,9 @@
 # MSC CLI
 
-[![Release](https://img.shields.io/github/v/release/marco/msc?style=flat-square)](https://github.com/marco/msc/releases)
-[![Downloads](https://img.shields.io/github/downloads/marco/msc/total?style=flat-square)](https://github.com/marco/msc/releases)
+[![Release](https://img.shields.io/github/v/release/marco/msc?style=flat-square)](https://github.com/MarcossIC/msc/releases)
+[![Downloads](https://img.shields.io/github/downloads/marco/msc/total?style=flat-square)](https://github.com/MarcossIC/msc/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![CI](https://img.shields.io/github/actions/workflow/status/marco/msc/release.yml?style=flat-square&label=CI)](https://github.com/marco/msc/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/marco/msc/release.yml?style=flat-square&label=CI)](https://github.com/MarcossIC/msc/actions)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange?style=flat-square)](https://www.rust-lang.org)
 
 Multi-purpose command-line interface tool for system monitoring, media management, and productivity.
@@ -28,15 +28,15 @@ Multi-purpose command-line interface tool for system monitoring, media managemen
 
 #### Via winget (Recommended - Coming Soon)
 ```powershell
-winget install Marco.MSC
+winget install MSC
 ```
 
 #### Via MSI Installer
-Download the latest `.msi` installer from [releases](https://github.com/marco/msc/releases) and run it. The installer will automatically add `msc` to your PATH.
+Download the latest `.msi` installer from [releases](https://github.com/MarcossIC/msc/releases) and run it. The installer will automatically add `msc` to your PATH.
 
 #### Via PowerShell Script
 ```powershell
-irm https://github.com/marco/msc/releases/latest/download/msc-installer.ps1 | iex
+irm https://github.com/MarcossIC/msc/releases/latest/download/msc-installer.ps1 | iex
 ```
 
 ### macOS
@@ -49,7 +49,7 @@ brew install msc
 
 #### Via Install Script
 ```bash
-curl -sSL https://github.com/marco/msc/releases/latest/download/msc-installer.sh | sh
+curl -sSL https://github.com/MarcossIC/msc/releases/latest/download/msc-installer.sh | sh
 ```
 
 ### Linux
@@ -63,14 +63,14 @@ paru -S msc-bin
 
 #### Via Install Script (Universal)
 ```bash
-curl -sSL https://github.com/marco/msc/releases/latest/download/msc-installer.sh | sh
+curl -sSL https://github.com/MarcossIC/msc/releases/latest/download/msc-installer.sh | sh
 ```
 
 #### Manual Installation
 ```bash
 # Download the appropriate tarball for your architecture
 # x86_64:
-wget https://github.com/marco/msc/releases/latest/download/msc-x86_64-unknown-linux-gnu.tar.xz
+wget https://github.com/MarcossIC/msc/releases/latest/download/msc-x86_64-unknown-linux-gnu.tar.xz
 
 # Extract and install
 tar -xf msc-x86_64-unknown-linux-gnu.tar.xz
@@ -82,7 +82,7 @@ sudo mv msc /usr/local/bin/
 Requires Rust toolchain (install from [rustup.rs](https://rustup.rs))
 
 ```bash
-git clone https://github.com/marco/msc.git
+git clone https://github.com/MarcossIC/msc.git
 cd msc
 cargo build --release
 
@@ -211,7 +211,7 @@ This will check for the latest version and update automatically.
 
 **Windows Note:** You may need to run your terminal as Administrator to update if MSC is installed in Program Files.
 
-Alternatively, download the latest installer from [releases](https://github.com/marco/msc/releases).
+Alternatively, download the latest installer from [releases](https://github.com/MarcossIC/msc/releases).
 
 ## Configuration
 
@@ -311,7 +311,7 @@ msc/
 
 ```bash
 # Clone repository
-git clone https://github.com/marco/msc.git
+git clone https://github.com/MarcossIC/msc.git
 cd msc
 
 # Build debug version
@@ -404,9 +404,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- 🐛 [Report bugs](https://github.com/marco/msc/issues)
-- 💡 [Request features](https://github.com/marco/msc/issues)
-- 📖 [View documentation](https://github.com/marco/msc/blob/main/README.md)
+- 🐛 [Report bugs](https://github.com/MarcossIC/msc/issues)
+- 💡 [Request features](https://github.com/MarcossIC/msc/issues)
+- 📖 [View documentation](https://github.com/MarcossIC/msc/blob/main/README.md)
 
 ---
 

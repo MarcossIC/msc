@@ -207,7 +207,7 @@ Tag ya existe, no se hace nada.
 
 Revisa logs en:
 ```
-https://github.com/YOUR_USERNAME/msc/actions
+https://github.com/MarcossIC/msc/actions
 ```
 
 Errores comunes:

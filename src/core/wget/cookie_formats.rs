@@ -1,7 +1,7 @@
 // Cookie formatting utilities for various export formats
 
-use anyhow::Result;
 pub use super::wget_cookies::Cookie;
+use anyhow::Result;
 
 /// Convert Chrome's WebKit timestamp to Unix timestamp
 ///
@@ -86,13 +86,7 @@ pub fn format_netscape(cookies: &[Cookie]) -> String {
         // Write cookie line (tab-separated)
         output.push_str(&format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            cookie.domain,
-            subdomain_flag,
-            cookie.path,
-            secure_flag,
-            unix_expires,
-            name,
-            value
+            cookie.domain, subdomain_flag, cookie.path, secure_flag, unix_expires, name, value
         ));
     }
 
@@ -100,9 +94,7 @@ pub fn format_netscape(cookies: &[Cookie]) -> String {
 }
 
 fn sanitize_field(value: &str) -> String {
-    value
-        .replace('\t', "")
-        .replace('\n', "")
+    value.replace('\t', "").replace('\n', "")
 }
 
 /// Format cookies as JSON array
@@ -560,7 +552,10 @@ mod tests {
         // Test unsupported format
         let result = format_cookies(&cookies, "xml");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported format"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported format"));
     }
 
     #[test]

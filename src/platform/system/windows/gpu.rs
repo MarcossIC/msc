@@ -1,8 +1,7 @@
-
-use serde::Deserialize;
-use crate::error::{MscError, Result};
-use crate::core::system_info::types::{NvidiaGpuMetrics, AmdGpuMetrics, GpuInfo};
 use super::core::run_powershell_json;
+use crate::core::system_info::types::{AmdGpuMetrics, GpuInfo, NvidiaGpuMetrics};
+use crate::error::{MscError, Result};
+use serde::Deserialize;
 
 #[derive(Debug, Default)]
 struct GpuTelemetry {
@@ -68,15 +67,10 @@ fn get_amd_gpu_memory_type(model: &str) -> Option<String> {
     None
 }
 
-fn collect_nvidia_metrics(
-    index: &mut u32,
-    adapter_ram: Option<u64>,
-) -> GpuTelemetry {
+fn collect_nvidia_metrics(index: &mut u32, adapter_ram: Option<u64>) -> GpuTelemetry {
     #[cfg(feature = "nvml")]
     {
-        if let Ok(nvidia) =
-            crate::platform::nvidia_nvml::get_nvidia_metrics_nvml(*index)
-        {
+        if let Ok(nvidia) = crate::platform::nvidia_nvml::get_nvidia_metrics_nvml(*index) {
             *index += 1;
             return GpuTelemetry {
                 vram_bytes: nvidia.memory_total_bytes,
@@ -87,14 +81,13 @@ fn collect_nvidia_metrics(
                 fan_speed_percent: nvidia.fan_speed_percent,
                 memory_type: crate::platform::nvidia_nvml::get_gpu_memory_type(None),
                 nvidia_metrics: Some(nvidia),
-                ..Default::default() 
+                ..Default::default()
             };
         }
     }
 
     let (core, mem, temp, power, fan) =
-        get_nvidia_realtime_metrics_by_index(*index)
-            .unwrap_or((None, None, None, None, None));
+        get_nvidia_realtime_metrics_by_index(*index).unwrap_or((None, None, None, None, None));
 
     let vram = get_nvidia_vram_from_smi_by_index(*index).or(adapter_ram);
 
@@ -111,15 +104,11 @@ fn collect_nvidia_metrics(
     }
 }
 
-fn collect_amd_metrics(
-    gpu_name: &str,
-    adapter_ram: Option<u64>,
-) -> GpuTelemetry {
+fn collect_amd_metrics(gpu_name: &str, adapter_ram: Option<u64>) -> GpuTelemetry {
     // Métricas específicas AMD (driver / sensores / etc.)
     let amd_metrics = get_amd_metrics(gpu_name);
     // Métricas en tiempo real genéricas
-    let (core, mem, temp, power, fan) =
-        get_gpu_realtime_metrics(gpu_name, "AMD");
+    let (core, mem, temp, power, fan) = get_gpu_realtime_metrics(gpu_name, "AMD");
 
     GpuTelemetry {
         amd_metrics: Some(amd_metrics),
@@ -133,7 +122,6 @@ fn collect_amd_metrics(
         ..Default::default()
     }
 }
-
 
 /// Get GPU information using PowerShell
 pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {

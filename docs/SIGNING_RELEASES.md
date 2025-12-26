@@ -130,7 +130,7 @@ brew install cosign  # macOS
 
 # Verify
 cosign verify-blob \
-  --certificate-identity="https://github.com/marco/msc/.github/workflows/release.yml@refs/tags/v0.1.0" \
+  --certificate-identity="https://github.com/MarcossIC/msc/.github/workflows/release.yml@refs/tags/v0.1.0" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   --signature=msc-x86_64-pc-windows-msvc.msi.sig \
   msc-x86_64-pc-windows-msvc.msi
@@ -197,8 +197,8 @@ All releases include SHA256 checksums for integrity verification.
 
 ```bash
 # Download artifact and checksum
-wget https://github.com/marco/msc/releases/download/v0.1.0/msc-x86_64-pc-windows-msvc.msi
-wget https://github.com/marco/msc/releases/download/v0.1.0/msc-x86_64-pc-windows-msvc.msi.sha256
+wget https://github.com/MarcossIC/msc/releases/download/v0.1.0/msc-x86_64-pc-windows-msvc.msi
+wget https://github.com/MarcossIC/msc/releases/download/v0.1.0/msc-x86_64-pc-windows-msvc.msi.sha256
 
 # Verify (Linux/macOS)
 sha256sum -c msc-x86_64-pc-windows-msvc.msi.sha256

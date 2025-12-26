@@ -7,7 +7,7 @@ This document explains how to complete the package manager integration **AFTER**
 Before following these steps, you must:
 
 1. ✅ Complete Phase 3 (create release v0.1.0 on GitHub)
-2. ✅ Verify release artifacts exist at: `https://github.com/YOUR_USERNAME/msc/releases/tag/v0.1.0`
+2. ✅ Verify release artifacts exist at: `https://github.com/MarcossIC/msc/releases/tag/v0.1.0`
 3. ✅ Have access to the SHA256 checksums
 
 ---
@@ -18,7 +18,7 @@ After creating the release, cargo-dist will generate a `sha256.sum` file with al
 
 **Download it from:**
 ```
-https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/sha256.sum
+https://github.com/MarcossIC/msc/releases/download/v0.1.0/sha256.sum
 ```
 
 **Or download individual .sha256 files for each artifact.**
@@ -41,7 +41,7 @@ Download the MSI installer and extract its ProductCode:
 **On Windows PowerShell:**
 ```powershell
 # Download MSI
-Invoke-WebRequest -Uri "https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/msc-x86_64-pc-windows-msvc.msi" -OutFile "msc.msi"
+Invoke-WebRequest -Uri "https://github.com/MarcossIC/msc/releases/download/v0.1.0/msc-x86_64-pc-windows-msvc.msi" -OutFile "msc.msi"
 
 # Get ProductCode (method 1)
 $installer = "msc.msi"
@@ -84,7 +84,7 @@ Expected output: `Manifest validation succeeded.`
 # Fork https://github.com/microsoft/winget-pkgs on GitHub
 
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/winget-pkgs.git
+git clone https://github.com/MarcossIC/winget-pkgs.git
 cd winget-pkgs
 
 # Create directory structure
@@ -123,8 +123,8 @@ Multi-purpose CLI tool for system monitoring and productivity.
 
 ## Links
 
-- Repository: https://github.com/YOUR_USERNAME/msc
-- Release: https://github.com/YOUR_USERNAME/msc/releases/tag/v0.1.0
+- Repository: https://github.com/MarcossIC/msc
+- Release: https://github.com/MarcossIC/msc/releases/tag/v0.1.0
 ```
 
 **Wait for approval:** Usually 1-7 days
@@ -139,7 +139,7 @@ Multi-purpose CLI tool for system monitoring and productivity.
 2. Clone it locally:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/homebrew-msc.git
+git clone https://github.com/MarcossIC/homebrew-msc.git
 cd homebrew-msc
 ```
 
@@ -238,7 +238,7 @@ winget install Marco.MSC
 ```
 
 #### Via MSI installer
-Download the latest `.msi` from [releases](https://github.com/YOUR_USERNAME/msc/releases)
+Download the latest `.msi` from [releases](https://github.com/MarcossIC/msc/releases)
 
 ### macOS / Linux
 
@@ -250,7 +250,7 @@ brew install msc
 
 #### Via install script
 ```bash
-curl -sSL https://github.com/YOUR_USERNAME/msc/releases/latest/download/msc-installer.sh | sh
+curl -sSL https://github.com/MarcossIC/msc/releases/latest/download/msc-installer.sh | sh
 ```
 
 ### Arch Linux
@@ -262,7 +262,7 @@ yay -S msc-bin
 ### From source
 
 ```bash
-cargo install --git https://github.com/YOUR_USERNAME/msc
+cargo install --git https://github.com/MarcossIC/msc
 ```
 
 ## Updating

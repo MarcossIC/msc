@@ -1,25 +1,25 @@
 class Msc < Formula
   desc "Multi-purpose CLI tool for system monitoring, media management, and productivity"
-  homepage "https://github.com/YOUR_USERNAME/msc"
+  homepage "https://github.com/MarcossIC/msc"
   version "0.1.0"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/msc-aarch64-apple-darwin.tar.xz"
+      url "https://github.com/MarcossIC/msc/releases/download/v0.1.0/msc-aarch64-apple-darwin.tar.xz"
       sha256 "REPLACE_WITH_SHA256_ARM64_MACOS"
     else
-      url "https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/msc-x86_64-apple-darwin.tar.xz"
+      url "https://github.com/MarcossIC/msc/releases/download/v0.1.0/msc-x86_64-apple-darwin.tar.xz"
       sha256 "REPLACE_WITH_SHA256_X86_64_MACOS"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/msc-aarch64-unknown-linux-gnu.tar.xz"
+      url "https://github.com/MarcossIC/msc/releases/download/v0.1.0/msc-aarch64-unknown-linux-gnu.tar.xz"
       sha256 "REPLACE_WITH_SHA256_ARM64_LINUX"
     else
-      url "https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/msc-x86_64-unknown-linux-gnu.tar.xz"
+      url "https://github.com/MarcossIC/msc/releases/download/v0.1.0/msc-x86_64-unknown-linux-gnu.tar.xz"
       sha256 "REPLACE_WITH_SHA256_X86_64_LINUX"
     end
   end
@@ -46,7 +46,7 @@ end
 # 1. Replace YOUR_USERNAME with your GitHub username
 #
 # 2. After creating release v0.1.0, get SHA256 hashes from:
-#    https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/sha256.sum
+#    https://github.com/MarcossIC/msc/releases/download/v0.1.0/sha256.sum
 #
 #    Or download each .sha256 file:
 #    - msc-aarch64-apple-darwin.tar.xz.sha256      (ARM64 macOS)

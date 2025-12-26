@@ -13,8 +13,7 @@ pub mod wgetpostprocessing;
 
 // Re-export commonly used items
 pub use cdp_cookies::{
-    extract_cookies_cdp, get_cookies_for_domain, is_cdp_available,
-    print_cdp_instructions,
+    extract_cookies_cdp, get_cookies_for_domain, is_cdp_available, print_cdp_instructions,
 };
 pub use chrome_decrypt::ChromeDecryptor;
 pub use chrome_launcher::ChromeInstance;
@@ -25,9 +24,8 @@ pub use cookie_formats::{
 };
 pub use dpapi::decrypt_dpapi;
 pub use wget_cookies::{
-    create_cookie_file, debug_database_info, extract_cookies_from_db,
-    extract_cookies_with_cdp, find_browser_cookie_db, format_cookies, resolve_cookie_path,
-    Cookie,
+    create_cookie_file, debug_database_info, extract_cookies_from_db, extract_cookies_with_cdp,
+    find_browser_cookie_db, format_cookies, resolve_cookie_path, Cookie,
 };
 pub use wget_manager::WgetManager;
 pub use wget_utils::{

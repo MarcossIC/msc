@@ -103,19 +103,16 @@ pub async fn is_cdp_available() -> bool {
 
 /// Get WebSocket URL for CDP connection
 async fn get_ws_url() -> Result<String> {
-    let response: Vec<CdpTarget> = reqwest::get(format!(
-        "http://127.0.0.1:{}/json",
-        CDP_PORT
-    ))
-    .await
-    .context(
-        "Chrome no está corriendo con --remote-debugging-port=9222.\n\
+    let response: Vec<CdpTarget> = reqwest::get(format!("http://127.0.0.1:{}/json", CDP_PORT))
+        .await
+        .context(
+            "Chrome no está corriendo con --remote-debugging-port=9222.\n\
          Inicia Chrome con: chrome.exe --remote-debugging-port=9222\n\
          O usa: msc wget cookies URL --auto-launch",
-    )?
-    .json()
-    .await
-    .context("Respuesta CDP inválida")?;
+        )?
+        .json()
+        .await
+        .context("Respuesta CDP inválida")?;
 
     // Find first target with ws_url - accept any page type including about:blank
     response
@@ -232,7 +229,8 @@ pub async fn get_all_cookies() -> Result<Vec<CdpCookie>> {
         params: serde_json::json!({}),
     };
 
-    ws.send(Message::Text(serde_json::to_string(&enable)?.into())).await?;
+    ws.send(Message::Text(serde_json::to_string(&enable)?.into()))
+        .await?;
 
     // 2. Request cookies
     let request = CdpRequest {
@@ -241,7 +239,8 @@ pub async fn get_all_cookies() -> Result<Vec<CdpCookie>> {
         params: serde_json::json!({}),
     };
 
-    ws.send(Message::Text(serde_json::to_string(&request)?.into())).await?;
+    ws.send(Message::Text(serde_json::to_string(&request)?.into()))
+        .await?;
 
     while let Some(msg) = ws.next().await {
         let msg = msg.context("Error leyendo respuesta CDP")?;
@@ -290,8 +289,14 @@ pub async fn get_cookies_for_domain(domain: &str) -> Result<Vec<CdpCookie>> {
         .unwrap_or(domain);
 
     // DEBUG: Show what we're looking for and what we found
-    println!("{}", format!("   🔍 Buscando cookies para dominio: '{}'", clean_domain).dimmed());
-    println!("{}", format!("   📊 Total de cookies en CDP: {}", all_cookies.len()).dimmed());
+    println!(
+        "{}",
+        format!("   🔍 Buscando cookies para dominio: '{}'", clean_domain).dimmed()
+    );
+    println!(
+        "{}",
+        format!("   📊 Total de cookies en CDP: {}", all_cookies.len()).dimmed()
+    );
 
     // DEBUG: Show unique domains found
     let mut domains: Vec<String> = all_cookies.iter().map(|c| c.domain.clone()).collect();
@@ -304,10 +309,16 @@ pub async fn get_cookies_for_domain(domain: &str) -> Result<Vec<CdpCookie>> {
             println!("{}", format!("      {}. {}", i + 1, d).dimmed());
         }
         if domains.len() > 10 {
-            println!("{}", format!("      ... y {} más", domains.len() - 10).dimmed());
+            println!(
+                "{}",
+                format!("      ... y {} más", domains.len() - 10).dimmed()
+            );
         }
     } else {
-        println!("{}", "   ⚠️  CDP no devolvió ninguna cookie (perfil vacío)".yellow());
+        println!(
+            "{}",
+            "   ⚠️  CDP no devolvió ninguna cookie (perfil vacío)".yellow()
+        );
     }
 
     let matched_cookies: Vec<CdpCookie> = all_cookies
@@ -324,7 +335,15 @@ pub async fn get_cookies_for_domain(domain: &str) -> Result<Vec<CdpCookie>> {
         })
         .collect();
 
-    println!("{}", format!("   ✓ Cookies encontradas para '{}': {}", clean_domain, matched_cookies.len()).dimmed());
+    println!(
+        "{}",
+        format!(
+            "   ✓ Cookies encontradas para '{}': {}",
+            clean_domain,
+            matched_cookies.len()
+        )
+        .dimmed()
+    );
 
     Ok(matched_cookies)
 }
@@ -368,7 +387,10 @@ pub async fn extract_cookies_cdp(domain: &str) -> Result<Vec<Cookie>> {
 /// - Subsequent retries: exponential backoff (500ms, 1s, 2s, etc.)
 /// - Retries on: Connection errors, timeout, no targets found
 /// - No retry on: Invalid domain, authentication errors
-pub async fn extract_cookies_cdp_with_retry(domain: &str, max_retries: usize) -> Result<Vec<Cookie>> {
+pub async fn extract_cookies_cdp_with_retry(
+    domain: &str,
+    max_retries: usize,
+) -> Result<Vec<Cookie>> {
     let mut last_error = None;
 
     for attempt in 0..=max_retries {
@@ -378,7 +400,15 @@ pub async fn extract_cookies_cdp_with_retry(domain: &str, max_retries: usize) ->
                 let result: Vec<Cookie> = cookies.into_iter().map(Cookie::from).collect();
 
                 if attempt > 0 {
-                    println!("{}", format!("✓ Extracción exitosa en intento {}/{}", attempt + 1, max_retries + 1).green());
+                    println!(
+                        "{}",
+                        format!(
+                            "✓ Extracción exitosa en intento {}/{}",
+                            attempt + 1,
+                            max_retries + 1
+                        )
+                        .green()
+                    );
                 }
 
                 return Ok(result);
@@ -396,11 +426,13 @@ pub async fn extract_cookies_cdp_with_retry(domain: &str, max_retries: usize) ->
 
                 println!(
                     "{}",
-                    format!("   ⟳ Intento {}/{} falló, reintentando en {}ms...",
+                    format!(
+                        "   ⟳ Intento {}/{} falló, reintentando en {}ms...",
                         attempt + 1,
                         max_retries + 1,
                         delay_ms
-                    ).yellow()
+                    )
+                    .yellow()
                 );
 
                 tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
@@ -409,7 +441,8 @@ pub async fn extract_cookies_cdp_with_retry(domain: &str, max_retries: usize) ->
     }
 
     // All retries failed
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("CDP extraction failed after {} retries", max_retries)))
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("CDP extraction failed after {} retries", max_retries)))
 }
 
 /// Print instructions for enabling CDP

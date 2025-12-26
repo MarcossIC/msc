@@ -1,5 +1,5 @@
-use serde::Deserialize;
 use crate::error::{MscError, Result};
+use serde::Deserialize;
 #[cfg(windows)]
 use wmi::WMIConnection;
 

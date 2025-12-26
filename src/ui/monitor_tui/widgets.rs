@@ -24,4 +24,3 @@ pub fn temp_color(temp: f32) -> Color {
         _ => Color::Red,
     }
 }
-

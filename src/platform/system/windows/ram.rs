@@ -1,7 +1,7 @@
-use serde::Deserialize;
-use crate::error::{Result};
-use crate::core::system_info::types::{DdrType, MemoryModule};
 use super::core::run_powershell_json;
+use crate::core::system_info::types::{DdrType, MemoryModule};
+use crate::error::Result;
+use serde::Deserialize;
 
 /// Get detailed memory information using PowerShell
 #[derive(Default)]

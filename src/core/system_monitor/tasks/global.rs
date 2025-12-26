@@ -1,8 +1,8 @@
 //! Global system metrics task.
 
+use sysinfo::System;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, Duration, MissedTickBehavior};
-use sysinfo::System;
 
 use super::SubsystemUpdate;
 use crate::core::system_monitor::GlobalMetrics;

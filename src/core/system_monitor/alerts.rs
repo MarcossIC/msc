@@ -8,16 +8,16 @@ use serde::{Deserialize, Serialize};
 /// Alert configuration with thresholds
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
-    pub cpu_warning: f32,      // Warning threshold (%)
-    pub cpu_critical: f32,     // Critical threshold (%)
-    pub memory_warning: f32,   // Warning threshold (%)
-    pub memory_critical: f32,  // Critical threshold (%)
-    pub gpu_warning: f32,      // Warning threshold (%)
-    pub gpu_critical: f32,     // Critical threshold (%)
-    pub disk_warning: f32,     // Warning threshold (%)
-    pub disk_critical: f32,    // Critical threshold (%)
-    pub temp_warning: f32,     // Warning threshold (°C)
-    pub temp_critical: f32,    // Critical threshold (°C)
+    pub cpu_warning: f32,     // Warning threshold (%)
+    pub cpu_critical: f32,    // Critical threshold (%)
+    pub memory_warning: f32,  // Warning threshold (%)
+    pub memory_critical: f32, // Critical threshold (%)
+    pub gpu_warning: f32,     // Warning threshold (%)
+    pub gpu_critical: f32,    // Critical threshold (%)
+    pub disk_warning: f32,    // Warning threshold (%)
+    pub disk_critical: f32,   // Critical threshold (%)
+    pub temp_warning: f32,    // Warning threshold (°C)
+    pub temp_critical: f32,   // Critical threshold (°C)
 }
 
 impl Default for AlertConfig {
@@ -59,9 +59,9 @@ pub enum AlertCategory {
     CPU,
     Memory,
     GPU,
-    Disk(String), // Disk name
+    Disk(String),        // Disk name
     Temperature(String), // Sensor name
-    Network(String), // Interface name
+    Network(String),     // Interface name
 }
 
 /// Evaluate system metrics and generate alerts
@@ -99,10 +99,7 @@ pub fn evaluate_alerts(metrics: &SystemMetrics, config: &AlertConfig) -> Vec<Ale
             alerts.push(Alert {
                 severity: AlertSeverity::Critical,
                 category: AlertCategory::CPU,
-                message: format!(
-                    "CPU Core {} at {:.1}% for extended period",
-                    i, usage
-                ),
+                message: format!("CPU Core {} at {:.1}% for extended period", i, usage),
                 value: usage,
                 threshold: config.cpu_critical,
             });
@@ -241,10 +238,7 @@ pub fn evaluate_alerts(metrics: &SystemMetrics, config: &AlertConfig) -> Vec<Ale
                     AlertSeverity::Info
                 },
                 category: AlertCategory::Network(net.interface.clone()),
-                message: format!(
-                    "{} has {} network errors",
-                    net.interface, total_errors
-                ),
+                message: format!("{} has {} network errors", net.interface, total_errors),
                 value: total_errors as f32,
                 threshold: 0.0,
             });

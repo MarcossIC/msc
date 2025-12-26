@@ -28,7 +28,7 @@ brew tap marco/msc
 brew install msc
 
 # Or via install script
-curl -sSL https://github.com/marco/msc/releases/latest/download/msc-installer.sh | sh
+curl -sSL https://github.com/MarcossIC/msc/releases/latest/download/msc-installer.sh | sh
 ```
 
 ## Verifying Installation

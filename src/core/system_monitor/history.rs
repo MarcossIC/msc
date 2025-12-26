@@ -69,7 +69,10 @@ impl MetricsHistory {
     /// Convert memory_usage to u64 slice for sparkline widget
     /// Scales values by 10 to preserve decimal precision (0-1000 range)
     pub fn memory_as_u64(&self) -> Vec<u64> {
-        self.memory_usage.iter().map(|&v| (v * 10.0) as u64).collect()
+        self.memory_usage
+            .iter()
+            .map(|&v| (v * 10.0) as u64)
+            .collect()
     }
 }
 

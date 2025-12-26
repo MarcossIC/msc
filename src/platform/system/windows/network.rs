@@ -1,8 +1,8 @@
-use crate::error::{MscError, Result};
 use crate::core::system_info::types::{
-    WifiBand, WifiStandard, NetworkInfo, BluetoothVersion, BluetoothAdapter,
-    WifiAdapter, EthernetAdapter
+    BluetoothAdapter, BluetoothVersion, EthernetAdapter, NetworkInfo, WifiAdapter, WifiBand,
+    WifiStandard,
 };
+use crate::error::{MscError, Result};
 
 /// Get network adapter information using PowerShell
 pub fn get_network_info() -> Result<NetworkInfo> {

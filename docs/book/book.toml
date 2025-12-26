@@ -9,9 +9,9 @@ description = "Complete documentation for MSC - Multi-purpose CLI tool"
 [preprocessor.links]
 
 [output.html]
-git-repository-url = "https://github.com/marco/msc"
+git-repository-url = "https://github.com/MarcossIC/msc"
 git-repository-icon = "fa-github"
-edit-url-template = "https://github.com/marco/msc/edit/main/docs/book/{path}"
+edit-url-template = "https://github.com/MarcossIC/msc/edit/main/docs/book/{path}"
 site-url = "/msc/"
 default-theme = "navy"
 preferred-dark-theme = "navy"

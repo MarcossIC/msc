@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use wincode_derive::{SchemaWrite, SchemaRead};
 
-#[derive(Debug, Default, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[derive(Debug, Default, Serialize, Deserialize, SchemaWrite, SchemaRead)]
 pub struct Config {
     #[serde(default)]
     pub work_path: Option<String>,
@@ -52,13 +53,13 @@ impl Config {
                 warn!("Config file is empty, using default configuration");
                 Config::default()
             } else {
-                match bincode::decode_from_slice::<Config, _>(&data, bincode::config::standard()) {
-                    Ok((config, _size)) => config,
+                match wincode::deserialize::<Config>(&data) {
+                    Ok(config) => config,
                     Err(e) => {
                         warn!(
-                            "Failed to deserialize config file ({}), using default configuration. \
-                             This can happen when the config format changes. \
-                             Previous config will be backed up on next save.",
+                            "Failed to deserialize config file with wincode ({}). \
+                             Using default configuration. \
+                             This often happens if the Config struct changed.",
                             e
                         );
                         Config::default()
@@ -85,8 +86,8 @@ impl Config {
                 .with_context(|| format!("Failed to create config directory: {:?}", parent))?;
         }
 
-        let data = bincode::encode_to_vec(self, bincode::config::standard())
-            .with_context(|| "Failed to serialize config")?;
+        let data = wincode::serialize(self)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize config with wincode: {}", e))?;
 
         fs::write(&config_path, data)
             .with_context(|| format!("Failed to write config file: {:?}", config_path))?;

@@ -143,13 +143,12 @@ pub fn execute_cookies(matches: &clap::ArgMatches) -> Result<()> {
 
     let cookies = if use_cdp || auto_launch {
         // Use async runtime for CDP extraction
-        tokio::runtime::Runtime::new()?
-            .block_on(extract_cookies_with_cdp(
-                domain,
-                &cookie_db_path,
-                use_cdp,
-                auto_launch,
-            ))?
+        tokio::runtime::Runtime::new()?.block_on(extract_cookies_with_cdp(
+            domain,
+            &cookie_db_path,
+            use_cdp,
+            auto_launch,
+        ))?
     } else {
         // Standard sync extraction
         extract_cookies_from_db(&cookie_db_path, domain)?

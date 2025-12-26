@@ -10,16 +10,13 @@ use anyhow::Result;
 use colored::Colorize;
 use std::path::PathBuf;
 use std::time::Duration;
-use sysinfo::{System, ProcessRefreshKind};
+use sysinfo::{ProcessRefreshKind, System};
 
-use super::chrome_launcher::{
-    ChromeInstance,
-    kill_all_chrome_processes,
-    wait_for_file_release,
-    launch_with_original_profile,
-    get_original_profile_path,
-};
 use super::cdp_cookies;
+use super::chrome_launcher::{
+    get_original_profile_path, kill_all_chrome_processes, launch_with_original_profile,
+    wait_for_file_release, ChromeInstance,
+};
 use super::wget_cookies::{extract_cookies_from_db, Cookie};
 
 const CDP_PORT: u16 = 9222;
@@ -73,11 +70,20 @@ impl ChromeManager {
 
         // Check if Chrome process is running
         let mut system = System::new();
-        system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+        system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
 
         let chrome_names = match self.browser_type.as_str() {
             "edge" => vec!["msedge.exe", "msedge"],
-            _ => vec!["chrome.exe", "chrome", "google-chrome", "google-chrome-stable"],
+            _ => vec![
+                "chrome.exe",
+                "chrome",
+                "google-chrome",
+                "google-chrome-stable",
+            ],
         };
 
         for (_pid, process) in system.processes() {
@@ -119,14 +125,10 @@ impl ChromeManager {
 
             // Chrome running WITHOUT CDP + auto-launch → RESTART (CRITICAL CHANGE)
             // This is the core fix for Chrome 127+ ABE
-            (_, true, ChromeState::RunningWithoutCDP) => {
-                ExtractionStrategy::RestartWithCDP
-            }
+            (_, true, ChromeState::RunningWithoutCDP) => ExtractionStrategy::RestartWithCDP,
 
             // Chrome NOT running + auto-launch → Launch with original profile
-            (_, true, ChromeState::NotRunning) => {
-                ExtractionStrategy::LaunchWithOriginalProfile
-            }
+            (_, true, ChromeState::NotRunning) => ExtractionStrategy::LaunchWithOriginalProfile,
 
             // User wants CDP but Chrome is not running with it
             (true, false, _) => ExtractionStrategy::ExistingCDP,
@@ -162,13 +164,13 @@ impl ChromeManager {
                 println!("{}", "   • Chrome no está ejecutándose".dimmed());
             }
             ChromeState::RunningWithCDP => {
-                println!("{}", "   • Chrome ejecutándose con CDP habilitado ✓".green());
-            }
-            ChromeState::RunningWithoutCDP => {
                 println!(
                     "{}",
-                    "   • Chrome ejecutándose (sin CDP)".yellow()
+                    "   • Chrome ejecutándose con CDP habilitado ✓".green()
                 );
+            }
+            ChromeState::RunningWithoutCDP => {
+                println!("{}", "   • Chrome ejecutándose (sin CDP)".yellow());
 
                 // Provide context-specific advice
                 if auto_launch {
@@ -184,15 +186,15 @@ impl ChromeManager {
         let (strategy_name, strategy_desc) = match strategy {
             ExtractionStrategy::ExistingCDP => (
                 "Conexión a CDP existente",
-                "Usando Chrome que ya está corriendo con CDP"
+                "Usando Chrome que ya está corriendo con CDP",
             ),
             ExtractionStrategy::RestartWithCDP => (
                 "Reiniciar Chrome con CDP",
-                "Se cerrará Chrome y se relanzará con perfil original + CDP (Restart-and-Attach)"
+                "Se cerrará Chrome y se relanzará con perfil original + CDP (Restart-and-Attach)",
             ),
             ExtractionStrategy::LaunchWithOriginalProfile => (
                 "Lanzar Chrome con perfil original",
-                "Se lanzará Chrome con CDP usando tu perfil real (sin copias)"
+                "Se lanzará Chrome con CDP usando tu perfil real (sin copias)",
             ),
             ExtractionStrategy::DirectDatabase => (
                 "Extracción directa de base de datos",
@@ -200,7 +202,7 @@ impl ChromeManager {
                     "Leyendo cookies directamente del disco (puede fallar en Chrome 127+ con ABE)"
                 } else {
                     "Leyendo cookies directamente del disco"
-                }
+                },
             ),
         };
         println!("{} {}", "   • Estrategia:".cyan(), strategy_name.bold());
@@ -239,10 +241,7 @@ impl ChromeManager {
                 match self.try_cdp_extraction(domain).await {
                     Ok(cookies) => return Ok(cookies),
                     Err(e) => {
-                        eprintln!(
-                            "{}",
-                            format!("⚠️  CDP falló: {}", e).yellow()
-                        );
+                        eprintln!("{}", format!("⚠️  CDP falló: {}", e).yellow());
                         eprintln!("{}", "   Intentando método alternativo...".dimmed());
                     }
                 }
@@ -331,12 +330,23 @@ impl ChromeManager {
     /// - CDP returns plaintext cookies from memory
     async fn execute_restart_with_cdp(&self, domain: &str) -> Result<Vec<Cookie>> {
         println!();
-        println!("{}", "🔄 Chrome está abierto sin CDP. Reiniciando...".yellow().bold());
+        println!(
+            "{}",
+            "🔄 Chrome está abierto sin CDP. Reiniciando..."
+                .yellow()
+                .bold()
+        );
         println!();
 
         // 1. Warning to user
-        println!("{}", "   ⚠️  Se cerrarán todas las pestañas de Chrome".yellow());
-        println!("{}", "   ⏳ Esperando 3 segundos (Ctrl+C para cancelar)...".dimmed());
+        println!(
+            "{}",
+            "   ⚠️  Se cerrarán todas las pestañas de Chrome".yellow()
+        );
+        println!(
+            "{}",
+            "   ⏳ Esperando 3 segundos (Ctrl+C para cancelar)...".dimmed()
+        );
         println!();
 
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -351,13 +361,13 @@ impl ChromeManager {
 
         // 4. Launch Chrome with ORIGINAL profile
         let original_profile = get_original_profile_path(&self.browser_type)?;
-        let _chrome_process = launch_with_original_profile(
-            &self.browser_type,
-            &original_profile,
-        )?;
+        let _chrome_process = launch_with_original_profile(&self.browser_type, &original_profile)?;
 
         println!();
-        println!("{}", "   ⏳ Esperando que Chrome cargue cookies en memoria...".dimmed());
+        println!(
+            "{}",
+            "   ⏳ Esperando que Chrome cargue cookies en memoria...".dimmed()
+        );
 
         // Give Chrome time to initialize CDP and load cookies
         for _i in 1..=5 {
@@ -377,25 +387,25 @@ impl ChromeManager {
     ///
     /// This is the NEW approach that preserves ABE path binding.
     /// Instead of copying the profile, we launch Chrome with the original profile.
-    async fn try_launch_with_original_profile(
-        &self,
-        domain: &str,
-    ) -> Result<Vec<Cookie>> {
+    async fn try_launch_with_original_profile(&self, domain: &str) -> Result<Vec<Cookie>> {
         println!();
-        println!("{}", "🚀 Lanzando Chrome con perfil original...".cyan().bold());
+        println!(
+            "{}",
+            "🚀 Lanzando Chrome con perfil original...".cyan().bold()
+        );
         println!("{}", "   (Sin copias - preserva ABE path binding)".dimmed());
         println!();
 
         // Launch Chrome with ORIGINAL profile
         let original_profile = get_original_profile_path(&self.browser_type)?;
-        let _chrome_process = launch_with_original_profile(
-            &self.browser_type,
-            &original_profile,
-        )?;
+        let _chrome_process = launch_with_original_profile(&self.browser_type, &original_profile)?;
 
         // Give Chrome time to load cookies into memory
         println!();
-        println!("{}", "   ⏳ Esperando que Chrome cargue las cookies en memoria...".dimmed());
+        println!(
+            "{}",
+            "   ⏳ Esperando que Chrome cargue las cookies en memoria...".dimmed()
+        );
 
         // Wait progressively with feedback
         for _i in 1..=5 {
@@ -443,20 +453,20 @@ impl ChromeManager {
                 eprintln!("{}", "Chrome está abierto sin CDP.".yellow());
                 eprintln!();
                 eprintln!("{}", "Opción 1: Cerrar Chrome completamente".green());
-                eprintln!("{}", "  1. Abre el Administrador de Tareas (Ctrl+Shift+Esc)".dimmed());
-                eprintln!("{}", "  2. Busca 'chrome.exe' en la pestaña Detalles".dimmed());
+                eprintln!(
+                    "{}",
+                    "  1. Abre el Administrador de Tareas (Ctrl+Shift+Esc)".dimmed()
+                );
+                eprintln!(
+                    "{}",
+                    "  2. Busca 'chrome.exe' en la pestaña Detalles".dimmed()
+                );
                 eprintln!("{}", "  3. Finaliza TODOS los procesos de Chrome".dimmed());
                 eprintln!("{}", "  4. Vuelve a ejecutar el comando".dimmed());
                 eprintln!();
                 eprintln!("{}", "Opción 2: Iniciar Chrome manualmente con CDP".green());
-                eprintln!(
-                    "{}",
-                    "  chrome.exe --remote-debugging-port=9222".cyan()
-                );
-                eprintln!(
-                    "{}",
-                    "  Luego: msc wget cookies <URL> --cdp".dimmed()
-                );
+                eprintln!("{}", "  chrome.exe --remote-debugging-port=9222".cyan());
+                eprintln!("{}", "  Luego: msc wget cookies <URL> --cdp".dimmed());
             }
 
             ChromeState::NotRunning if use_cdp => {
@@ -466,31 +476,22 @@ impl ChromeManager {
                 );
                 eprintln!();
                 eprintln!("{}", "Opciones:".green());
-                eprintln!(
-                    "{}",
-                    "  1. Usa --auto-launch en lugar de --cdp".cyan()
-                );
-                eprintln!(
-                    "{}",
-                    "  2. Inicia Chrome manualmente con:".dimmed()
-                );
-                eprintln!(
-                    "{}",
-                    "     chrome.exe --remote-debugging-port=9222".cyan()
-                );
+                eprintln!("{}", "  1. Usa --auto-launch en lugar de --cdp".cyan());
+                eprintln!("{}", "  2. Inicia Chrome manualmente con:".dimmed());
+                eprintln!("{}", "     chrome.exe --remote-debugging-port=9222".cyan());
             }
 
             _ => {
                 // Check if it's a Chrome 127+ issue
                 if error.to_string().contains("App-Bound") {
-                    eprintln!("{}", "Chrome 127+ detectado (App-Bound Encryption)".yellow());
+                    eprintln!(
+                        "{}",
+                        "Chrome 127+ detectado (App-Bound Encryption)".yellow()
+                    );
                     eprintln!();
                     eprintln!("{}", "Este error requiere CDP. Prueba:".green());
                     eprintln!("{}", "  1. Cerrar Chrome completamente".dimmed());
-                    eprintln!(
-                        "{}",
-                        "  2. msc wget cookies <URL> --auto-launch".cyan()
-                    );
+                    eprintln!("{}", "  2. msc wget cookies <URL> --auto-launch".cyan());
                     eprintln!();
                     eprintln!("{}", "Alternativas:".green());
                     eprintln!("{}", "  • Usar Firefox: --browser firefox".dimmed());

@@ -2,14 +2,12 @@
 //!
 //! These subsystems are grouped together because they share the sysinfo::System instance.
 
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, RefreshKind, System};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, Duration, MissedTickBehavior};
-use sysinfo::{System, RefreshKind, CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind};
 
 use super::SubsystemUpdate;
-use crate::core::system_monitor::{
-    collect_cpu, collect_memory, sort_and_truncate_processes,
-};
+use crate::core::system_monitor::{collect_cpu, collect_memory, sort_and_truncate_processes};
 
 /// Task that monitors CPU, Memory, and Processes.
 ///

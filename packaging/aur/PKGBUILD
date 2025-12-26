@@ -4,7 +4,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Multi-purpose CLI tool for system monitoring, media management, and productivity"
 arch=('x86_64' 'aarch64')
-url="https://github.com/YOUR_USERNAME/msc"
+url="https://github.com/MarcossIC/msc"
 license=('MIT')
 provides=('msc')
 conflicts=('msc')
@@ -15,8 +15,8 @@ optdepends=(
     'wget: For website archiving'
 )
 
-source_x86_64=("https://github.com/YOUR_USERNAME/msc/releases/download/v${pkgver}/msc-x86_64-unknown-linux-gnu.tar.xz")
-source_aarch64=("https://github.com/YOUR_USERNAME/msc/releases/download/v${pkgver}/msc-aarch64-unknown-linux-gnu.tar.xz")
+source_x86_64=("https://github.com/MarcossIC/msc/releases/download/v${pkgver}/msc-x86_64-unknown-linux-gnu.tar.xz")
+source_aarch64=("https://github.com/MarcossIC/msc/releases/download/v${pkgver}/msc-aarch64-unknown-linux-gnu.tar.xz")
 
 sha256sums_x86_64=('REPLACE_WITH_SHA256_X86_64_LINUX')
 sha256sums_aarch64=('REPLACE_WITH_SHA256_ARM64_LINUX')
@@ -53,7 +53,7 @@ package() {
 # 2. Replace your-email@example.com with your actual email
 #
 # 3. After creating release v0.1.0, get SHA256 hashes from:
-#    https://github.com/YOUR_USERNAME/msc/releases/download/v0.1.0/sha256.sum
+#    https://github.com/MarcossIC/msc/releases/download/v0.1.0/sha256.sum
 #
 #    Or download individual .sha256 files:
 #    - msc-x86_64-unknown-linux-gnu.tar.xz.sha256

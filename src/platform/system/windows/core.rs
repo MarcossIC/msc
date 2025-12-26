@@ -1,5 +1,5 @@
-use serde::de::DeserializeOwned;
 use crate::error::{MscError, Result};
+use serde::de::DeserializeOwned;
 
 pub fn run_powershell_json<T: DeserializeOwned>(command: &str) -> Result<T> {
     use std::process::Command;

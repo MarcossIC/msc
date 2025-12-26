@@ -1,8 +1,8 @@
 //! Network monitoring task.
 
+use sysinfo::Networks;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, Duration, Instant, MissedTickBehavior};
-use sysinfo::Networks;
 
 use super::SubsystemUpdate;
 use crate::core::system_monitor::NetworkMetrics;

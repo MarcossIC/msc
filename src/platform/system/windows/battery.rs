@@ -1,5 +1,7 @@
+use crate::core::system_info::types::{
+    BatteryInfo, BatteryState, BatteryTechnology, PowerMode, PowerPlan, PowerPlanInfo,
+};
 use crate::error::{MscError, Result};
-use crate::core::system_info::types::{BatteryInfo, PowerMode, PowerPlanInfo, PowerPlan, BatteryTechnology, BatteryState};
 
 /// Get battery information using PowerShell
 /// Get comprehensive battery information using multiple Windows APIs

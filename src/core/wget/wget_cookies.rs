@@ -336,27 +336,34 @@ pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cooki
             |row| {
                 // Extract all fields as raw values
                 Ok((
-                    row.get::<_, String>(0)?,     // name
-                    row.get::<_, String>(1)?,     // value
-                    row.get::<_, Vec<u8>>(2)?,    // encrypted_value
-                    row.get::<_, String>(3)?,     // host_key (domain)
-                    row.get::<_, String>(4)?,     // path
-                    row.get::<_, i64>(5)?,        // expires_utc
-                    row.get::<_, i64>(6)? != 0,   // is_secure
-                    row.get::<_, i64>(7)? != 0,   // is_httponly
-                    row.get::<_, i64>(8)?,        // samesite
+                    row.get::<_, String>(0)?,   // name
+                    row.get::<_, String>(1)?,   // value
+                    row.get::<_, Vec<u8>>(2)?,  // encrypted_value
+                    row.get::<_, String>(3)?,   // host_key (domain)
+                    row.get::<_, String>(4)?,   // path
+                    row.get::<_, i64>(5)?,      // expires_utc
+                    row.get::<_, i64>(6)? != 0, // is_secure
+                    row.get::<_, i64>(7)? != 0, // is_httponly
+                    row.get::<_, i64>(8)?,      // samesite
                 ))
             },
         )?;
 
         // Process cookies with decryption
-        for (name, value, encrypted_value, domain, path, expires, secure, http_only, same_site_int) in cookie_iter.flatten() {
-            let final_value = match resolve_cookie_value(
-                &name,
-                value,
-                encrypted_value,
-                &decryptor,
-            ) {
+        for (
+            name,
+            value,
+            encrypted_value,
+            domain,
+            path,
+            expires,
+            secure,
+            http_only,
+            same_site_int,
+        ) in cookie_iter.flatten()
+        {
+            let final_value = match resolve_cookie_value(&name, value, encrypted_value, &decryptor)
+            {
                 Some(v) => v,
                 None => continue,
             };
@@ -455,7 +462,6 @@ pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cooki
     Ok(cookies)
 }
 
-
 fn same_site_from_int(value: i64) -> &'static str {
     match value {
         0 => "None",
@@ -516,9 +522,7 @@ pub async fn extract_cookies_with_cdp(
     use_cdp: bool,
     auto_launch: bool,
 ) -> Result<Vec<Cookie>> {
-    let path = db_path
-        .to_string_lossy()
-        .to_lowercase();
+    let path = db_path.to_string_lossy().to_lowercase();
 
     let browser_type = if path.contains("edge") {
         "edge"

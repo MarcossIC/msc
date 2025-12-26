@@ -13,11 +13,8 @@ pub enum MscError {
     #[error("Git error: {0}")]
     Git(#[from] git2::Error),
 
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] bincode::error::EncodeError),
-
-    #[error("Deserialization error: {0}")]
-    Deserialization(#[from] bincode::error::DecodeError),
+    #[error("Wincode error: {0}")]
+    Wincode(#[from] wincode::Error),
 
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),

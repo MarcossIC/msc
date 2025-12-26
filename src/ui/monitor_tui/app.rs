@@ -1,6 +1,6 @@
 use std::io;
-use std::time::{Duration, Instant};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -97,11 +97,8 @@ impl MonitorApp {
                 self.smoothed_per_core = self.metrics.cpu.per_core_usage.clone();
             } else {
                 for (i, &current) in self.metrics.cpu.per_core_usage.iter().enumerate() {
-                    self.smoothed_per_core[i] = self.smooth_value(
-                        self.smoothed_per_core[i],
-                        current,
-                        ALPHA,
-                    );
+                    self.smoothed_per_core[i] =
+                        self.smooth_value(self.smoothed_per_core[i], current, ALPHA);
                 }
             }
 
@@ -217,7 +214,7 @@ pub fn run_monitor_app(config: MonitorAppConfig) -> Result<()> {
 
     // Create app
     let mut app = MonitorApp::new(config)?;
-    
+
     // Target 60 FPS
     let frame_duration = Duration::from_millis(16);
     let mut last_frame = Instant::now();

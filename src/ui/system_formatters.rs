@@ -701,7 +701,11 @@ fn print_storage_info(storage: &[StorageInfo]) {
         // Interface (Bus type and speed)
         if let Some(ref bus_type) = disk.bus_type {
             if let Some(ref speed) = disk.interface_speed {
-                println!("    Interface: {} - {}", bus_type, speed.to_string().green());
+                println!(
+                    "    Interface: {} - {}",
+                    bus_type,
+                    speed.to_string().green()
+                );
             } else {
                 println!("    Interface: {}", bus_type);
             }
@@ -716,10 +720,7 @@ fn print_storage_info(storage: &[StorageInfo]) {
 
         // Mount point and capacity
         println!("    Mount Point: {}", disk.mount_point);
-        println!(
-            "    Capacity: {}",
-            format_bytes(disk.total_bytes)
-        );
+        println!("    Capacity: {}", format_bytes(disk.total_bytes));
 
         // Usage bar with percentage and free space
         println!(
@@ -823,11 +824,12 @@ fn print_storage_info(storage: &[StorageInfo]) {
                     let type_str = slot_types.join("/");
 
                     // Build interface description
-                    let interface = if let (Some(gen), Some(lanes)) = (slot.pcie_generation, slot.pcie_lanes) {
-                        format!("PCIe {}.0 x{}", gen, lanes)
-                    } else {
-                        "Unknown".to_string()
-                    };
+                    let interface =
+                        if let (Some(gen), Some(lanes)) = (slot.pcie_generation, slot.pcie_lanes) {
+                            format!("PCIe {}.0 x{}", gen, lanes)
+                        } else {
+                            "Unknown".to_string()
+                        };
 
                     // Build form factor description
                     let form_factor = if !slot.form_factors.is_empty() {
@@ -838,11 +840,7 @@ fn print_storage_info(storage: &[StorageInfo]) {
 
                     println!(
                         "      Slot {}: {} {} {} - {}",
-                        slot.slot_number,
-                        type_str,
-                        interface,
-                        form_factor,
-                        status
+                        slot.slot_number, type_str, interface, form_factor, status
                     );
                 }
             }
@@ -1130,11 +1128,7 @@ fn create_usage_bar(usage_percent: f32, width: usize) -> String {
     let filled_char = "█";
     let empty_char = "░";
 
-    let bar = format!(
-        "{}{}",
-        filled_char.repeat(filled),
-        empty_char.repeat(empty)
-    );
+    let bar = format!("{}{}", filled_char.repeat(filled), empty_char.repeat(empty));
 
     // Color the bar based on usage
     let colored_bar = if usage_percent >= 85.0 {

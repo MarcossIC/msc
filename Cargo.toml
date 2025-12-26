@@ -2,12 +2,12 @@
 name = "msc"
 version = "0.1.1"
 edition = "2021"
-authors = ["Marco"]
+authors = ["MSC Contributors"]
 description = "Multi-purpose CLI tool for system monitoring, media management, and productivity"
 license = "MIT"
-repository = "https://github.com/marco/msc"
-homepage = "https://github.com/marco/msc"
-documentation = "https://github.com/marco/msc/blob/main/README.md"
+repository = "https://github.com/MarcossIC/msc"
+homepage = "https://github.com/MarcossIC/msc"
+documentation = "https://github.com/MarcossIC/msc/blob/main/README.md"
 readme = "README.md"
 keywords = ["cli", "system-monitor", "video-downloader", "productivity", "tools"]
 categories = ["command-line-utilities", "multimedia", "development-tools"]
@@ -35,7 +35,8 @@ clap_complete = "4.5"
 anyhow = "1.0.100"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-bincode = "3.0.0"
+wincode = "0.2.5"
+wincode-derive = "0.2.3"
 dirs = "6.0"
 colored = "3.0"
 ignore = "0.4.25"

@@ -1,9 +1,9 @@
 //! Disk monitoring task.
 
 use std::sync::Arc;
+use sysinfo::Disks;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, Duration, Instant, MissedTickBehavior};
-use sysinfo::Disks;
 
 use super::SubsystemUpdate;
 use crate::core::system_monitor::{collect_disks, disk_enrichment::get_disk_enrichment_provider};

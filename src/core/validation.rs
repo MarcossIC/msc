@@ -4,9 +4,9 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
 use url::Url;
-use std::sync::OnceLock;
 
 use super::Blacklist;
 
@@ -292,8 +292,7 @@ pub fn redact_url_credentials(input: &str) -> String {
     // Fallback: conservative regex-based redaction
     static CREDENTIALS_RE: OnceLock<Regex> = OnceLock::new();
     let re = CREDENTIALS_RE.get_or_init(|| {
-        Regex::new(r"(?i)\b(https?://)([^:@/]+):([^@/]+)@")
-            .expect("Hardcoded regex must be valid")
+        Regex::new(r"(?i)\b(https?://)([^:@/]+):([^@/]+)@").expect("Hardcoded regex must be valid")
     });
 
     re.replace(input, "$1***:***@").to_string()

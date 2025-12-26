@@ -61,9 +61,9 @@ Ready to dive in? Head over to the [Installation](./installation.md) guide to ge
 
 ## Community and Support
 
-- **GitHub Repository**: [github.com/marco/msc](https://github.com/marco/msc)
-- **Issue Tracker**: [Report bugs or request features](https://github.com/marco/msc/issues)
-- **Discussions**: [Ask questions and share ideas](https://github.com/marco/msc/discussions)
+- **GitHub Repository**: [github.com/marco/msc](https://github.com/MarcossIC/msc)
+- **Issue Tracker**: [Report bugs or request features](https://github.com/MarcossIC/msc/issues)
+- **Discussions**: [Ask questions and share ideas](https://github.com/MarcossIC/msc/discussions)
 
 ## License
 

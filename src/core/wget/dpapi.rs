@@ -7,7 +7,7 @@ use anyhow::Result;
 use windows_sys::Win32::Foundation::{LocalFree, HLOCAL};
 #[cfg(windows)]
 use windows_sys::Win32::Security::Cryptography::{
-    CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+    CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
 
 /// Decrypt data using Windows DPAPI (Data Protection API)
@@ -46,11 +46,11 @@ pub fn decrypt_dpapi(encrypted_data: &[u8]) -> Result<Vec<u8>> {
     let result = unsafe {
         CryptUnprotectData(
             &mut input_blob,
-            null_mut(),                   // No description
-            null_mut(),                   // No additional entropy
-            null_mut(),                   // Reserved
-            null_mut(),                   // No prompt struct
-            CRYPTPROTECT_UI_FORBIDDEN,    // No UI prompts
+            null_mut(),                // No description
+            null_mut(),                // No additional entropy
+            null_mut(),                // Reserved
+            null_mut(),                // No prompt struct
+            CRYPTPROTECT_UI_FORBIDDEN, // No UI prompts
             &mut output_blob,
         )
     };
@@ -100,9 +100,7 @@ pub fn decrypt_dpapi(_encrypted_data: &[u8]) -> Result<Vec<u8>> {
 #[cfg(windows)]
 mod tests {
     use super::*;
-    use windows_sys::Win32::Security::Cryptography::{
-        CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN,
-    };
+    use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN};
 
     #[test]
     fn test_dpapi_roundtrip() {

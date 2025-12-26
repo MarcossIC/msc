@@ -2,7 +2,7 @@ use crate::core::system_monitor::{GpuMetrics, GpuProvider, GpuVendor};
 use crate::error::{MscError, Result};
 
 #[cfg(all(unix, feature = "rocm"))]
-use rocm_smi_lib::{RocmSmi, DeviceHandle, TemperatureMetric, ClockType};
+use rocm_smi_lib::{ClockType, DeviceHandle, RocmSmi, TemperatureMetric};
 
 /// AMD GPU provider using ROCm SMI
 pub struct AmdGpuProvider {
@@ -24,12 +24,14 @@ impl AmdGpuProvider {
     pub fn with_device_index(index: u32) -> Result<Self> {
         #[cfg(all(unix, feature = "rocm"))]
         {
-            let rocm = RocmSmi::init()
-                .map_err(|e| MscError::gpu_not_available(format!("Failed to init ROCm SMI: {:?}", e)))?;
+            let rocm = RocmSmi::init().map_err(|e| {
+                MscError::gpu_not_available(format!("Failed to init ROCm SMI: {:?}", e))
+            })?;
 
             // Verify device exists
-            let device_count = rocm.get_device_count()
-                .map_err(|e| MscError::gpu_not_available(format!("Failed to get device count: {:?}", e)))?;
+            let device_count = rocm.get_device_count().map_err(|e| {
+                MscError::gpu_not_available(format!("Failed to get device count: {:?}", e))
+            })?;
 
             if index >= device_count as u32 {
                 return Err(MscError::gpu_not_available(format!(
@@ -82,23 +84,18 @@ impl GpuProvider for AmdGpuProvider {
             let device = self.get_device()?;
 
             // Get GPU name
-            let name = self.rocm
+            let name = self
+                .rocm
                 .get_device_name(&device)
                 .unwrap_or_else(|_| "Unknown AMD GPU".to_string());
 
             // Get GPU utilization
-            let utilization = self.rocm
-                .get_busy_percent(&device)
-                .unwrap_or(0) as u32;
+            let utilization = self.rocm.get_busy_percent(&device).unwrap_or(0) as u32;
 
             // Get memory info
-            let memory_used = self.rocm
-                .get_memory_used(&device)
-                .unwrap_or(0);
+            let memory_used = self.rocm.get_memory_used(&device).unwrap_or(0);
 
-            let memory_total = self.rocm
-                .get_memory_total(&device)
-                .unwrap_or(0);
+            let memory_total = self.rocm.get_memory_total(&device).unwrap_or(0);
 
             let memory_percent = if memory_total > 0 {
                 (memory_used as f32 / memory_total as f32) * 100.0
@@ -107,36 +104,38 @@ impl GpuProvider for AmdGpuProvider {
             };
 
             // Get temperature
-            let temperature = self.rocm
+            let temperature = self
+                .rocm
                 .get_temperature(&device, TemperatureMetric::Edge)
                 .ok()
                 .map(|t| t as u32);
 
             // Get fan speed
-            let fan_speed = self.rocm
-                .get_fan_speed(&device, 0)
-                .ok()
-                .map(|f| f as u32);
+            let fan_speed = self.rocm.get_fan_speed(&device, 0).ok().map(|f| f as u32);
 
             // Get power draw
-            let power_draw = self.rocm
+            let power_draw = self
+                .rocm
                 .get_power_average(&device)
                 .ok()
                 .map(|p| (p / 1_000_000) as u32); // microwatts to watts
 
             // Get power cap/limit
-            let power_limit = self.rocm
+            let power_limit = self
+                .rocm
                 .get_power_cap(&device)
                 .ok()
                 .map(|p| (p / 1_000_000) as u32); // microwatts to watts
 
             // Get clock frequencies
-            let clock_graphics = self.rocm
+            let clock_graphics = self
+                .rocm
                 .get_clock(&device, ClockType::Sys)
                 .ok()
                 .map(|c| c as u32);
 
-            let clock_memory = self.rocm
+            let clock_memory = self
+                .rocm
                 .get_clock(&device, ClockType::Mem)
                 .ok()
                 .map(|c| c as u32);

@@ -33,7 +33,7 @@
 - **Lenguaje**: Rust (Edition 2021)
 - **CLI Framework**: Clap v4.4
 - **Manejo de Errores**: thiserror + anyhow
-- **Serialización**: serde + bincode
+- **Serialización**: wincode-derive + wincode
 - **Git Integration**: git2
 - **Logging**: log + env_logger
 
@@ -948,7 +948,7 @@ fn test_list_handles_nonexistent_directory() {
 
 ### Gestión de Configuración
 
-La configuración se maneja mediante serialización binaria con `bincode`:
+La configuración se maneja mediante serialización binaria con `wincode`:
 
 ```rust
 // src/core/config.rs
@@ -964,35 +964,58 @@ pub struct Config {
 impl Config {
     pub fn load() -> Result<Self> {
         let config_path = Self::get_config_path()?;
-        
-        if !config_path.exists() {
-            return Ok(Config::default());
+
+        let mut config = if !config_path.exists() {
+            Config::default()
+        } else {
+            let data = fs::read(&config_path)
+                .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
+
+            if data.is_empty() {
+                warn!("Config file is empty, using default configuration");
+                Config::default()
+            } else {
+                match wincode::deserialize::<Config>(&data) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        warn!(
+                            "Failed to deserialize config file with wincode ({}). \
+                             Using default configuration. \
+                             This often happens if the Config struct changed.",
+                            e
+                        );
+                        Config::default()
+                    }
+                }
+            }
         }
-        
-        let data = fs::read(&config_path)?;
-        let config = bincode::deserialize(&data)
-            .unwrap_or_default();  // Fallback a default si corrupto
-        
+        config.sync_default_paths();
+
         Ok(config)
+    }
     }
     
     pub fn save(&self) -> Result<()> {
         let config_path = Self::get_config_path()?;
-        
+
         if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create config directory: {:?}", parent))?;
         }
-        
-        let data = bincode::serialize(self)?;
-        fs::write(&config_path, data)?;
-        
+
+        let data = wincode::serialize(self)
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize config with wincode: {}", e))?;
+
+        fs::write(&config_path, data)
+            .with_context(|| format!("Failed to write config file: {:?}", config_path))?;
+
         Ok(())
     }
     
     fn get_config_path() -> Result<PathBuf> {
         let config_dir = dirs::config_dir()
-            .ok_or_else(|| MscError::config("Could not determine config directory"))?;
-        
+                    .with_context(|| "Could not determine config directory")?;
+
         Ok(config_dir.join("msc").join("config.bin"))
     }
 }

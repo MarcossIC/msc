@@ -10,4 +10,6 @@ pub mod ram;
 pub mod storage;
 
 // Re-exports for backward compatibility
-pub use storage::{DiskDetailsWindows, StorageSlots, get_disk_details, get_disk_type, get_available_storage_slots};
+pub use storage::{
+    get_available_storage_slots, get_disk_details, get_disk_type, DiskDetailsWindows, StorageSlots,
+};

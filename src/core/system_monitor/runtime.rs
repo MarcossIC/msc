@@ -2,13 +2,13 @@
 //!
 //! This module provides the async runtime that coordinates all metrics collection tasks.
 
-use tokio::sync::{broadcast, mpsc, watch};
 use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc, watch};
 
 use super::metrics::SystemMetrics;
 use super::tasks::{
-    battery_task, cpu_memory_process_task, disks_task, global_metrics_task,
-    gpu_task, network_task, temperatures_task, SubsystemUpdate,
+    battery_task, cpu_memory_process_task, disks_task, global_metrics_task, gpu_task, network_task,
+    temperatures_task, SubsystemUpdate,
 };
 
 /// Wrapper around the Tokio runtime for metrics collection.
@@ -58,11 +58,7 @@ impl MetricsRuntime {
         // Spawn all tasks on the runtime
         let shutdown_for_spawn = shutdown_tx.clone();
         runtime.spawn(async move {
-            spawn_all_tasks(
-                snapshot_tx,
-                ui_events_rx,
-                shutdown_for_spawn.subscribe(),
-            ).await
+            spawn_all_tasks(snapshot_tx, ui_events_rx, shutdown_for_spawn.subscribe()).await
         });
 
         // log::info!("MetricsRuntime initialized successfully");
@@ -104,35 +100,20 @@ pub async fn spawn_all_tasks(
     ));
 
     // Spawn subsystem tasks
-    tokio::spawn(battery_task(
-        update_tx.clone(),
-        shutdown.resubscribe(),
-    ));
+    tokio::spawn(battery_task(update_tx.clone(), shutdown.resubscribe()));
 
     tokio::spawn(cpu_memory_process_task(
         update_tx.clone(),
         shutdown.resubscribe(),
     ));
 
-    tokio::spawn(gpu_task(
-        update_tx.clone(),
-        shutdown.resubscribe(),
-    ));
+    tokio::spawn(gpu_task(update_tx.clone(), shutdown.resubscribe()));
 
-    tokio::spawn(disks_task(
-        update_tx.clone(),
-        shutdown.resubscribe(),
-    ));
+    tokio::spawn(disks_task(update_tx.clone(), shutdown.resubscribe()));
 
-    tokio::spawn(network_task(
-        update_tx.clone(),
-        shutdown.resubscribe(),
-    ));
+    tokio::spawn(network_task(update_tx.clone(), shutdown.resubscribe()));
 
-    tokio::spawn(temperatures_task(
-        update_tx.clone(),
-        shutdown.resubscribe(),
-    ));
+    tokio::spawn(temperatures_task(update_tx.clone(), shutdown.resubscribe()));
 
     tokio::spawn(global_metrics_task(
         update_tx.clone(),

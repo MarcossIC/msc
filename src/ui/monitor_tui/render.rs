@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Cell, Paragraph, Row, BarChart, Table},
+    widgets::{BarChart, Block, Borders, Cell, Paragraph, Row, Table},
 };
 
 // Assuming format_size is available in crate::ui::formatters or use humansize directly if needed.
@@ -51,13 +51,13 @@ pub fn render_ui(frame: &mut Frame, app: &MonitorApp) {
         ]
     } else {
         vec![
-            Constraint::Length(3),   // Header with global dashboard
+            Constraint::Length(3),      // Header with global dashboard
             Constraint::Percentage(25), // CPU section
             Constraint::Percentage(20), // Memory + GPU row
             Constraint::Percentage(15), // Network + Disk
             Constraint::Percentage(35), // Processes
-            Constraint::Length(1),   // Temperatures
-            Constraint::Length(1),   // Footer
+            Constraint::Length(1),      // Temperatures
+            Constraint::Length(1),      // Footer
         ]
     };
 
@@ -224,7 +224,9 @@ fn render_cpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     };
 
     let border_style = if app.selected_tab == 0 {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
@@ -376,7 +378,9 @@ fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
         .split(area);
 
     let border_style = if app.selected_tab == 1 {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
@@ -528,7 +532,9 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
         .split(area);
 
     let border_style = if app.selected_tab == 2 {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
@@ -586,8 +592,8 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
         );
         frame.render_widget(net_table, net_inner);
     } else {
-        let no_data = Paragraph::new("No network interfaces")
-            .style(Style::default().fg(Color::DarkGray));
+        let no_data =
+            Paragraph::new("No network interfaces").style(Style::default().fg(Color::DarkGray));
         frame.render_widget(no_data, net_inner);
     }
 
@@ -600,8 +606,8 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
     frame.render_widget(disk_block, chunks[1]);
 
     if app.metrics.disks.is_empty() {
-        let no_data = Paragraph::new("No disks detected")
-            .style(Style::default().fg(Color::DarkGray));
+        let no_data =
+            Paragraph::new("No disks detected").style(Style::default().fg(Color::DarkGray));
         frame.render_widget(no_data, disk_inner);
     } else {
         // Render up to 3 disks with detailed information
@@ -751,7 +757,9 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     };
 
     let border_style = if app.selected_tab == 3 {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };

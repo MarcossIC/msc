@@ -2,7 +2,7 @@ use crate::core::system_info::types::BatteryInfo;
 use crate::error::Result;
 
 #[cfg(windows)]
- use crate::platform::system::windows::battery::get_battery_info;
+use crate::platform::system::windows::battery::get_battery_info;
 
 pub fn collect() -> Result<BatteryInfo> {
     #[cfg(windows)]

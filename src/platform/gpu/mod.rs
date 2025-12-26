@@ -3,11 +3,11 @@
 //! Provides GPU metrics collection for different vendors.
 //! Supports NVIDIA (via NVML) and AMD (via ROCm SMI).
 
-mod nvidia;
 mod amd;
+mod nvidia;
 
-pub use nvidia::NvidiaGpuProvider;
 pub use amd::AmdGpuProvider;
+pub use nvidia::NvidiaGpuProvider;
 
 use crate::core::system_monitor::GpuProvider;
 use crate::error::{MscError, Result};

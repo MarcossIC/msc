@@ -1,8 +1,8 @@
 //! Temperature monitoring task.
 
+use sysinfo::Components;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{interval, Duration, MissedTickBehavior};
-use sysinfo::Components;
 
 use super::SubsystemUpdate;
 use crate::core::system_monitor::collect_temperatures;
