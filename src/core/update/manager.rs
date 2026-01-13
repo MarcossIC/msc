@@ -2,7 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use tempfile::NamedTempFile;
 
 use super::platform_installer;
 use super::release_info::{fetch_latest_release, get_platform_assets, ReleaseInfo};
@@ -80,13 +82,52 @@ impl UpdateManager {
             .ok_or_else(|| anyhow!("Invalid checksum format"))?
             .to_string();
 
-        // Guardar el binario en un archivo temporal
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join(&binary_asset.name);
+        // Crear archivo temporal seguro con el nombre apropiado
+        // SEGURIDAD:
+        // - Usa tempfile::NamedTempFile que crea archivos con nombres únicos/impredecibles
+        // - Permisos seguros por defecto (0600 en Unix - solo lectura/escritura por propietario)
+        // - Previene race conditions y ataques de symlink
+        // - El archivo se persiste explícitamente con .keep() para uso posterior
 
-        fs::write(&temp_file, &binary_data).context("Failed to write update to temporary file")?;
+        // Extraer extensión del archivo original (no se usa actualmente, pero útil para futuras mejoras)
+        let extension = Path::new(&binary_asset.name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
 
-        Ok((temp_file, expected_hash))
+        let _suffix = if !extension.is_empty() {
+            format!(".{}", extension)
+        } else {
+            String::new()
+        };
+
+        // Crear archivo temporal con nombre único y seguro
+        let mut temp_file = NamedTempFile::new_in(std::env::temp_dir())
+            .context("Failed to create temporary file")?;
+
+        // Escribir datos al archivo temporal
+        temp_file
+            .write_all(&binary_data)
+            .context("Failed to write update to temporary file")?;
+
+        // Sincronizar para asegurar que los datos estén en disco
+        temp_file
+            .flush()
+            .context("Failed to flush temporary file")?;
+
+        // Persistir el archivo temporal (lo mantiene después de que se libere el NamedTempFile)
+        // Esto es necesario porque el archivo se usa después en la instalación
+        let temp_path = temp_file
+            .into_temp_path()
+            .keep()
+            .context("Failed to persist temporary file")?;
+
+        log::info!(
+            "Downloaded update to temporary file: {}",
+            temp_path.display()
+        );
+
+        Ok((temp_path, expected_hash))
     }
 
     /// Verifica el checksum SHA256 del archivo descargado

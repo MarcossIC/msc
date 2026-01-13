@@ -3,6 +3,7 @@ use colored::Colorize;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use tempfile::tempdir;
 
 #[cfg(windows)]
 use crate::platform::elevation::is_elevated;
@@ -98,9 +99,19 @@ fn install_binary_from_tarball(tar_path: &Path) -> Result<()> {
     // Crear backup del binario actual
     fs::copy(&current_exe, &backup_path).context("Failed to create backup of current binary")?;
 
-    // Extraer el tarball
-    let temp_dir = std::env::temp_dir().join("msc_update");
-    fs::create_dir_all(&temp_dir).context("Failed to create temporary directory")?;
+    // Crear directorio temporal seguro con limpieza automática
+    // SEGURIDAD:
+    // - Usa tempfile::tempdir() que crea un directorio con nombre único/impredecible
+    // - Permisos seguros por defecto (solo accesible por el usuario actual)
+    // - Auto-limpieza cuando `temp_dir` sale del scope (incluso en panics)
+    // - Previene race conditions y ataques de symlink
+    let temp_dir = tempdir().context("Failed to create temporary directory")?;
+    let temp_path = temp_dir.path();
+
+    log::info!(
+        "Extracting update to secure temporary directory: {}",
+        temp_path.display()
+    );
 
     // Leer y descomprimir el archivo .tar.xz
     let tar_file = fs::File::open(tar_path).context("Failed to open tarball")?;
@@ -113,7 +124,7 @@ fn install_binary_from_tarball(tar_path: &Path) -> Result<()> {
         let decoder = GzDecoder::new(tar_file);
         let mut archive = Archive::new(decoder);
         archive
-            .unpack(&temp_dir)
+            .unpack(temp_path)
             .context("Failed to extract tarball")?;
     } else if file_name.ends_with(".tar.xz") {
         // Para .tar.xz necesitamos usar xz2
@@ -127,14 +138,14 @@ fn install_binary_from_tarball(tar_path: &Path) -> Result<()> {
 
         let mut archive = Archive::new(&buffer[..]);
         archive
-            .unpack(&temp_dir)
+            .unpack(temp_path)
             .context("Failed to extract tarball")?;
     } else {
         return Err(anyhow!("Unsupported archive format: {}", file_name));
     }
 
     // Buscar el binario msc en el directorio extraído
-    let new_binary = temp_dir.join("msc");
+    let new_binary = temp_path.join("msc");
 
     if !new_binary.exists() {
         return Err(anyhow!("Binary 'msc' not found in extracted archive"));
