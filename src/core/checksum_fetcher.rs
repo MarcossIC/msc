@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use reqwest::blocking::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::time::Duration;
 
 /// GitHub Release Asset information
@@ -13,6 +13,7 @@ struct GitHubAsset {
 /// GitHub Release information
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
+    #[allow(dead_code)] // Present for serde deserialization of GitHub API response
     tag_name: String,
     assets: Vec<GitHubAsset>,
     body: Option<String>,
@@ -70,7 +71,10 @@ impl ChecksumFetcher {
     ) -> Result<(String, String)> {
         log::info!(
             "Fetching checksum for {} {} ({}/{})",
-            tool, version, platform, arch
+            tool,
+            version,
+            platform,
+            arch
         );
 
         match tool {
@@ -82,17 +86,26 @@ impl ChecksumFetcher {
     }
 
     /// Fetch yt-dlp checksum from GitHub releases
-    fn fetch_yt_dlp_checksum(&self, version: &str, platform: &str, arch: &str) -> Result<(String, String)> {
+    fn fetch_yt_dlp_checksum(
+        &self,
+        version: &str,
+        platform: &str,
+        arch: &str,
+    ) -> Result<(String, String)> {
         let repo = "yt-dlp/yt-dlp";
         let api_url = if version == "latest" {
             format!("https://api.github.com/repos/{}/releases/latest", repo)
         } else {
-            format!("https://api.github.com/repos/{}/releases/tags/{}", repo, version)
+            format!(
+                "https://api.github.com/repos/{}/releases/tags/{}",
+                repo, version
+            )
         };
 
         log::debug!("Fetching from: {}", api_url);
 
-        let release: GitHubRelease = self.client
+        let release: GitHubRelease = self
+            .client
             .get(&api_url)
             .send()
             .context("Failed to fetch release info")?
@@ -116,7 +129,8 @@ impl ChecksumFetcher {
         if let Some(asset) = release.assets.iter().find(|a| a.name == checksum_file_name) {
             log::debug!("Found checksum file: {}", asset.name);
 
-            let checksum_content = self.client
+            let checksum_content = self
+                .client
                 .get(&asset.browser_download_url)
                 .send()
                 .context("Failed to download checksum file")?
@@ -149,12 +163,20 @@ impl ChecksumFetcher {
 
         Err(anyhow!(
             "No checksum found for {} {} ({}/{})",
-            "yt-dlp", version, platform, arch
+            "yt-dlp",
+            version,
+            platform,
+            arch
         ))
     }
 
     /// Fetch ffmpeg checksum from BtbN/FFmpeg-Builds GitHub releases
-    fn fetch_ffmpeg_checksum(&self, version: &str, platform: &str, arch: &str) -> Result<(String, String)> {
+    fn fetch_ffmpeg_checksum(
+        &self,
+        version: &str,
+        platform: &str,
+        arch: &str,
+    ) -> Result<(String, String)> {
         // FFmpeg builds from BtbN/FFmpeg-Builds
         let repo = "BtbN/FFmpeg-Builds";
 
@@ -163,12 +185,16 @@ impl ChecksumFetcher {
         } else {
             // BtbN uses tags like "autobuild-2024-11-18-12-55"
             // For version "7.1" we need to find the corresponding build
-            format!("https://api.github.com/repos/{}/releases/tags/n{}", repo, version)
+            format!(
+                "https://api.github.com/repos/{}/releases/tags/n{}",
+                repo, version
+            )
         };
 
         log::debug!("Fetching from: {}", api_url);
 
-        let release: GitHubRelease = self.client
+        let release: GitHubRelease = self
+            .client
             .get(&api_url)
             .send()
             .context("Failed to fetch release info")?
@@ -184,7 +210,8 @@ impl ChecksumFetcher {
             if let Some(asset) = release.assets.iter().find(|a| a.name == *checksum_file) {
                 log::debug!("Found checksum file: {}", asset.name);
 
-                let checksum_content = self.client
+                let checksum_content = self
+                    .client
                     .get(&asset.browser_download_url)
                     .send()
                     .context("Failed to download checksum file")?
@@ -232,12 +259,19 @@ impl ChecksumFetcher {
 
         Err(anyhow!(
             "No checksum found for ffmpeg {} ({}/{})",
-            version, platform, arch
+            version,
+            platform,
+            arch
         ))
     }
 
     /// Fetch wget checksum (wget is less common, may need manual verification)
-    fn fetch_wget_checksum(&self, version: &str, platform: &str, arch: &str) -> Result<(String, String)> {
+    fn fetch_wget_checksum(
+        &self,
+        version: &str,
+        platform: &str,
+        arch: &str,
+    ) -> Result<(String, String)> {
         // wget builds from eternallybored.org don't have an API
         // We'll check if there's a GitHub mirror
         let repo = "mirror/wget";
@@ -245,12 +279,16 @@ impl ChecksumFetcher {
         let api_url = if version == "latest" {
             format!("https://api.github.com/repos/{}/releases/latest", repo)
         } else {
-            format!("https://api.github.com/repos/{}/releases/tags/v{}", repo, version)
+            format!(
+                "https://api.github.com/repos/{}/releases/tags/v{}",
+                repo, version
+            )
         };
 
         log::debug!("Fetching from: {}", api_url);
 
-        let release: GitHubRelease = self.client
+        let release: GitHubRelease = self
+            .client
             .get(&api_url)
             .send()
             .context("Failed to fetch release info")?
@@ -262,7 +300,8 @@ impl ChecksumFetcher {
         // Look for checksum files
         for asset in &release.assets {
             if asset.name.ends_with(".sha256") || asset.name.ends_with(".sha256sum") {
-                let checksum_content = self.client
+                let checksum_content = self
+                    .client
                     .get(&asset.browser_download_url)
                     .send()
                     .context("Failed to download checksum file")?
@@ -281,7 +320,9 @@ impl ChecksumFetcher {
 
         Err(anyhow!(
             "No checksum found for wget {} ({}/{}). Consider using fallback registry.",
-            version, platform, arch
+            version,
+            platform,
+            arch
         ))
     }
 
@@ -302,7 +343,10 @@ impl ChecksumFetcher {
         }
 
         // Also try to find checksum in format "sha256: <hash>"
-        if let Some(pos) = text.to_lowercase().find(&format!("{}:", binary_identifier.to_lowercase())) {
+        if let Some(pos) = text
+            .to_lowercase()
+            .find(&format!("{}:", binary_identifier.to_lowercase()))
+        {
             let after = &text[pos..];
             for word in after.split_whitespace().skip(1) {
                 let word = word.trim().to_lowercase();

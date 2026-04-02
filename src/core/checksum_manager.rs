@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::checksum_cache::ChecksumCache;
 use crate::core::checksum_fetcher::ChecksumFetcher;
-use crate::core::checksum_registry::{ChecksumRegistry, CHECKSUM_REGISTRY};
+use crate::core::checksum_registry::CHECKSUM_REGISTRY;
 
 /// Strategy for obtaining checksums
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,9 +35,9 @@ pub struct ChecksumResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChecksumSource {
     Cache,
-    Fetched(String), // URL
+    Fetched(String),  // URL
     Registry(String), // Source URL from registry
-    Provided, // Manually provided by user
+    Provided,         // Manually provided by user
 }
 
 /// Manages SHA256 checksums for downloaded binaries with multi-tier verification
@@ -99,11 +99,9 @@ impl ChecksumManager {
 
     /// Create a ChecksumManager with a custom cache path
     pub fn with_cache_path(cache_path: PathBuf) -> Result<Self> {
-        let cache = ChecksumCache::load(cache_path)
-            .context("Failed to load checksum cache")?;
+        let cache = ChecksumCache::load(cache_path).context("Failed to load checksum cache")?;
 
-        let fetcher = ChecksumFetcher::new()
-            .context("Failed to create checksum fetcher")?;
+        let fetcher = ChecksumFetcher::new().context("Failed to create checksum fetcher")?;
 
         Ok(Self {
             cache,
@@ -120,8 +118,8 @@ impl ChecksumManager {
 
     /// Get the default cache path
     fn get_cache_path() -> Result<PathBuf> {
-        let cache_dir = dirs::cache_dir()
-            .ok_or_else(|| anyhow!("Could not determine cache directory"))?;
+        let cache_dir =
+            dirs::cache_dir().ok_or_else(|| anyhow!("Could not determine cache directory"))?;
 
         let msc_cache = cache_dir.join("msc");
         Ok(msc_cache.join("checksums.json"))
@@ -143,26 +141,23 @@ impl ChecksumManager {
     ) -> Result<ChecksumResult> {
         log::info!(
             "Getting checksum for {} {} ({}/{})",
-            tool, version, platform, arch
+            tool,
+            version,
+            platform,
+            arch
         );
 
         match self.strategy {
             ChecksumStrategy::Skip => {
                 log::warn!("Checksum verification skipped (DANGEROUS)");
-                return Ok(ChecksumResult {
+                Ok(ChecksumResult {
                     hash: "0".repeat(64),
                     source: ChecksumSource::Provided,
-                });
+                })
             }
-            ChecksumStrategy::CacheOnly => {
-                return self.get_from_cache(tool, version, platform, arch);
-            }
-            ChecksumStrategy::FetchOnly => {
-                return self.fetch_and_cache(tool, version, platform, arch);
-            }
-            ChecksumStrategy::RegistryOnly => {
-                return self.get_from_registry(tool, version, platform, arch);
-            }
+            ChecksumStrategy::CacheOnly => self.get_from_cache(tool, version, platform, arch),
+            ChecksumStrategy::FetchOnly => self.fetch_and_cache(tool, version, platform, arch),
+            ChecksumStrategy::RegistryOnly => self.get_from_registry(tool, version, platform, arch),
             ChecksumStrategy::Auto => {
                 // Try cache first
                 if let Ok(result) = self.get_from_cache(tool, version, platform, arch) {
@@ -177,9 +172,10 @@ impl ChecksumManager {
                 // Fallback to registry
                 log::info!(
                     "Fetch failed, falling back to registry for {} {}",
-                    tool, version
+                    tool,
+                    version
                 );
-                return self.get_from_registry(tool, version, platform, arch);
+                self.get_from_registry(tool, version, platform, arch)
             }
         }
     }
@@ -209,11 +205,14 @@ impl ChecksumManager {
         platform: &str,
         arch: &str,
     ) -> Result<ChecksumResult> {
-        let (hash, source) = self.fetcher.fetch_checksum(tool, version, platform, arch)
+        let (hash, source) = self
+            .fetcher
+            .fetch_checksum(tool, version, platform, arch)
             .context("Failed to fetch checksum from remote")?;
 
         // Store in cache
-        self.cache.set(tool, version, platform, arch, hash.clone(), source.clone());
+        self.cache
+            .set(tool, version, platform, arch, hash.clone(), source.clone());
 
         // Save cache to disk
         if let Err(e) = self.cache.save() {
@@ -282,12 +281,13 @@ impl ChecksumManager {
     pub fn verify_file(path: &Path, expected_hash: &str) -> Result<()> {
         log::info!("Verifying file: {}", path.display());
 
-        let mut file = File::open(path)
-            .context(format!("Failed to open file for verification: {}", path.display()))?;
+        let mut file = File::open(path).context(format!(
+            "Failed to open file for verification: {}",
+            path.display()
+        ))?;
 
         let mut hasher = Sha256::new();
-        io::copy(&mut file, &mut hasher)
-            .context("Failed to read file for hashing")?;
+        io::copy(&mut file, &mut hasher).context("Failed to read file for hashing")?;
 
         let hash = format!("{:x}", hasher.finalize());
 
@@ -313,12 +313,11 @@ impl ChecksumManager {
 
     /// Calculate SHA256 hash of a file
     pub fn calculate_hash(path: &Path) -> Result<String> {
-        let mut file = File::open(path)
-            .context(format!("Failed to open file: {}", path.display()))?;
+        let mut file =
+            File::open(path).context(format!("Failed to open file: {}", path.display()))?;
 
         let mut hasher = Sha256::new();
-        io::copy(&mut file, &mut hasher)
-            .context("Failed to read file")?;
+        io::copy(&mut file, &mut hasher).context("Failed to read file")?;
 
         Ok(format!("{:x}", hasher.finalize()))
     }

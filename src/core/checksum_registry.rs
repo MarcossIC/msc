@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 
 /// A verified checksum entry with metadata
 #[derive(Debug, Clone)]
@@ -51,7 +51,7 @@ impl VerifiedChecksum {
 /// ```rust
 /// use std::collections::HashMap;
 /// use msc::core::checksum_registry::VerifiedChecksum;
-/// 
+///
 /// let mut map = HashMap::new();
 /// map.insert(
 ///     ("tool_name", "version", "platform", "arch"),
@@ -177,7 +177,15 @@ impl ChecksumRegistry {
     ///
     /// This method is public within the crate for testing purposes and for adding
     /// verified checksums in `load_verified_checksums()`.
-    pub(crate) fn add(&mut self, tool: &str, version: &str, platform: &str, arch: &str, checksum: VerifiedChecksum) {
+    #[allow(dead_code)] // Used in tests and prepared for load_verified_checksums
+    pub(crate) fn add(
+        &mut self,
+        tool: &str,
+        version: &str,
+        platform: &str,
+        arch: &str,
+        checksum: VerifiedChecksum,
+    ) {
         let key = (
             tool.to_string(),
             version.to_string(),
@@ -189,7 +197,11 @@ impl ChecksumRegistry {
         if checksum.hash.len() != 64 || !checksum.hash.chars().all(|c| c.is_ascii_hexdigit()) {
             log::warn!(
                 "Invalid SHA256 checksum format for {} {} ({}/{}): {}",
-                tool, version, platform, arch, checksum.hash
+                tool,
+                version,
+                platform,
+                arch,
+                checksum.hash
             );
             return;
         }
@@ -198,7 +210,13 @@ impl ChecksumRegistry {
     }
 
     /// Get a verified checksum from the registry
-    pub fn get(&self, tool: &str, version: &str, platform: &str, arch: &str) -> Option<&VerifiedChecksum> {
+    pub fn get(
+        &self,
+        tool: &str,
+        version: &str,
+        platform: &str,
+        arch: &str,
+    ) -> Option<&VerifiedChecksum> {
         let key = (
             tool.to_string(),
             version.to_string(),
@@ -257,7 +275,7 @@ mod tests {
         let checksum = VerifiedChecksum::new(
             "0000000000000000000000000000000000000000000000000000000000000000",
             "https://example.com/releases",
-            "2024-01-01"
+            "2024-01-01",
         );
 
         registry.add("test-tool", "1.0.0", "windows", "x86_64", checksum);
@@ -275,11 +293,7 @@ mod tests {
         let mut registry = ChecksumRegistry::new();
 
         // Too short
-        let invalid = VerifiedChecksum::new(
-            "abc123",
-            "https://example.com",
-            "2024-01-01"
-        );
+        let invalid = VerifiedChecksum::new("abc123", "https://example.com", "2024-01-01");
 
         registry.add("test-tool", "1.0.0", "windows", "x86_64", invalid);
 
@@ -292,14 +306,28 @@ mod tests {
         let mut registry = ChecksumRegistry::new();
 
         // Valid 64-character SHA256 hashes
-        registry.add("tool", "1.0", "windows", "x86_64", VerifiedChecksum::new(
-            "1111111111111111111111111111111111111111111111111111111111111111",
-            "https://example.com", "2024-01-01"
-        ));
-        registry.add("tool", "2.0", "windows", "x86_64", VerifiedChecksum::new(
-            "2222222222222222222222222222222222222222222222222222222222222222",
-            "https://example.com", "2024-01-01"
-        ));
+        registry.add(
+            "tool",
+            "1.0",
+            "windows",
+            "x86_64",
+            VerifiedChecksum::new(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                "https://example.com",
+                "2024-01-01",
+            ),
+        );
+        registry.add(
+            "tool",
+            "2.0",
+            "windows",
+            "x86_64",
+            VerifiedChecksum::new(
+                "2222222222222222222222222222222222222222222222222222222222222222",
+                "https://example.com",
+                "2024-01-01",
+            ),
+        );
 
         let versions = registry.get_available_versions("tool", "windows", "x86_64");
         assert_eq!(versions.len(), 2);
@@ -312,10 +340,17 @@ mod tests {
         let mut registry = ChecksumRegistry::new();
 
         // Valid 64-character SHA256 hash
-        registry.add("tool", "1.0", "windows", "x86_64", VerifiedChecksum::new(
-            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-            "https://example.com", "2024-01-01"
-        ));
+        registry.add(
+            "tool",
+            "1.0",
+            "windows",
+            "x86_64",
+            VerifiedChecksum::new(
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                "https://example.com",
+                "2024-01-01",
+            ),
+        );
 
         assert!(registry.has_checksum("tool", "1.0", "windows", "x86_64"));
         assert!(!registry.has_checksum("tool", "2.0", "windows", "x86_64"));

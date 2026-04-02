@@ -25,7 +25,7 @@ use super::widgets::{colored_gauge, temp_color};
 use crate::core::system_monitor::{DiskType, SmartStatus};
 
 /// Main render function
-pub fn render_ui(frame: &mut Frame, app: &MonitorApp) {
+pub fn render_ui(frame: &mut Frame, app: &mut MonitorApp) {
     let area = frame.area();
 
     // Determine if we need to show alerts banner
@@ -37,27 +37,29 @@ pub fn render_ui(frame: &mut Frame, app: &MonitorApp) {
         0
     };
 
-    // Create main layout - use percentages for more predictable behavior
+    // Create main layout using Fill for proportional distribution of remaining space.
+    // Fill(N) distributes leftover space proportionally after fixed Length constraints.
+    // This avoids the "percentages sum to <100%" gap and adapts to any terminal height.
     let constraints = if has_alerts {
         vec![
             Constraint::Length(3),            // Header with global dashboard
             Constraint::Length(alert_height), // Alerts banner
-            Constraint::Percentage(25),       // CPU section
-            Constraint::Percentage(20),       // Memory + GPU row
-            Constraint::Percentage(15),       // Network + Disk
-            Constraint::Percentage(35),       // Processes
+            Constraint::Fill(5),              // CPU section (largest proportion)
+            Constraint::Fill(4),              // Memory + GPU row
+            Constraint::Fill(3),              // Network + Disk
+            Constraint::Fill(7),              // Processes (most space)
             Constraint::Length(1),            // Temperatures
             Constraint::Length(1),            // Footer
         ]
     } else {
         vec![
-            Constraint::Length(3),      // Header with global dashboard
-            Constraint::Percentage(25), // CPU section
-            Constraint::Percentage(20), // Memory + GPU row
-            Constraint::Percentage(15), // Network + Disk
-            Constraint::Percentage(35), // Processes
-            Constraint::Length(1),      // Temperatures
-            Constraint::Length(1),      // Footer
+            Constraint::Length(3), // Header with global dashboard
+            Constraint::Fill(5),   // CPU section
+            Constraint::Fill(4),   // Memory + GPU row
+            Constraint::Fill(3),   // Network + Disk
+            Constraint::Fill(7),   // Processes (most space)
+            Constraint::Length(1), // Temperatures
+            Constraint::Length(1), // Footer
         ]
     };
 
@@ -272,14 +274,18 @@ fn render_cpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
 
         // Right: CPU History bar chart (last 60 seconds of CPU usage)
         let history_data = app.history.cpu_as_u64();
-        if !history_data.is_empty() && cpu_chunks[1].width > 4 {
-            // Calculate how many bars can fit
-            // Each bar needs: bar_width + bar_gap space
-            let inner_width = cpu_chunks[1].width.saturating_sub(2) as usize; // Subtract borders
+        let chart_block = Block::default()
+            .title("CPU History (60s)")
+            .borders(Borders::ALL);
+        // Use block.inner() to get the ACTUAL drawable area (borders already excluded)
+        let chart_inner = chart_block.inner(cpu_chunks[1]);
+
+        if !history_data.is_empty() && chart_inner.width > 2 {
+            // Each bar needs bar_width + bar_gap chars. Use gap=0 for maximum density.
             let bar_width: u16 = 1;
-            let bar_gap: u16 = 1;
-            let space_per_bar = bar_width as usize + bar_gap as usize;
-            let max_bars = (inner_width / space_per_bar).min(history_data.len());
+            let bar_gap: u16 = 0;
+            let space_per_bar = (bar_width + bar_gap).max(1) as usize;
+            let max_bars = (chart_inner.width as usize / space_per_bar).min(history_data.len());
 
             // Take the most recent data points
             let start_idx = history_data.len().saturating_sub(max_bars);
@@ -290,11 +296,7 @@ fn render_cpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
 
             if !data_to_show.is_empty() {
                 let chart = BarChart::default()
-                    .block(
-                        Block::default()
-                            .title("CPU History (60s)")
-                            .borders(Borders::ALL),
-                    )
+                    .block(chart_block)
                     .direction(Direction::Vertical)
                     .bar_width(bar_width)
                     .bar_gap(bar_gap)
@@ -309,72 +311,121 @@ fn render_cpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     }
 }
 
-/// Render individual CPU cores
+/// Render individual CPU cores with adaptive column layout
 fn render_cpu_cores(frame: &mut Frame, area: Rect, app: &MonitorApp) {
+    let cpu = &app.metrics.cpu;
+    let total_cores = cpu.per_core_usage.len();
+
+    if total_cores == 0 || area.height == 0 {
+        return;
+    }
+
+    let available_height = area.height as usize;
+
+    // Use 2 columns if cores exceed available height and width allows it (min 30 chars per col)
+    let columns = if total_cores > available_height && area.width >= 60 {
+        2
+    } else {
+        1
+    };
+
+    let cores_per_col = total_cores.div_ceil(columns);
+    let cores_to_show = total_cores.min(available_height * columns);
+
+    if columns == 2 {
+        let col_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        for col in 0..2 {
+            let start = col * cores_per_col;
+            let end = (start + cores_per_col).min(cores_to_show);
+            if start >= end {
+                continue;
+            }
+            let rows_in_col = end - start;
+            let col_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(vec![Constraint::Length(1); rows_in_col])
+                .split(col_chunks[col]);
+
+            for (row, core_idx) in (start..end).enumerate() {
+                render_single_core(frame, col_layout[row], app, core_idx);
+            }
+        }
+    } else {
+        let rows = cores_to_show.min(available_height);
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Length(1); rows])
+            .split(area);
+
+        for i in 0..rows {
+            render_single_core(frame, layout[i], app, i);
+        }
+    }
+}
+
+/// Render a single CPU core gauge
+fn render_single_core(frame: &mut Frame, area: Rect, app: &MonitorApp, core_idx: usize) {
     use ratatui::widgets::Gauge;
 
     let cpu = &app.metrics.cpu;
+    let usage = if core_idx < app.smoothed_per_core.len() {
+        app.smoothed_per_core[core_idx]
+    } else {
+        cpu.per_core_usage.get(core_idx).copied().unwrap_or(0.0)
+    };
 
-    // Determine how many cores we can display based on height
-    // Make sure we have at least 1 line of space
-    let available_height = area.height.max(1) as usize;
-    let cores_to_show = available_height.min(cpu.per_core_usage.len());
+    let freq = cpu.frequencies_mhz.get(core_idx).copied().unwrap_or(0);
 
-    if cores_to_show == 0 || cpu.per_core_usage.is_empty() {
-        return; // Not enough space or no data
-    }
+    let color = if usage > 90.0 {
+        Color::Red
+    } else if usage > 75.0 {
+        Color::Yellow
+    } else if usage > 50.0 {
+        Color::Cyan
+    } else {
+        Color::Green
+    };
 
-    let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(vec![Constraint::Length(1); cores_to_show])
-        .split(area);
+    let hot_indicator = if usage > 90.0 { " !" } else { "" };
 
-    for i in 0..cores_to_show {
-        // Use smoothed value if available, otherwise fall back to raw value
-        let usage = if i < app.smoothed_per_core.len() {
-            app.smoothed_per_core[i]
-        } else {
-            cpu.per_core_usage.get(i).copied().unwrap_or(0.0)
-        };
-
-        let freq = cpu.frequencies_mhz.get(i).copied().unwrap_or(0);
-
-        // Determine color based on usage
-        let color = if usage > 90.0 {
-            Color::Red
-        } else if usage > 75.0 {
-            Color::Yellow
-        } else if usage > 50.0 {
-            Color::Cyan
-        } else {
-            Color::Green
-        };
-
-        // Add "HOT" indicator for high usage
-        let hot_indicator = if usage > 90.0 { " ⚠ HOT" } else { "" };
-
-        let label = format!(
+    // Compact label when in multi-column mode (area.width < 40)
+    let label = if area.width < 35 {
+        format!("C{:02} {:>5.1}%{}", core_idx, usage, hot_indicator)
+    } else {
+        format!(
             "C{:02} [{:>5.1}%] @ {:>4} MHz{}",
-            i, usage, freq, hot_indicator
-        );
+            core_idx, usage, freq, hot_indicator
+        )
+    };
 
-        let gauge = Gauge::default()
-            .gauge_style(Style::default().fg(color))
-            .label(label)
-            .ratio((usage / 100.0).min(1.0) as f64);
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(color))
+        .label(label)
+        .ratio((usage / 100.0).min(1.0) as f64);
 
-        frame.render_widget(gauge, layout[i]);
-    }
+    frame.render_widget(gauge, area);
 }
 
 fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     if area.height < 3 {
-        return; // Not enough space for memory/gpu section
+        return;
     }
+
+    // Adaptive split: give Memory more space when no GPU is present
+    let has_gpu = app.metrics.gpu.is_some();
+    let constraints = if has_gpu {
+        [Constraint::Percentage(50), Constraint::Percentage(50)]
+    } else {
+        [Constraint::Percentage(75), Constraint::Percentage(25)]
+    };
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints(constraints)
         .split(area);
 
     let border_style = if app.selected_tab == 1 {
@@ -686,7 +737,23 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
             let used = disk.total_bytes - disk.available_bytes;
             let usage_pct = disk.usage_percent;
 
-            let bar_width = disk_inner.width.saturating_sub(40).max(10) as usize;
+            // Adaptive bar width: calculate actual label length instead of hardcoding
+            // "  [" + "] " + "XX.X% " + "XXX.X MB/XXX.X GB" + " • XXXXd" ≈ dynamic
+            let size_label = format!(
+                "{:.1}% {}/{}",
+                usage_pct,
+                format_size(used),
+                format_size(disk.total_bytes)
+            );
+            let power_label_len = disk
+                .power_on_hours
+                .map(|h| format!(" • {}d", h / 24).len())
+                .unwrap_or(0);
+            // 5 = "  [" (3) + "] " (2)
+            let label_width = 5 + size_label.len() + power_label_len;
+            let bar_width = (disk_inner.width as usize)
+                .saturating_sub(label_width)
+                .clamp(5, 60);
             let filled = ((bar_width as f32 * usage_pct / 100.0) as usize).min(bar_width);
             let empty = bar_width.saturating_sub(filled);
 
@@ -747,13 +814,20 @@ fn render_network_disk_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
     }
 }
 
-fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
+fn render_processes_section(frame: &mut Frame, area: Rect, app: &mut MonitorApp) {
     use crate::core::system_monitor::{build_process_tree, flatten_tree, format_tree_indent};
 
     let mode_str = if app.show_process_tree {
         "Tree"
     } else {
         "List"
+    };
+
+    let total_rows = app.visible_process_count();
+    let pos_indicator = if total_rows > 0 {
+        format!(" {}/{} ", app.selected_process_index + 1, total_rows)
+    } else {
+        String::new()
     };
 
     let border_style = if app.selected_tab == 3 {
@@ -766,17 +840,16 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
 
     let block = Block::default()
         .title(format!(
-            " Processes ({}) [t:toggle s:sort ↑↓:nav] ",
-            mode_str
+            " Processes ({}) [t:toggle s:sort ↑↓:nav]{} ",
+            mode_str, pos_indicator
         ))
         .borders(Borders::ALL)
         .border_style(border_style);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Check if we have space to render
     if inner.height < 2 {
-        return; // Not enough space for header + at least one row
+        return;
     }
 
     let header = Row::new(vec![
@@ -788,27 +861,16 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     .height(1);
 
     let rows: Vec<Row> = if app.metrics.top_processes.is_empty() {
-        vec![] // No processes to show
+        vec![]
     } else if app.show_process_tree {
-        // Build and flatten tree
         let tree = build_process_tree(&app.metrics.top_processes);
         let flattened = flatten_tree(&tree);
 
         flattened
             .iter()
-            .enumerate()
-            .map(|(i, flat_proc)| {
+            .map(|flat_proc| {
                 let indent = format_tree_indent(flat_proc);
                 let proc = &flat_proc.process;
-
-                // Highlight selected row
-                let style = if i == app.selected_process_index {
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
 
                 Row::new(vec![
                     Cell::from(proc.pid.to_string()),
@@ -816,31 +878,19 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
                     Cell::from(format!("{:.1}%", proc.cpu_usage_percent)),
                     Cell::from(format_size(proc.memory_bytes)),
                 ])
-                .style(style)
             })
             .collect()
     } else {
-        // Flat list view
         app.metrics
             .top_processes
             .iter()
-            .enumerate()
-            .map(|(i, proc)| {
-                let style = if i == app.selected_process_index {
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                };
-
+            .map(|proc| {
                 Row::new(vec![
                     Cell::from(proc.pid.to_string()),
                     Cell::from(proc.name.clone()),
                     Cell::from(format!("{:.1}%", proc.cpu_usage_percent)),
                     Cell::from(format_size(proc.memory_bytes)),
                 ])
-                .style(style)
             })
             .collect()
     };
@@ -854,9 +904,15 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
             Constraint::Length(12),
         ],
     )
-    .header(header);
+    .header(header)
+    .row_highlight_style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("▶ ");
 
-    frame.render_widget(table, inner);
+    frame.render_stateful_widget(table, inner, &mut app.process_table_state);
 }
 
 fn render_temperatures_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
@@ -864,28 +920,27 @@ fn render_temperatures_section(frame: &mut Frame, area: Rect, app: &MonitorApp) 
         return; // No space to render
     }
 
-    let temps: String = if app.metrics.temperatures.is_empty() {
-        "No temperature sensors detected".to_string()
-    } else {
-        app.metrics
-            .temperatures
-            .iter()
-            .take(6)
-            .map(|t| {
-                let _color = temp_color(t.current_celsius);
-                format!("{}: {:.0}°C", t.label, t.current_celsius)
-            })
-            .collect::<Vec<_>>()
-            .join(" │ ")
-    };
+    if app.metrics.temperatures.is_empty() {
+        let para = Paragraph::new(" Temperatures: No sensors detected")
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(para, area);
+        return;
+    }
 
-    let text = if temps.is_empty() {
-        " Temperatures: - ".to_string()
-    } else {
-        format!(" Temperatures: {} ", temps)
-    };
+    let mut spans = vec![Span::styled(" Temps: ", Style::default().fg(Color::White))];
 
-    let para = Paragraph::new(text).style(Style::default().fg(Color::White));
+    for (i, t) in app.metrics.temperatures.iter().take(6).enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+        }
+        let color = temp_color(t.current_celsius);
+        spans.push(Span::styled(
+            format!("{}: {:.0}°C", t.label, t.current_celsius),
+            Style::default().fg(color),
+        ));
+    }
+
+    let para = Paragraph::new(Line::from(spans));
     frame.render_widget(para, area);
 }
 

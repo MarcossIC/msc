@@ -8,10 +8,8 @@ use tempfile::NamedTempFile;
 
 use super::platform_installer;
 use super::release_info::{fetch_latest_release, get_platform_assets, ReleaseInfo};
-use crate::core::Config;
 
 pub struct UpdateManager {
-    config: Config,
     repo: String,
 }
 
@@ -19,7 +17,6 @@ impl UpdateManager {
     /// Crea un nuevo UpdateManager
     pub fn new() -> Result<Self> {
         Ok(Self {
-            config: Config::load()?,
             repo: "MarcossIC/msc".to_string(),
         })
     }
@@ -50,8 +47,8 @@ impl UpdateManager {
     }
 
     /// Descarga la actualización
-    /// Retorna (ruta del archivo descargado, hash SHA256 esperado)
-    pub fn download_update(&self, release: &ReleaseInfo) -> Result<(PathBuf, String)> {
+    /// Retorna (ruta del archivo descargado, hash SHA256 esperado, nombre original del asset)
+    pub fn download_update(&self, release: &ReleaseInfo) -> Result<(PathBuf, String, String)> {
         let (binary_asset, checksum_asset) = get_platform_assets(release)?;
 
         println!("{} {}", "Downloading:".cyan(), binary_asset.name.yellow());
@@ -82,25 +79,6 @@ impl UpdateManager {
             .ok_or_else(|| anyhow!("Invalid checksum format"))?
             .to_string();
 
-        // Crear archivo temporal seguro con el nombre apropiado
-        // SEGURIDAD:
-        // - Usa tempfile::NamedTempFile que crea archivos con nombres únicos/impredecibles
-        // - Permisos seguros por defecto (0600 en Unix - solo lectura/escritura por propietario)
-        // - Previene race conditions y ataques de symlink
-        // - El archivo se persiste explícitamente con .keep() para uso posterior
-
-        // Extraer extensión del archivo original (no se usa actualmente, pero útil para futuras mejoras)
-        let extension = Path::new(&binary_asset.name)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-
-        let _suffix = if !extension.is_empty() {
-            format!(".{}", extension)
-        } else {
-            String::new()
-        };
-
         // Crear archivo temporal con nombre único y seguro
         let mut temp_file = NamedTempFile::new_in(std::env::temp_dir())
             .context("Failed to create temporary file")?;
@@ -127,7 +105,7 @@ impl UpdateManager {
             temp_path.display()
         );
 
-        Ok((temp_path, expected_hash))
+        Ok((temp_path, expected_hash, binary_asset.name.clone()))
     }
 
     /// Verifica el checksum SHA256 del archivo descargado
@@ -157,14 +135,14 @@ impl UpdateManager {
     /// Ejecuta el proceso completo de actualización
     pub fn perform_update(&self, release: &ReleaseInfo) -> Result<()> {
         // 1. Descargar actualización y checksum
-        let (update_file, expected_hash) = self.download_update(release)?;
+        let (update_file, expected_hash, asset_name) = self.download_update(release)?;
 
         // 2. Verificar checksum
         self.verify_checksum(&update_file, &expected_hash)?;
 
         // 3. Instalar actualización (específico por plataforma)
         println!("\n{}", "Installing update...".cyan());
-        platform_installer::install_update(&update_file)?;
+        platform_installer::install_update(&update_file, &asset_name)?;
 
         println!("\n{}", "━".repeat(40).green());
         println!(

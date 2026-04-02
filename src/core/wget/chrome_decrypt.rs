@@ -255,7 +255,7 @@ impl ChromeDecryptor {
 
         // Decrypt
         let decrypted = cipher
-            .decrypt(&nonce, ciphertext)
+            .decrypt(nonce, ciphertext)
             .map_err(|e| anyhow::anyhow!("AES-GCM decryption failed: {:?}\n\nPossible causes:\n• Cookie was encrypted by a different browser profile\n• Database corruption\n• Wrong AES key", e))?;
 
         // Convert to UTF-8 string
@@ -516,7 +516,7 @@ mod tests {
         };
 
         let too_short = &[0u8; 20]; // Less than 28 bytes required
-        let result = decryptor.decrypt_aes_gcm(&vec![0u8; 32], too_short);
+        let result = decryptor.decrypt_aes_gcm(&[0u8; 32], too_short);
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();

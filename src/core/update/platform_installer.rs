@@ -3,21 +3,22 @@ use colored::Colorize;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use tempfile::tempdir;
 
 #[cfg(windows)]
 use crate::platform::elevation::is_elevated;
 
 /// Instala la actualización dependiendo de la plataforma
-pub fn install_update(update_file: &Path) -> Result<()> {
+/// `asset_name` es el nombre original del archivo descargado (ej: "msc-x86_64-unknown-linux-gnu.tar.xz")
+pub fn install_update(update_file: &Path, asset_name: &str) -> Result<()> {
     #[cfg(windows)]
     {
+        let _ = asset_name;
         install_msi(update_file)
     }
 
     #[cfg(unix)]
     {
-        install_binary_from_tarball(update_file)
+        install_binary_from_tarball(update_file, asset_name)
     }
 }
 
@@ -78,33 +79,24 @@ fn install_msi(msi_path: &Path) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn install_binary_from_tarball(tar_path: &Path) -> Result<()> {
+fn install_binary_from_tarball(tar_path: &Path, asset_name: &str) -> Result<()> {
     use flate2::read::GzDecoder;
-    use std::io::Read;
     use tar::Archive;
+    use tempfile::tempdir;
+    use xz2::read::XzDecoder;
 
     println!("{}", "Extracting update archive...".cyan());
 
-    // Verificar que el archivo existe
     if !tar_path.exists() {
         return Err(anyhow!("Tarball file not found: {}", tar_path.display()));
     }
 
-    // Obtener el binario actual
     let current_exe = std::env::current_exe().context("Failed to get current executable path")?;
     let backup_path = current_exe.with_extension("bak");
 
     println!("{}", "Creating backup of current binary...".dimmed());
-
-    // Crear backup del binario actual
     fs::copy(&current_exe, &backup_path).context("Failed to create backup of current binary")?;
 
-    // Crear directorio temporal seguro con limpieza automática
-    // SEGURIDAD:
-    // - Usa tempfile::tempdir() que crea un directorio con nombre único/impredecible
-    // - Permisos seguros por defecto (solo accesible por el usuario actual)
-    // - Auto-limpieza cuando `temp_dir` sale del scope (incluso en panics)
-    // - Previene race conditions y ataques de symlink
     let temp_dir = tempdir().context("Failed to create temporary directory")?;
     let temp_path = temp_dir.path();
 
@@ -113,54 +105,43 @@ fn install_binary_from_tarball(tar_path: &Path) -> Result<()> {
         temp_path.display()
     );
 
-    // Leer y descomprimir el archivo .tar.xz
     let tar_file = fs::File::open(tar_path).context("Failed to open tarball")?;
 
-    // Nota: .tar.xz usa compresión xz, pero la mayoría son .tar.gz
-    // Vamos a intentar detectar el tipo basándonos en la extensión
-    let file_name = tar_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-    if file_name.ends_with(".tar.gz") {
+    // Usar el nombre original del asset para detectar el formato del archivo
+    // (el archivo temporal no conserva la extensión original)
+    if asset_name.ends_with(".tar.gz") || asset_name.ends_with(".tgz") {
         let decoder = GzDecoder::new(tar_file);
         let mut archive = Archive::new(decoder);
         archive
             .unpack(temp_path)
-            .context("Failed to extract tarball")?;
-    } else if file_name.ends_with(".tar.xz") {
-        // Para .tar.xz necesitamos usar xz2
-        // Por ahora, vamos a usar flate2 como fallback
-        // En producción, deberíamos agregar xz2 crate
-        let mut decoder = GzDecoder::new(tar_file);
-        let mut buffer = Vec::new();
-        decoder
-            .read_to_end(&mut buffer)
-            .context("Failed to decompress xz archive")?;
-
-        let mut archive = Archive::new(&buffer[..]);
+            .context("Failed to extract .tar.gz archive")?;
+    } else if asset_name.ends_with(".tar.xz") {
+        let decoder = XzDecoder::new(tar_file);
+        let mut archive = Archive::new(decoder);
         archive
             .unpack(temp_path)
-            .context("Failed to extract tarball")?;
+            .context("Failed to extract .tar.xz archive")?;
     } else {
-        return Err(anyhow!("Unsupported archive format: {}", file_name));
+        return Err(anyhow!("Unsupported archive format: {}", asset_name));
     }
 
-    // Buscar el binario msc en el directorio extraído
-    let new_binary = temp_path.join("msc");
-
-    if !new_binary.exists() {
-        return Err(anyhow!("Binary 'msc' not found in extracted archive"));
-    }
+    // cargo-dist extracts into a subdirectory, find the binary
+    let new_binary = find_binary_in_dir(temp_path, "msc")?;
 
     println!("{}", "Replacing binary...".cyan());
 
-    // Reemplazar el binario (rename es atómico en Unix)
-    fs::rename(&new_binary, &current_exe).context("Failed to replace binary")?;
+    fs::rename(&new_binary, &current_exe)
+        .or_else(|_| {
+            // rename can fail across filesystems, fallback to copy+delete
+            fs::copy(&new_binary, &current_exe)?;
+            fs::remove_file(&new_binary)?;
+            Ok::<(), std::io::Error>(())
+        })
+        .context("Failed to replace binary")?;
 
-    // Restaurar permisos ejecutables en Unix
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-
         let mut perms = fs::metadata(&current_exe)?.permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&current_exe, perms).context("Failed to set executable permissions")?;
@@ -168,15 +149,43 @@ fn install_binary_from_tarball(tar_path: &Path) -> Result<()> {
 
     println!("{}", "✓ Binary replacement completed".green());
 
-    // Limpiar archivos temporales
-    let _ = fs::remove_dir_all(&temp_dir);
+    // temp_dir auto-cleans on drop
     let _ = fs::remove_file(tar_path);
 
     println!(
         "{}",
-        "Note: Backup saved at: {}".dimmed().to_string()
-            + &backup_path.display().to_string().yellow().to_string()
+        format!("Note: Backup saved at: {}", backup_path.display())
+            .dimmed()
+            .to_string()
     );
 
     Ok(())
+}
+
+/// Searches for the binary inside extracted directory (handles cargo-dist subdirectories)
+#[cfg(unix)]
+fn find_binary_in_dir(dir: &Path, name: &str) -> Result<std::path::PathBuf> {
+    // Check directly in the directory
+    let direct = dir.join(name);
+    if direct.exists() {
+        return Ok(direct);
+    }
+
+    // cargo-dist typically extracts into a subdirectory like "msc-x86_64-unknown-linux-gnu/"
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let candidate = entry.path().join(name);
+                if candidate.exists() {
+                    return Ok(candidate);
+                }
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "Binary '{}' not found in extracted archive at {}",
+        name,
+        dir.display()
+    ))
 }

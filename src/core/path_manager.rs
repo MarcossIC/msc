@@ -42,9 +42,7 @@ impl PathManager {
         #[cfg(unix)]
         let separator = ":";
 
-        Ok(path_env
-            .split(separator)
-            .any(|p| p.trim() == bin_dir_str.as_ref()))
+        Ok(path_env.split(separator).any(|p| p.trim() == &*bin_dir_str))
     }
 
     /// Add bin directory to PATH (Windows implementation)

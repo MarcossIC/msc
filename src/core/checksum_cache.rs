@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Cache entry for a checksum with expiration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,11 +44,10 @@ impl ChecksumCache {
             return Ok(Self::new(cache_path));
         }
 
-        let data = fs::read_to_string(&cache_path)
-            .context("Failed to read checksum cache file")?;
+        let data = fs::read_to_string(&cache_path).context("Failed to read checksum cache file")?;
 
-        let mut cache: ChecksumCache = serde_json::from_str(&data)
-            .context("Failed to parse checksum cache")?;
+        let mut cache: ChecksumCache =
+            serde_json::from_str(&data).context("Failed to parse checksum cache")?;
 
         cache.cache_path = cache_path;
 
@@ -59,15 +58,12 @@ impl ChecksumCache {
     pub fn save(&self) -> Result<()> {
         // Ensure parent directory exists
         if let Some(parent) = self.cache_path.parent() {
-            fs::create_dir_all(parent)
-                .context("Failed to create cache directory")?;
+            fs::create_dir_all(parent).context("Failed to create cache directory")?;
         }
 
-        let json = serde_json::to_string_pretty(&self)
-            .context("Failed to serialize cache")?;
+        let json = serde_json::to_string_pretty(&self).context("Failed to serialize cache")?;
 
-        fs::write(&self.cache_path, json)
-            .context("Failed to write cache file")?;
+        fs::write(&self.cache_path, json).context("Failed to write cache file")?;
 
         Ok(())
     }
@@ -87,13 +83,21 @@ impl ChecksumCache {
             if age.num_days() < Self::CACHE_TTL_DAYS {
                 log::debug!(
                     "Cache hit for {} {} ({}/{}), age: {} days",
-                    tool, version, platform, arch, age.num_days()
+                    tool,
+                    version,
+                    platform,
+                    arch,
+                    age.num_days()
                 );
                 return Some(entry.hash.clone());
             } else {
                 log::debug!(
                     "Cache expired for {} {} ({}/{}), age: {} days",
-                    tool, version, platform, arch, age.num_days()
+                    tool,
+                    version,
+                    platform,
+                    arch,
+                    age.num_days()
                 );
             }
         }
@@ -102,7 +106,15 @@ impl ChecksumCache {
     }
 
     /// Store a checksum in cache
-    pub fn set(&mut self, tool: &str, version: &str, platform: &str, arch: &str, hash: String, source: String) {
+    pub fn set(
+        &mut self,
+        tool: &str,
+        version: &str,
+        platform: &str,
+        arch: &str,
+        hash: String,
+        source: String,
+    ) {
         let key = Self::build_key(tool, version, platform, arch);
 
         let entry = ChecksumCacheEntry {
@@ -115,7 +127,10 @@ impl ChecksumCache {
 
         log::debug!(
             "Cached checksum for {} {} ({}/{})",
-            tool, version, platform, arch
+            tool,
+            version,
+            platform,
+            arch
         );
     }
 
@@ -238,8 +253,22 @@ mod tests {
         let cache_path = temp.path().join("checksums.json");
         let mut cache = ChecksumCache::new(cache_path);
 
-        cache.set("tool1", "1.0", "windows", "x86_64", "hash1".to_string(), "src1".to_string());
-        cache.set("tool2", "2.0", "linux", "x86_64", "hash2".to_string(), "src2".to_string());
+        cache.set(
+            "tool1",
+            "1.0",
+            "windows",
+            "x86_64",
+            "hash1".to_string(),
+            "src1".to_string(),
+        );
+        cache.set(
+            "tool2",
+            "2.0",
+            "linux",
+            "x86_64",
+            "hash2".to_string(),
+            "src2".to_string(),
+        );
 
         let stats = cache.stats();
         assert_eq!(stats.total_entries, 2);

@@ -6,36 +6,19 @@ use crate::error::Result;
 
 /// Collect all system information
 pub fn collect_system_info() -> Result<SystemInfo> {
-    let cpu_info = cpu::collect().unwrap_or_else(|_e| {
-        cpu::get_fallback()
-    });
+    let cpu_info = cpu::collect().unwrap_or_else(|_e| cpu::get_fallback());
 
-    let memory_info = memory::collect().unwrap_or_else(|_e| {
-        memory::get_fallback()
-    });
+    let memory_info = memory::collect().unwrap_or_else(|_e| memory::get_fallback());
 
-    let gpu_info = gpu::collect().unwrap_or_else(|_e| {
-        vec![]
-    });
+    let gpu_info = gpu::collect().unwrap_or_else(|_e| vec![]);
 
-    let motherboard_info = match motherboard::collect() {
-        Ok(mb) => Some(mb),
-        Err(_e) => {
-            None
-        }
-    };
+    let motherboard_info = motherboard::collect().ok();
 
-    let network_info = network::collect().unwrap_or_else(|_e| {
-        network::get_fallback()
-    });
+    let network_info = network::collect().unwrap_or_else(|_e| network::get_fallback());
 
-    let storage_info = storage::collect().unwrap_or_else(|_e| {
-        vec![]
-    });
+    let storage_info = storage::collect().unwrap_or_else(|_e| vec![]);
 
-    let os_info = os::collect().unwrap_or_else(|_e| {
-        os::get_fallback()
-    });
+    let os_info = os::collect().unwrap_or_else(|_e| os::get_fallback());
 
     // NPU detection is best-effort
     let npu_info = detect_npu();

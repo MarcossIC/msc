@@ -1,5 +1,8 @@
 // Chrome DevTools Protocol (CDP) cookie extraction
 // Bypasses App-Bound Encryption by getting cookies directly from running Chrome
+//
+// All functions accept a `port` parameter for the CDP connection.
+// This allows IsolatedChrome to use its dynamic port instead of a hardcoded one.
 
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -12,7 +15,8 @@ use super::wget_cookies::Cookie;
 
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
-const CDP_PORT: u16 = 9222;
+/// Legacy default port — only used by deprecated backward-compatible wrappers.
+const LEGACY_CDP_PORT: u16 = 9222;
 
 /// CDP target information
 #[derive(Debug, Deserialize)]
@@ -84,13 +88,9 @@ impl From<CdpCookie> for Cookie {
     }
 }
 
-/// Check if Chrome is running with CDP enabled
-///
-/// # Returns
-/// * `true` if CDP is available on port 9222
-/// * `false` otherwise
-pub async fn is_cdp_available() -> bool {
-    let Ok(resp) = reqwest::get(format!("http://127.0.0.1:{}/json", CDP_PORT)).await else {
+/// Check if CDP is available on a specific port
+pub async fn is_cdp_available_on(port: u16) -> bool {
+    let Ok(resp) = reqwest::get(format!("http://127.0.0.1:{}/json", port)).await else {
         return false;
     };
 
@@ -101,20 +101,26 @@ pub async fn is_cdp_available() -> bool {
     targets.iter().any(|t| t.ws_url.is_some())
 }
 
-/// Get WebSocket URL for CDP connection
-async fn get_ws_url() -> Result<String> {
-    let response: Vec<CdpTarget> = reqwest::get(format!("http://127.0.0.1:{}/json", CDP_PORT))
+/// Check if CDP is available on the legacy default port (9222)
+pub async fn is_cdp_available() -> bool {
+    is_cdp_available_on(LEGACY_CDP_PORT).await
+}
+
+/// Get WebSocket URL for CDP connection on a specific port
+async fn get_ws_url_on(port: u16) -> Result<String> {
+    let response: Vec<CdpTarget> = reqwest::get(format!("http://127.0.0.1:{}/json", port))
         .await
-        .context(
-            "Chrome no está corriendo con --remote-debugging-port=9222.\n\
-         Inicia Chrome con: chrome.exe --remote-debugging-port=9222\n\
-         O usa: msc wget cookies URL --auto-launch",
-        )?
+        .with_context(|| {
+            format!(
+                "Chrome no está corriendo con CDP en puerto {}.\n\
+                 Usa: msc wget cookies URL --auto-launch",
+                port
+            )
+        })?
         .json()
         .await
         .context("Respuesta CDP inválida")?;
 
-    // Find first target with ws_url - accept any page type including about:blank
     response
         .into_iter()
         .find(|t| t.ws_url.is_some() && t.target_type.as_deref() == Some("page"))
@@ -122,32 +128,12 @@ async fn get_ws_url() -> Result<String> {
         .context("No se encontró un target CDP válido de tipo 'page'")
 }
 
-/// Extract all cookies from Chrome via CDP using Storage API (MODERN)
+/// Extract all cookies via CDP Storage API on a specific port.
 ///
-/// # Why Storage.getCookies instead of Network.getAllCookies?
-/// 1. `Network.getAllCookies` is DEPRECATED by Chrome
-/// 2. Storage API accesses the cookie jar directly (not network stack)
-/// 3. Works in headless mode without navigation
-/// 4. Returns partitioned cookies (CHIPS)
-/// 5. More reliable and future-proof
-///
-/// # How it works
-/// 1. Connect to Chrome's WebSocket endpoint
-/// 2. Send `Storage.getCookies` command (MODERN API)
-/// 3. Receive all cookies in plaintext (already decrypted by Chrome ABE)
-/// 4. Chrome handles decryption internally (respects ABE path binding)
-///
-/// # Advantages over Network.getAllCookies
-/// - Not deprecated
-/// - Direct access to cookie jar
-/// - Works without active page context
-/// - Returns partitioned cookies
-///
-/// # Requirements
-/// - Chrome must be running with `--remote-debugging-port=9222`
-/// - Chrome 127+ with App-Bound Encryption is fully supported
-pub async fn get_cookies_via_storage_api() -> Result<Vec<CdpCookie>> {
-    let ws_url = get_ws_url().await?;
+/// Uses `Storage.getCookies` (modern API) instead of the deprecated
+/// `Network.getAllCookies`. Works with Chrome 127+ ABE.
+pub async fn get_cookies_via_storage_api_on(port: u16) -> Result<Vec<CdpCookie>> {
+    let ws_url = get_ws_url_on(port).await?;
 
     let (mut ws, _) = connect_async(&ws_url)
         .await
@@ -186,6 +172,11 @@ pub async fn get_cookies_via_storage_api() -> Result<Vec<CdpCookie>> {
     ))
 }
 
+/// Legacy wrapper — extracts cookies via Storage API on the default port (9222)
+pub async fn get_cookies_via_storage_api() -> Result<Vec<CdpCookie>> {
+    get_cookies_via_storage_api_on(LEGACY_CDP_PORT).await
+}
+
 /// Extract all cookies from Chrome via CDP (DEPRECATED - Use Storage API instead)
 ///
 /// # ⚠️ DEPRECATED
@@ -217,7 +208,7 @@ pub async fn get_cookies_via_storage_api() -> Result<Vec<CdpCookie>> {
     note = "Use get_cookies_via_storage_api instead. Network.getAllCookies is deprecated by Chrome."
 )]
 pub async fn get_all_cookies() -> Result<Vec<CdpCookie>> {
-    let ws_url = get_ws_url().await?;
+    let ws_url = get_ws_url_on(LEGACY_CDP_PORT).await?;
 
     let (mut ws, _) = connect_async(&ws_url)
         .await
@@ -263,19 +254,9 @@ pub async fn get_all_cookies() -> Result<Vec<CdpCookie>> {
     Err(anyhow::anyhow!("No se recibió respuesta de CDP"))
 }
 
-/// Extract cookies for a specific domain via CDP
-///
-/// Uses the modern `Storage.getCookies` API for better reliability.
-///
-/// # Arguments
-/// * `domain` - Domain to filter cookies (e.g., "github.com", "https://instagram.com")
-///
-/// # Returns
-/// * `Ok(Vec<CdpCookie>)` - Cookies matching the domain
-/// * `Err(...)` - CDP not available or connection failed
-pub async fn get_cookies_for_domain(domain: &str) -> Result<Vec<CdpCookie>> {
-    // Use the modern Storage API instead of deprecated Network.getAllCookies
-    let all_cookies = get_cookies_via_storage_api().await?;
+/// Extract cookies for a specific domain via CDP on a specific port.
+pub async fn get_cookies_for_domain_on(port: u16, domain: &str) -> Result<Vec<CdpCookie>> {
+    let all_cookies = get_cookies_via_storage_api_on(port).await?;
 
     // Clean domain: remove protocol and path
     let clean_domain = domain
@@ -326,9 +307,7 @@ pub async fn get_cookies_for_domain(domain: &str) -> Result<Vec<CdpCookie>> {
         .filter(|c| {
             // Match exact domain or subdomain
             let matches = c.domain.ends_with(clean_domain)
-                || c.domain
-                    .strip_prefix('.')
-                    .map_or(false, |d| d == clean_domain)
+                || (c.domain.strip_prefix('.') == Some(clean_domain))
                 || clean_domain.ends_with(&c.domain.trim_start_matches('.'));
 
             matches
@@ -348,54 +327,35 @@ pub async fn get_cookies_for_domain(domain: &str) -> Result<Vec<CdpCookie>> {
     Ok(matched_cookies)
 }
 
-/// Extract cookies via CDP and convert them to our `Cookie` format.
-///
-/// This function expects a **domain** (e.g. `github.com`, not a full URL)
-/// and retrieves all cookies associated with it using the Chrome DevTools
-/// Protocol (CDP).
-///
-/// # Example
-/// ```no_run
-/// # use anyhow::Result;
-/// # async fn example() -> Result<()> {
-/// use msc::core::wget::cdp_cookies::extract_cookies_cdp;
-///
-/// let cookies = extract_cookies_cdp("github.com").await?;
-/// println!("Found {} cookies", cookies.len());
-/// # Ok(())
-/// # }
-/// ```
-pub async fn extract_cookies_cdp(domain: &str) -> Result<Vec<Cookie>> {
-    let cdp_cookies = get_cookies_for_domain(domain)
+/// Legacy wrapper — extracts cookies for a domain on the default port (9222)
+pub async fn get_cookies_for_domain(domain: &str) -> Result<Vec<CdpCookie>> {
+    get_cookies_for_domain_on(LEGACY_CDP_PORT, domain).await
+}
+
+/// Extract cookies via CDP on a specific port and convert to `Cookie` format.
+pub async fn extract_cookies_cdp_on(port: u16, domain: &str) -> Result<Vec<Cookie>> {
+    let cdp_cookies = get_cookies_for_domain_on(port, domain)
         .await
         .with_context(|| format!("Failed to extract cookies for domain: {domain}"))?;
 
     Ok(cdp_cookies.into_iter().map(Cookie::from).collect())
 }
 
-/// Extract cookies via CDP with retry logic and exponential backoff
-///
-/// This function retries the extraction if it fails due to transient issues
-/// like Chrome still initializing or network glitches.
-///
-/// # Arguments
-/// * `domain` - Domain to extract cookies for
-/// * `max_retries` - Maximum number of retry attempts (default: 3)
-///
-/// # Retry Strategy
-/// - Initial retry: immediate
-/// - Subsequent retries: exponential backoff (500ms, 1s, 2s, etc.)
-/// - Retries on: Connection errors, timeout, no targets found
-/// - No retry on: Invalid domain, authentication errors
-pub async fn extract_cookies_cdp_with_retry(
+/// Legacy wrapper — extracts cookies on the default port (9222)
+pub async fn extract_cookies_cdp(domain: &str) -> Result<Vec<Cookie>> {
+    extract_cookies_cdp_on(LEGACY_CDP_PORT, domain).await
+}
+
+/// Extract cookies via CDP with retry logic and exponential backoff on a specific port.
+pub async fn extract_cookies_cdp_with_retry_on(
+    port: u16,
     domain: &str,
     max_retries: usize,
 ) -> Result<Vec<Cookie>> {
     let mut last_error = None;
 
     for attempt in 0..=max_retries {
-        // Try extraction
-        match get_cookies_for_domain(domain).await {
+        match get_cookies_for_domain_on(port, domain).await {
             Ok(cookies) => {
                 let result: Vec<Cookie> = cookies.into_iter().map(Cookie::from).collect();
 
@@ -416,13 +376,11 @@ pub async fn extract_cookies_cdp_with_retry(
             Err(e) => {
                 last_error = Some(e);
 
-                // Don't retry if we're out of attempts
                 if attempt >= max_retries {
                     break;
                 }
 
-                // Calculate backoff delay (exponential: 500ms, 1s, 2s, 4s, etc.)
-                let delay_ms = 500 * (1 << attempt); // 500 * 2^attempt
+                let delay_ms = 500 * (1 << attempt);
 
                 println!(
                     "{}",
@@ -440,9 +398,16 @@ pub async fn extract_cookies_cdp_with_retry(
         }
     }
 
-    // All retries failed
     Err(last_error
         .unwrap_or_else(|| anyhow::anyhow!("CDP extraction failed after {} retries", max_retries)))
+}
+
+/// Legacy wrapper — retry extraction on the default port (9222)
+pub async fn extract_cookies_cdp_with_retry(
+    domain: &str,
+    max_retries: usize,
+) -> Result<Vec<Cookie>> {
+    extract_cookies_cdp_with_retry_on(LEGACY_CDP_PORT, domain, max_retries).await
 }
 
 /// Print instructions for enabling CDP

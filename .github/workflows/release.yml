@@ -433,21 +433,48 @@ jobs:
           TAG="${{ needs.create-tag.outputs.tag }}"
           VERSION="${{ needs.create-tag.outputs.version }}"
 
-          # Wait a bit for release to be fully available
-          echo "⏳ Waiting 10 seconds for release to be available..."
-          sleep 10
+          # Función para descargar checksum con retry y validación
+          download_checksum() {
+            local url="$1"
+            local output="$2"
+            local label="$3"
+            local max_retries=5
+            local delay=15
 
-          # cargo-dist uses version without 'v' prefix in filenames
-          echo "📥 Downloading checksums for version: $VERSION"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-x86_64-pc-windows-msvc.msi.sha256" -o windows.sha256 || echo "⚠️ Windows checksum not found"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-x86_64-unknown-linux-gnu.tar.xz.sha256" -o linux-x64.sha256 || echo "⚠️ Linux x64 checksum not found"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-aarch64-unknown-linux-gnu.tar.xz.sha256" -o linux-arm64.sha256 || echo "⚠️ Linux ARM64 checksum not found"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-x86_64-apple-darwin.tar.xz.sha256" -o macos-x64.sha256 || echo "⚠️ macOS x64 checksum not found"
-          curl -sL "https://github.com/MarcossIC/msc/releases/download/$TAG/msc-aarch64-apple-darwin.tar.xz.sha256" -o macos-arm64.sha256 || echo "⚠️ macOS ARM64 checksum not found"
+            for i in $(seq 1 $max_retries); do
+              echo "  [$i/$max_retries] Downloading $label..."
+              if curl -sfL "$url" -o "$output" 2>/dev/null; then
+                # Verificar que el contenido sea un hash SHA256 válido (64 caracteres hex)
+                if grep -qE '^[a-fA-F0-9]{64}' "$output"; then
+                  echo "  ✅ $label downloaded and verified"
+                  return 0
+                else
+                  echo "  ⚠️ $label: invalid checksum content, retrying..."
+                  rm -f "$output"
+                fi
+              fi
+              [ $i -lt $max_retries ] && sleep $delay
+            done
 
-          # List downloaded files
-          echo "📋 Downloaded files:"
-          ls -lh *.sha256 2>/dev/null || echo "No checksums downloaded"
+            echo "  ❌ $label: failed after $max_retries attempts"
+            rm -f "$output"
+            return 1
+          }
+
+          BASE_URL="https://github.com/MarcossIC/msc/releases/download/$TAG"
+          echo "📥 Downloading checksums for $TAG"
+
+          download_checksum "$BASE_URL/msc-x86_64-pc-windows-msvc.msi.sha256" windows.sha256 "Windows x64" || true
+          download_checksum "$BASE_URL/msc-x86_64-unknown-linux-gnu.tar.xz.sha256" linux-x64.sha256 "Linux x64" || true
+          download_checksum "$BASE_URL/msc-aarch64-unknown-linux-gnu.tar.xz.sha256" linux-arm64.sha256 "Linux ARM64" || true
+          download_checksum "$BASE_URL/msc-x86_64-apple-darwin.tar.xz.sha256" macos-x64.sha256 "macOS x64" || true
+          download_checksum "$BASE_URL/msc-aarch64-apple-darwin.tar.xz.sha256" macos-arm64.sha256 "macOS ARM64" || true
+
+          echo ""
+          echo "📋 Downloaded checksums:"
+          for f in *.sha256; do
+            [ -f "$f" ] && echo "  ✅ $f: $(cat "$f" | head -c 16)..." || true
+          done
 
       - name: Update AUR PKGBUILD
         run: |
@@ -507,27 +534,61 @@ jobs:
       - name: Update Homebrew formula
         run: |
           VERSION="${{ steps.release_info.outputs.version }}"
-          TAG="${{ steps.release_info.outputs.tag }}"
-          RELEASE_URL="${{ steps.release_info.outputs.release_url }}"
 
-          if [ -f macos-x64.sha256 ]; then
-            SHA256_MACOS_X64=$(cat macos-x64.sha256 | awk '{print $1}')
-          else
-            SHA256_MACOS_X64="REPLACE_WITH_SHA256_X86_64_MACOS"
-          fi
+          SHA256_MACOS_X64=$([ -f macos-x64.sha256 ] && awk '{print $1}' macos-x64.sha256 || echo "REPLACE_WITH_SHA256_X86_64_MACOS")
+          SHA256_MACOS_ARM64=$([ -f macos-arm64.sha256 ] && awk '{print $1}' macos-arm64.sha256 || echo "REPLACE_WITH_SHA256_ARM64_MACOS")
+          SHA256_LINUX_X64=$([ -f linux-x64.sha256 ] && awk '{print $1}' linux-x64.sha256 || echo "REPLACE_WITH_SHA256_X86_64_LINUX")
+          SHA256_LINUX_ARM64=$([ -f linux-arm64.sha256 ] && awk '{print $1}' linux-arm64.sha256 || echo "REPLACE_WITH_SHA256_ARM64_LINUX")
 
-          if [ -f macos-arm64.sha256 ]; then
-            SHA256_MACOS_ARM64=$(cat macos-arm64.sha256 | awk '{print $1}')
-          else
-            SHA256_MACOS_ARM64="REPLACE_WITH_SHA256_ARM64_MACOS"
-          fi
+          # Rewrite the full formula to avoid fragile per-line sed replacements
+          cat > packaging/homebrew/msc.rb << 'FORMULA_EOF'
+          class Msc < Formula
+            desc "Multi-purpose CLI tool for system monitoring, media management, and productivity"
+            homepage "https://github.com/MarcossIC/msc"
+            version "VERSION_PLACEHOLDER"
+            license "MIT"
 
-          # Update Homebrew formula (use VERSION not TAG in filename)
-          sed -i "s|url \".*\"|url \"$RELEASE_URL/msc-x86_64-apple-darwin.tar.xz\"|" packaging/homebrew/msc.rb
-          sed -i "s/sha256 \".*\"/sha256 \"$SHA256_MACOS_X64\"/" packaging/homebrew/msc.rb
-          sed -i "s/version \".*\"/version \"$VERSION\"/" packaging/homebrew/msc.rb
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/MarcossIC/msc/releases/download/v#{version}/msc-aarch64-apple-darwin.tar.xz"
+                sha256 "SHA256_MACOS_ARM64_PLACEHOLDER"
+              else
+                url "https://github.com/MarcossIC/msc/releases/download/v#{version}/msc-x86_64-apple-darwin.tar.xz"
+                sha256 "SHA256_MACOS_X64_PLACEHOLDER"
+              end
+            end
 
-          echo "✅ Updated Homebrew formula"
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/MarcossIC/msc/releases/download/v#{version}/msc-aarch64-unknown-linux-gnu.tar.xz"
+                sha256 "SHA256_LINUX_ARM64_PLACEHOLDER"
+              else
+                url "https://github.com/MarcossIC/msc/releases/download/v#{version}/msc-x86_64-unknown-linux-gnu.tar.xz"
+                sha256 "SHA256_LINUX_X64_PLACEHOLDER"
+              end
+            end
+
+            def install
+              bin.install "msc"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/msc --version")
+            end
+          end
+          FORMULA_EOF
+
+          # Remove leading whitespace from heredoc (was indented for readability)
+          sed -i 's/^          //' packaging/homebrew/msc.rb
+
+          # Replace placeholders with actual values
+          sed -i "s/VERSION_PLACEHOLDER/$VERSION/" packaging/homebrew/msc.rb
+          sed -i "s/SHA256_MACOS_ARM64_PLACEHOLDER/$SHA256_MACOS_ARM64/" packaging/homebrew/msc.rb
+          sed -i "s/SHA256_MACOS_X64_PLACEHOLDER/$SHA256_MACOS_X64/" packaging/homebrew/msc.rb
+          sed -i "s/SHA256_LINUX_ARM64_PLACEHOLDER/$SHA256_LINUX_ARM64/" packaging/homebrew/msc.rb
+          sed -i "s/SHA256_LINUX_X64_PLACEHOLDER/$SHA256_LINUX_X64/" packaging/homebrew/msc.rb
+
+          echo "✅ Updated Homebrew formula for all platforms"
 
       - name: Update Chocolatey package
         run: |

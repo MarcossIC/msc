@@ -1,10 +1,11 @@
 // Chrome Manager - Intelligent Chrome state detection and cookie extraction orchestration
 //
-// This module provides a robust, multi-strategy approach to extracting Chrome cookies:
-// 1. CDP from existing Chrome instance (if running with debugging)
-// 2. Auto-launch Chrome with temporary profile + cookie sync
-// 3. Direct database extraction with DPAPI (pre-Chrome 127)
-// 4. Graceful failure with clear user instructions
+// Strategies (in priority order):
+// 1. ExistingCDP  — Chrome already running with CDP (user started it manually)
+// 2. IsolatedCDP  — Launch a SEPARATE headless Chrome on a dynamic port
+// 3. DirectDatabase — Read cookies from disk (fallback, fails on Chrome 127+ ABE)
+//
+// KEY GUARANTEE: This module NEVER kills the user's browser.
 
 use anyhow::Result;
 use colored::Colorize;
@@ -13,20 +14,17 @@ use std::time::Duration;
 use sysinfo::{ProcessRefreshKind, System};
 
 use super::cdp_cookies;
-use super::chrome_launcher::{
-    get_original_profile_path, kill_all_chrome_processes, launch_with_original_profile,
-    wait_for_file_release, ChromeInstance,
-};
+use super::chrome_launcher::IsolatedChrome;
 use super::wget_cookies::{extract_cookies_from_db, Cookie};
 
-const CDP_PORT: u16 = 9222;
+const LEGACY_CDP_PORT: u16 = 9222;
 
 /// Chrome process state detection
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChromeState {
     /// Chrome is not running
     NotRunning,
-    /// Chrome is running with CDP enabled on port 9222
+    /// Chrome is running with CDP enabled (on legacy port 9222)
     RunningWithCDP,
     /// Chrome is running but without CDP
     RunningWithoutCDP,
@@ -35,13 +33,10 @@ pub enum ChromeState {
 /// Extraction strategy to use
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExtractionStrategy {
-    /// Use existing CDP connection
+    /// Use existing CDP connection (legacy port 9222)
     ExistingCDP,
-    /// Restart Chrome with CDP using ORIGINAL profile (NEW - Restart-and-Attach)
-    /// This is the core of the new architecture for Chrome 127+
-    RestartWithCDP,
-    /// Launch Chrome with ORIGINAL profile (MODIFIED - was TempProfile)
-    LaunchWithOriginalProfile,
+    /// Launch an isolated headless Chrome on a dynamic port
+    IsolatedCDP,
     /// Direct database extraction (fallback for Chrome < 127)
     DirectDatabase,
 }
@@ -53,7 +48,6 @@ pub struct ChromeManager {
 }
 
 impl ChromeManager {
-    /// Create a new ChromeManager
     pub fn new(browser: &str, db_path: PathBuf) -> Self {
         Self {
             browser_type: browser.to_string(),
@@ -63,12 +57,12 @@ impl ChromeManager {
 
     /// Detect current Chrome state
     pub fn detect_chrome_state(&self) -> ChromeState {
-        // First check if CDP port is open
+        // Check if CDP port is open (user may have started Chrome with --remote-debugging-port=9222)
         if Self::is_cdp_available_sync() {
             return ChromeState::RunningWithCDP;
         }
 
-        // Check if Chrome process is running
+        // Check if Chrome process is running (without CDP)
         let mut system = System::new();
         system.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::All,
@@ -86,7 +80,7 @@ impl ChromeManager {
             ],
         };
 
-        for (_pid, process) in system.processes() {
+        for process in system.processes().values() {
             let process_name = process.name().to_string_lossy().to_ascii_lowercase();
             if chrome_names.iter().any(|name| process_name.contains(name)) {
                 return ChromeState::RunningWithoutCDP;
@@ -96,22 +90,21 @@ impl ChromeManager {
         ChromeState::NotRunning
     }
 
-    /// Check if CDP is available (synchronous version)
+    /// Check if CDP is available on the legacy port (synchronous)
     fn is_cdp_available_sync() -> bool {
         std::net::TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", CDP_PORT).parse().unwrap(),
+            &format!("127.0.0.1:{}", LEGACY_CDP_PORT).parse().unwrap(),
             Duration::from_millis(100),
         )
         .is_ok()
     }
 
-    /// Determine the best extraction strategy based on flags and Chrome state
+    /// Determine the best extraction strategy based on flags and Chrome state.
     ///
-    /// # NEW LOGIC (Restart-and-Attach Architecture)
-    /// - If Chrome is running WITHOUT CDP → RestartWithCDP (closes and relaunches)
-    /// - If Chrome is NOT running → LaunchWithOriginalProfile
-    /// - If Chrome is running WITH CDP → ExistingCDP (use it directly)
-    /// - Fallback: DirectDatabase (only works on Chrome < 127 without ABE)
+    /// # Strategy selection
+    /// - CDP already available → use it directly (`ExistingCDP`)
+    /// - `auto_launch` enabled → launch isolated Chrome (`IsolatedCDP`)
+    /// - Otherwise → direct database read (`DirectDatabase`)
     pub fn determine_strategy(
         &self,
         use_cdp: bool,
@@ -120,33 +113,23 @@ impl ChromeManager {
         let state = self.detect_chrome_state();
 
         let strategy = match (use_cdp, auto_launch, state) {
-            // CDP available → use it directly
+            // CDP available → use it directly (no need to launch anything)
             (_, _, ChromeState::RunningWithCDP) => ExtractionStrategy::ExistingCDP,
 
-            // Chrome running WITHOUT CDP + auto-launch → RESTART (CRITICAL CHANGE)
-            // This is the core fix for Chrome 127+ ABE
-            (_, true, ChromeState::RunningWithoutCDP) => ExtractionStrategy::RestartWithCDP,
+            // auto-launch enabled → launch isolated Chrome (NEVER kills user's browser)
+            (_, true, _) => ExtractionStrategy::IsolatedCDP,
 
-            // Chrome NOT running + auto-launch → Launch with original profile
-            (_, true, ChromeState::NotRunning) => ExtractionStrategy::LaunchWithOriginalProfile,
-
-            // User wants CDP but Chrome is not running with it
+            // User wants CDP but Chrome doesn't have it
             (true, false, _) => ExtractionStrategy::ExistingCDP,
 
-            // Fallback: Direct database (only works on Chrome < 127 without ABE)
+            // Fallback: direct database (only works on Chrome < 127)
             _ => ExtractionStrategy::DirectDatabase,
         };
 
         (strategy, state)
     }
 
-    /// Extract cookies using the best available strategy with automatic fallback
-    ///
-    /// # Strategy Priority (with fallback):
-    /// 1. CDP from existing Chrome (if available)
-    /// 2. Auto-launch Chrome with temp profile (if requested)
-    /// 3. Direct database extraction (if Chrome not running)
-    /// 4. Error with clear instructions
+    /// Extract cookies using the best available strategy with automatic fallback.
     pub async fn extract_cookies_smart(
         &self,
         domain: &str,
@@ -158,7 +141,6 @@ impl ChromeManager {
         println!();
         println!("{}", "🔍 Analizando estado de Chrome...".cyan());
 
-        // Report Chrome state
         match chrome_state {
             ChromeState::NotRunning => {
                 println!("{}", "   • Chrome no está ejecutándose".dimmed());
@@ -171,30 +153,17 @@ impl ChromeManager {
             }
             ChromeState::RunningWithoutCDP => {
                 println!("{}", "   • Chrome ejecutándose (sin CDP)".yellow());
-
-                // Provide context-specific advice
-                if auto_launch {
-                    println!(
-                        "{}",
-                        "   • Usando extracción directa (más rápido y confiable)".green()
-                    );
-                }
             }
         }
 
-        // Report selected strategy
         let (strategy_name, strategy_desc) = match strategy {
             ExtractionStrategy::ExistingCDP => (
                 "Conexión a CDP existente",
                 "Usando Chrome que ya está corriendo con CDP",
             ),
-            ExtractionStrategy::RestartWithCDP => (
-                "Reiniciar Chrome con CDP",
-                "Se cerrará Chrome y se relanzará con perfil original + CDP (Restart-and-Attach)",
-            ),
-            ExtractionStrategy::LaunchWithOriginalProfile => (
-                "Lanzar Chrome con perfil original",
-                "Se lanzará Chrome con CDP usando tu perfil real (sin copias)",
+            ExtractionStrategy::IsolatedCDP => (
+                "Chrome aislado con CDP",
+                "Se lanzará un Chrome headless separado (tu navegador NO se cierra)",
             ),
             ExtractionStrategy::DirectDatabase => (
                 "Extracción directa de base de datos",
@@ -209,22 +178,14 @@ impl ChromeManager {
         println!("{}", format!("     {}", strategy_desc).dimmed());
         println!();
 
-        // Execute strategy with fallback
         let result = self
             .execute_strategy_with_fallback(domain, strategy, chrome_state)
             .await;
 
-        // Handle result
         match result {
             Ok(cookies) if !cookies.is_empty() => Ok(cookies),
-            Ok(_) => {
-                // Empty cookies - not an error, just no cookies for domain
-                Ok(vec![])
-            }
-            Err(e) => {
-                // All strategies failed - provide helpful error message
-                self.provide_helpful_error(e, chrome_state, use_cdp, auto_launch)
-            }
+            Ok(_) => Ok(vec![]),
+            Err(e) => self.provide_helpful_error(e, chrome_state, use_cdp, auto_launch),
         }
     }
 
@@ -237,8 +198,7 @@ impl ChromeManager {
     ) -> Result<Vec<Cookie>> {
         match strategy {
             ExtractionStrategy::ExistingCDP => {
-                // Try CDP first
-                match self.try_cdp_extraction(domain).await {
+                match self.try_cdp_extraction_on(LEGACY_CDP_PORT, domain).await {
                     Ok(cookies) => return Ok(cookies),
                     Err(e) => {
                         eprintln!("{}", format!("⚠️  CDP falló: {}", e).yellow());
@@ -246,169 +206,77 @@ impl ChromeManager {
                     }
                 }
 
-                // Fallback to database if Chrome is running without CDP
                 if chrome_state == ChromeState::RunningWithoutCDP {
                     eprintln!(
                         "{}",
-                        "   Chrome está abierto. Algunas cookies recientes pueden no estar en disco.".yellow()
+                        "   Chrome está abierto. Algunas cookies recientes pueden no estar en disco."
+                            .yellow()
                     );
                 }
 
                 self.try_database_extraction(domain)
             }
 
-            ExtractionStrategy::RestartWithCDP => {
-                // Try restart-and-attach (NEW STRATEGY)
-                match self.execute_restart_with_cdp(domain).await {
+            ExtractionStrategy::IsolatedCDP => {
+                match self.try_isolated_cdp_extraction(domain).await {
                     Ok(cookies) => return Ok(cookies),
                     Err(e) => {
-                        eprintln!(
-                            "{}",
-                            format!("⚠️  Restart-and-Attach falló: {}", e).yellow()
-                        );
+                        eprintln!("{}", format!("⚠️  Chrome aislado falló: {}", e).yellow());
                         eprintln!("{}", "   Intentando método alternativo...".dimmed());
                     }
                 }
 
-                // Fallback to direct database (may fail with ABE)
                 self.try_database_extraction(domain)
             }
 
-            ExtractionStrategy::LaunchWithOriginalProfile => {
-                // Try launch with original profile (MODIFIED STRATEGY)
-                match self.try_launch_with_original_profile(domain).await {
-                    Ok(cookies) => return Ok(cookies),
-                    Err(e) => {
-                        eprintln!(
-                            "{}",
-                            format!("⚠️  Launch con perfil original falló: {}", e).yellow()
-                        );
-                        eprintln!("{}", "   Intentando método alternativo...".dimmed());
-                    }
-                }
-
-                // Fallback to direct database
-                self.try_database_extraction(domain)
-            }
-
-            ExtractionStrategy::DirectDatabase => {
-                // Direct database extraction
-                self.try_database_extraction(domain)
-            }
+            ExtractionStrategy::DirectDatabase => self.try_database_extraction(domain),
         }
     }
 
-    /// Try CDP extraction with retries
-    async fn try_cdp_extraction(&self, domain: &str) -> Result<Vec<Cookie>> {
-        println!("{}", "⟳ Extrayendo cookies via CDP...".cyan());
+    /// Try CDP extraction on a specific port with retries
+    async fn try_cdp_extraction_on(&self, port: u16, domain: &str) -> Result<Vec<Cookie>> {
+        println!(
+            "{}",
+            format!("⟳ Extrayendo cookies via CDP (puerto {})...", port).cyan()
+        );
 
-        // Check if CDP is available first
-        if !cdp_cookies::is_cdp_available().await {
-            return Err(anyhow::anyhow!(
-                "CDP no está disponible en puerto {}",
-                CDP_PORT
-            ));
+        if !cdp_cookies::is_cdp_available_on(port).await {
+            return Err(anyhow::anyhow!("CDP no está disponible en puerto {}", port));
         }
 
-        // Extract with retries
-        cdp_cookies::extract_cookies_cdp_with_retry(domain, 3).await
+        cdp_cookies::extract_cookies_cdp_with_retry_on(port, domain, 3).await
     }
 
-    /// Execute "Restart-and-Attach" strategy
+    /// Launch an isolated Chrome and extract cookies via its dynamic CDP port.
     ///
-    /// This is the core of the new architecture for Chrome 127+ ABE support.
-    /// Instead of copying the profile (which breaks ABE path binding), we:
-    /// 1. Kill all Chrome processes
-    /// 2. Wait for file release
-    /// 3. Launch Chrome with ORIGINAL profile + CDP
-    /// 4. Extract cookies via Storage API
-    ///
-    /// # Why this works
-    /// - Chrome operates on its original profile path
-    /// - ABE path binding is preserved
-    /// - Chrome can decrypt cookies internally
-    /// - CDP returns plaintext cookies from memory
-    async fn execute_restart_with_cdp(&self, domain: &str) -> Result<Vec<Cookie>> {
+    /// This is the core of the new architecture:
+    /// - Launches a SEPARATE headless Chrome on a random port
+    /// - NEVER kills the user's browser
+    /// - Uses the original profile for ABE compatibility
+    /// - Extracts cookies via CDP Storage API
+    /// - Chrome is automatically cleaned up when done
+    async fn try_isolated_cdp_extraction(&self, domain: &str) -> Result<Vec<Cookie>> {
         println!();
         println!(
             "{}",
-            "🔄 Chrome está abierto sin CDP. Reiniciando..."
-                .yellow()
+            "🚀 Lanzando Chrome aislado para extracción de cookies..."
+                .cyan()
                 .bold()
         );
+        println!("{}", "   (Tu navegador NO se cerrará)".green());
         println!();
 
-        // 1. Warning to user
-        println!(
-            "{}",
-            "   ⚠️  Se cerrarán todas las pestañas de Chrome".yellow()
-        );
-        println!(
-            "{}",
-            "   ⏳ Esperando 3 segundos (Ctrl+C para cancelar)...".dimmed()
-        );
-        println!();
-
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        // 2. Kill Chrome processes
-        kill_all_chrome_processes(&self.browser_type)?;
-        println!();
-
-        // 3. Wait for file release
-        wait_for_file_release(&self.db_path)?;
-        println!();
-
-        // 4. Launch Chrome with ORIGINAL profile
-        let original_profile = get_original_profile_path(&self.browser_type)?;
-        let _chrome_process = launch_with_original_profile(&self.browser_type, &original_profile)?;
-
-        println!();
-        println!(
-            "{}",
-            "   ⏳ Esperando que Chrome cargue cookies en memoria...".dimmed()
-        );
-
-        // Give Chrome time to initialize CDP and load cookies
-        for _i in 1..=5 {
-            tokio::time::sleep(Duration::from_millis(1000)).await;
-            print!(".");
-            use std::io::{self, Write};
-            io::stdout().flush().unwrap();
-        }
-        println!();
-        println!();
-
-        // 5. Extract via Storage API
-        self.try_cdp_extraction(domain).await
-    }
-
-    /// Try launch with ORIGINAL profile (NOT temporary)
-    ///
-    /// This is the NEW approach that preserves ABE path binding.
-    /// Instead of copying the profile, we launch Chrome with the original profile.
-    async fn try_launch_with_original_profile(&self, domain: &str) -> Result<Vec<Cookie>> {
-        println!();
-        println!(
-            "{}",
-            "🚀 Lanzando Chrome con perfil original...".cyan().bold()
-        );
-        println!("{}", "   (Sin copias - preserva ABE path binding)".dimmed());
-        println!();
-
-        // Launch Chrome with ORIGINAL profile
-        let original_profile = get_original_profile_path(&self.browser_type)?;
-        let _chrome_process = launch_with_original_profile(&self.browser_type, &original_profile)?;
+        // Launch isolated Chrome — gets its own dynamic port
+        let chrome = IsolatedChrome::launch(&self.browser_type)?;
+        let port = chrome.cdp_port();
 
         // Give Chrome time to load cookies into memory
-        println!();
         println!(
             "{}",
             "   ⏳ Esperando que Chrome cargue las cookies en memoria...".dimmed()
         );
 
-        // Wait progressively with feedback
-        for _i in 1..=5 {
+        for _ in 1..=3 {
             tokio::time::sleep(Duration::from_millis(1000)).await;
             print!(".");
             use std::io::{self, Write};
@@ -417,14 +285,18 @@ impl ChromeManager {
         println!();
         println!();
 
-        // Extract cookies via CDP (using Storage API)
-        self.try_cdp_extraction(domain).await
+        // Extract cookies via CDP on the isolated instance's port
+        let result = self.try_cdp_extraction_on(port, domain).await;
+
+        // IsolatedChrome is dropped here — kills only its own process
+        drop(chrome);
+
+        result
     }
 
     /// Try direct database extraction
     fn try_database_extraction(&self, domain: &str) -> Result<Vec<Cookie>> {
         println!("{}", "⟳ Extrayendo cookies de base de datos...".cyan());
-
         extract_cookies_from_db(&self.db_path, domain)
     }
 
@@ -444,7 +316,6 @@ impl ChromeManager {
         eprintln!("{} {}", "Error:".red().bold(), error);
         eprintln!();
 
-        // Provide context-specific suggestions
         eprintln!("{}", "💡 SOLUCIONES SUGERIDAS:".cyan().bold());
         eprintln!();
 
@@ -452,21 +323,23 @@ impl ChromeManager {
             ChromeState::RunningWithoutCDP if use_cdp || auto_launch => {
                 eprintln!("{}", "Chrome está abierto sin CDP.".yellow());
                 eprintln!();
-                eprintln!("{}", "Opción 1: Cerrar Chrome completamente".green());
                 eprintln!(
                     "{}",
-                    "  1. Abre el Administrador de Tareas (Ctrl+Shift+Esc)".dimmed()
+                    "El perfil puede estar bloqueado por la instancia activa.".dimmed()
                 );
+                eprintln!();
+                eprintln!("{}", "Opción 1: Cerrar Chrome y reintentar".green());
                 eprintln!(
                     "{}",
-                    "  2. Busca 'chrome.exe' en la pestaña Detalles".dimmed()
+                    "  Cierra Chrome, luego: msc wget cookies <URL> --auto-launch".dimmed()
                 );
-                eprintln!("{}", "  3. Finaliza TODOS los procesos de Chrome".dimmed());
-                eprintln!("{}", "  4. Vuelve a ejecutar el comando".dimmed());
                 eprintln!();
                 eprintln!("{}", "Opción 2: Iniciar Chrome manualmente con CDP".green());
                 eprintln!("{}", "  chrome.exe --remote-debugging-port=9222".cyan());
                 eprintln!("{}", "  Luego: msc wget cookies <URL> --cdp".dimmed());
+                eprintln!();
+                eprintln!("{}", "Opción 3: Usar Firefox (sin esta limitación)".green());
+                eprintln!("{}", "  msc wget cookies <URL> --browser firefox".dimmed());
             }
 
             ChromeState::NotRunning if use_cdp => {
@@ -475,14 +348,11 @@ impl ChromeManager {
                     "Solicitaste CDP pero Chrome no está ejecutándose.".yellow()
                 );
                 eprintln!();
-                eprintln!("{}", "Opciones:".green());
-                eprintln!("{}", "  1. Usa --auto-launch en lugar de --cdp".cyan());
-                eprintln!("{}", "  2. Inicia Chrome manualmente con:".dimmed());
-                eprintln!("{}", "     chrome.exe --remote-debugging-port=9222".cyan());
+                eprintln!("{}", "Usa --auto-launch para que msc lance Chrome:".green());
+                eprintln!("{}", "  msc wget cookies <URL> --auto-launch".cyan());
             }
 
             _ => {
-                // Check if it's a Chrome 127+ issue
                 if error.to_string().contains("App-Bound") {
                     eprintln!(
                         "{}",
@@ -492,14 +362,10 @@ impl ChromeManager {
                     eprintln!("{}", "Este error requiere CDP. Prueba:".green());
                     eprintln!("{}", "  1. Cerrar Chrome completamente".dimmed());
                     eprintln!("{}", "  2. msc wget cookies <URL> --auto-launch".cyan());
-                    eprintln!();
-                    eprintln!("{}", "Alternativas:".green());
-                    eprintln!("{}", "  • Usar Firefox: --browser firefox".dimmed());
                 } else {
                     eprintln!("{}", "Prueba estas alternativas:".green());
                     eprintln!("{}", "  1. Cerrar Chrome y usar --auto-launch".dimmed());
                     eprintln!("{}", "  2. Usar Firefox: --browser firefox".dimmed());
-                    eprintln!("{}", "  3. Exportar cookies con una extensión".dimmed());
                 }
             }
         }
@@ -521,17 +387,32 @@ mod tests {
         let db_path = PathBuf::from("test.db");
         let manager = ChromeManager::new("chrome", db_path);
 
-        // Just verify it doesn't panic
+        // Should not panic — just detect whatever state Chrome is in
         let _state = manager.detect_chrome_state();
     }
 
     #[test]
-    fn test_strategy_determination() {
+    fn test_strategy_no_flags_gives_direct_database() {
         let db_path = PathBuf::from("test.db");
         let manager = ChromeManager::new("chrome", db_path);
 
-        // Test different scenarios
         let (strategy, _) = manager.determine_strategy(false, false);
-        assert_eq!(strategy, ExtractionStrategy::DirectDatabase);
+        // Without flags and without CDP running, should default to DirectDatabase
+        // (unless Chrome happens to be running with CDP, which is unlikely in tests)
+        if !ChromeManager::is_cdp_available_sync() {
+            assert_eq!(strategy, ExtractionStrategy::DirectDatabase);
+        }
+    }
+
+    #[test]
+    fn test_strategy_auto_launch_without_cdp() {
+        let db_path = PathBuf::from("test.db");
+        let manager = ChromeManager::new("chrome", db_path);
+
+        let (strategy, _) = manager.determine_strategy(false, true);
+        // With auto_launch and no existing CDP, should use IsolatedCDP
+        if !ChromeManager::is_cdp_available_sync() {
+            assert_eq!(strategy, ExtractionStrategy::IsolatedCDP);
+        }
     }
 }

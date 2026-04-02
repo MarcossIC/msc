@@ -55,11 +55,12 @@ pub async fn cpu_memory_process_task(
                 let memory = collect_memory(&system);
 
                 // Collect and sort processes synchronously
-                // Processing top 20 is fast enough to do inline
+                // 50 processes allows tree view to show child groups properly
+                // (e.g., browsers/IDEs with many child processes)
                 let processes = sort_and_truncate_processes(
                     system.processes(),
                     total_memory,
-                    20
+                    50
                 );
 
                 // Send update

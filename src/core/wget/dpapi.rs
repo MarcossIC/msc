@@ -31,7 +31,7 @@ pub fn decrypt_dpapi(encrypted_data: &[u8]) -> Result<Vec<u8>> {
     use std::ptr::null_mut;
 
     // Input blob pointing to encrypted data
-    let mut input_blob = CRYPT_INTEGER_BLOB {
+    let input_blob = CRYPT_INTEGER_BLOB {
         cbData: encrypted_data.len() as u32,
         pbData: encrypted_data.as_ptr() as *mut u8,
     };
@@ -45,7 +45,7 @@ pub fn decrypt_dpapi(encrypted_data: &[u8]) -> Result<Vec<u8>> {
     // Call Windows DPAPI to decrypt
     let result = unsafe {
         CryptUnprotectData(
-            &mut input_blob,
+            &input_blob,
             null_mut(),                // No description
             null_mut(),                // No additional entropy
             null_mut(),                // Reserved
@@ -108,7 +108,7 @@ mod tests {
         let plaintext = b"test_data_12345_secret_key";
 
         // Encrypt with DPAPI
-        let mut input_blob = CRYPT_INTEGER_BLOB {
+        let input_blob = CRYPT_INTEGER_BLOB {
             cbData: plaintext.len() as u32,
             pbData: plaintext.as_ptr() as *mut u8,
         };
@@ -120,7 +120,7 @@ mod tests {
 
         let encrypt_result = unsafe {
             CryptProtectData(
-                &mut input_blob,
+                &input_blob,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),

@@ -94,7 +94,7 @@ pub fn format_netscape(cookies: &[Cookie]) -> String {
 }
 
 fn sanitize_field(value: &str) -> String {
-    value.replace('\t', "").replace('\n', "")
+    value.replace(['\t', '\n'], "")
 }
 
 /// Format cookies as JSON array

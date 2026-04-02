@@ -8,7 +8,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{backend::CrosstermBackend, widgets::TableState, Terminal};
 
 use crate::core::system_monitor::{
     evaluate_alerts, Alert, AlertConfig, MetricsHistory, MetricsRuntime, SystemMetrics,
@@ -31,6 +31,7 @@ pub struct MonitorApp {
     pub selected_process_index: usize,
     pub alerts: Vec<Alert>,
     pub alert_config: AlertConfig,
+    pub process_table_state: TableState,
     // Smoothed values for fluid animations
     pub smoothed_cpu_usage: f32,
     pub smoothed_memory_usage: f32,
@@ -55,6 +56,7 @@ impl MonitorApp {
             selected_process_index: 0,
             alerts: Vec::new(),
             alert_config: AlertConfig::default(),
+            process_table_state: TableState::default().with_selected(Some(0)),
             smoothed_cpu_usage: 0.0,
             smoothed_memory_usage: 0.0,
             smoothed_gpu_usage: 0.0,
@@ -118,9 +120,27 @@ impl MonitorApp {
             // Evaluate alerts
             self.alerts = evaluate_alerts(&self.metrics, &self.alert_config);
 
+            // Clamp selection index — process count can change between updates
+            let max_idx = self.visible_process_count().saturating_sub(1);
+            if self.selected_process_index > max_idx {
+                self.selected_process_index = max_idx;
+            }
+
             return true;
         }
         false
+    }
+
+    /// Returns the actual number of visible rows in the process list.
+    /// Tree view can have MORE rows than flat view (parent nodes are included).
+    pub fn visible_process_count(&self) -> usize {
+        if self.show_process_tree {
+            use crate::core::system_monitor::{build_process_tree, flatten_tree};
+            let tree = build_process_tree(&self.metrics.top_processes);
+            flatten_tree(&tree).len()
+        } else {
+            self.metrics.top_processes.len()
+        }
     }
 
     /// Smooth a value using Exponential Moving Average
@@ -154,7 +174,7 @@ impl MonitorApp {
             }
             MonitorEvent::ToggleProcessTree => {
                 self.show_process_tree = !self.show_process_tree;
-                self.selected_process_index = 0; // Reset selection
+                self.selected_process_index = 0;
             }
             MonitorEvent::ProcessUp => {
                 if self.selected_process_index > 0 {
@@ -162,13 +182,16 @@ impl MonitorApp {
                 }
             }
             MonitorEvent::ProcessDown => {
-                let max_index = self.metrics.top_processes.len().saturating_sub(1);
+                let max_index = self.visible_process_count().saturating_sub(1);
                 if self.selected_process_index < max_index {
                     self.selected_process_index += 1;
                 }
             }
             MonitorEvent::None => {}
         }
+        // Keep TableState in sync with selected index for scroll viewport
+        self.process_table_state
+            .select(Some(self.selected_process_index));
     }
 }
 
@@ -224,8 +247,8 @@ pub fn run_monitor_app(config: MonitorAppConfig) -> Result<()> {
         // Non-blocking metrics update
         app.try_update_metrics();
 
-        // Draw UI
-        terminal.draw(|frame| render_ui(frame, &app))?;
+        // Draw UI (mutable ref needed for TableState scroll tracking)
+        terminal.draw(|frame| render_ui(frame, &mut app))?;
 
         // Handle events with minimal timeout (just to be responsive)
         // We poll for a very short time to keep the loop tight but responsive

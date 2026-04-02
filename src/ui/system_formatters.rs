@@ -50,11 +50,8 @@ pub fn format_system_info(info: &SystemInfo, filter: &DisplayFilter) {
 
     if filter.motherboard {
         // Always show motherboard section if filter is enabled
-        match &info.motherboard {
-            Some(mb) => {
-                print_motherboard_info(mb);
-            }
-            None => {}
+        if let Some(mb) = &info.motherboard {
+            print_motherboard_info(mb);
         }
     }
 
