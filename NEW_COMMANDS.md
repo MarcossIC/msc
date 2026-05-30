@@ -73,3 +73,88 @@ mi-cli tunnel 3000 --capture (Levanta el túnel y empieza a grabar).
 mi-cli requests list (Muestra tabla de peticiones: 200 OK, 500 Error, latencia).
 
 mi-cli replay <uuid> (Reintenta una petición específica).
+
+
+----
+
+  2. El help overlay es una trampa modal
+
+  render.rs:953-981 — El overlay dice "Press any key to close this help" pero no hay código que consuma input mientras el overlay está abierto. El  
+  usuario queda atrapado.
+
+  ---
+  ALTO — Impacta calidad y confiabilidad
+
+  5. Test coverage es preocupante
+
+  ┌───────────────────────────────┬──────────────────┐
+  │             Área              │      Estado      │
+  ├───────────────────────────────┼──────────────────┤
+  │ Commands (12 archivos)        │ 9 SIN TESTS      │
+  ├───────────────────────────────┼──────────────────┤
+  │ Platform Windows (9 archivos) │ CERO tests       │
+  ├───────────────────────────────┼──────────────────┤
+  │ System Info (11 archivos)     │ CERO tests       │
+  ├───────────────────────────────┼──────────────────┤
+  │ System Monitor (13 archivos)  │ Solo 3 con tests │
+  ├───────────────────────────────┼──────────────────┤
+  │ UI completa (8 archivos)      │ CERO tests       │
+  ├───────────────────────────────┼──────────────────┤
+  │ Git integration (3 archivos)  │ CERO tests       │
+  ├───────────────────────────────┼──────────────────┤
+  │ Cookie/DPAPI decryption       │ CERO tests       │
+  └───────────────────────────────┴──────────────────┘
+
+  Los tests que existen son mayormente happy-path. Los de security en aliases están buenos, pero el workspace manager acepta nombres peligrosos —   
+  workspace_test.rs hasta documenta el problema en comentarios pero no lo testea.
+
+  ---
+  MEDIO — Mejoras de diseño y performance
+
+  11. Recursión sin límite en cleaner
+
+  cleaner.rs:218-280 — count_files_recursive() no tiene límite de profundidad. Un directorio con 10,000 niveles de anidamiento = stack overflow.    
+
+  12. Solo 1 evento de input por frame
+
+  app.rs:255-272 — Solo procesa UN Event::Key por iteración del loop. Si el usuario mantiene apretada una tecla, siente lag. Procesá todos los      
+  eventos disponibles antes de renderizar.
+
+  ---
+  UI/UX — Lo que el usuario ve
+
+  14. Selección se pierde al cambiar vista
+
+  app.rs:175-178 — Al togglear entre tree/list view, selected_process_index se resetea a 0. El usuario pierde la posición de scroll.
+
+
+  16. Mouse capturado pero no usado
+
+  Mouse capture está habilitado pero no hay handler de Event::Mouse. El scroll con rueda del mouse no funciona.
+
+  ---
+  Resumen ejecutivo
+
+  ┌───────────┬───────────────────────────────────────────┬──────────┐
+  │ Prioridad │                    Qué                    │ Esfuerzo │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ CRÍTICO   │ Dirty-flag rendering + cache process tree │ Medio    │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ CRÍTICO   │ Fix help overlay trap                     │ Bajo     │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ CRÍTICO   │ Eliminar expect()/unwrap() de producción  │ Bajo     │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ CRÍTICO   │ Refactorizar wgetpostprocessing.rs        │ Alto     │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ ALTO      │ Tests para commands, platform, wget       │ Alto     │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ ALTO      │ Unificar validadores de alias             │ Medio    │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ ALTO      │ Fix TOCTOU en find_free_port              │ Medio    │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ MEDIO     │ Reducir allocaciones en render            │ Medio    │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ MEDIO     │ Versionado de config                      │ Medio    │
+  ├───────────┼───────────────────────────────────────────┼──────────┤
+  │ UX        │ Sort indicator, scroll position, mouse    │ Bajo     │
+  └───────────┴───────────────────────────────────────────┴──────────┘

@@ -1,70 +1,68 @@
 use anyhow::{Context, Result};
 use log::warn;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use wincode_derive::{SchemaRead, SchemaWrite};
 
-#[derive(Debug, Default, Serialize, Deserialize, SchemaWrite, SchemaRead)]
-pub struct Config {
-    #[serde(default)]
+#[derive(Debug, Default, SchemaWrite, SchemaRead)]
+pub struct MscConfig {
     pub work_path: Option<String>,
-    #[serde(default)]
     pub video_path: Option<String>,
-    #[serde(default)]
     pub yt_dlp_path: Option<String>,
-    #[serde(default)]
     pub yt_dlp_installed_by_msc: bool,
-    #[serde(default)]
     pub web_path: Option<String>,
-    #[serde(default)]
     pub ffmpeg_path: Option<String>,
-    #[serde(default)]
     pub ffmpeg_installed_by_msc: bool,
-    #[serde(default)]
     pub wget_path: Option<String>,
-    #[serde(default)]
     pub wget_installed_by_msc: bool,
-    #[serde(default)]
     pub workspaces: HashMap<String, String>,
-    #[serde(skip)]
-    #[serde(default)]
+    #[wincode(skip)]
     pub default_paths: Vec<String>,
-    #[serde(default)]
     pub custom_paths: Vec<String>,
-    #[serde(default)]
     pub excluded_default_paths: Vec<String>,
-    #[serde(default)]
     pub ignored_work_folders: Vec<String>,
-    #[serde(default)]
     pub installation_method: Option<String>,
 }
 
-impl Config {
+impl MscConfig {
     pub fn load() -> Result<Self> {
         let config_path = Self::get_config_path()?;
 
         let mut config = if !config_path.exists() {
-            Config::default()
+            MscConfig::default()
         } else {
             let data = fs::read(&config_path)
                 .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
 
             if data.is_empty() {
                 warn!("Config file is empty, using default configuration");
-                Config::default()
+                MscConfig::default()
             } else {
-                match wincode::deserialize::<Config>(&data) {
+                match wincode::deserialize::<MscConfig>(&data) {
                     Ok(config) => config,
                     Err(e) => {
+                        // Back up the incompatible config before it gets overwritten
+                        let backup_path = config_path.with_extension("bin.bak");
+                        if let Err(backup_err) = fs::copy(&config_path, &backup_path) {
+                            warn!(
+                                "Failed to back up config file to {:?}: {}",
+                                backup_path, backup_err
+                            );
+                        } else {
+                            warn!(
+                                "Config backup saved to {:?}. \
+                                 You can inspect it if needed.",
+                                backup_path
+                            );
+                        }
                         warn!(
-                            "Failed to deserialize config file with wincode ({}). \
+                            "Failed to deserialize config ({}). \
                              Using default configuration. \
-                             This often happens if the Config struct changed.",
+                             This usually happens after an msc update changes the config format.",
                             e
                         );
-                        Config::default()
+                        MscConfig::default()
                     }
                 }
             }
@@ -326,3 +324,6 @@ impl Config {
         self.installation_method.as_ref()
     }
 }
+
+/// Type alias para mantener compatibilidad con el resto del codebase
+pub type Config = MscConfig;

@@ -1,5 +1,7 @@
 use crate::core::system_info::types::{BusType, DiskType};
 use crate::error::{MscError, Result};
+use serde::Deserialize;
+use wmi::WMIConnection;
 
 /// Detailed disk information from Windows
 pub struct DiskDetailsWindows {
@@ -39,237 +41,226 @@ pub struct StorageSlots {
     pub m2_slots: Vec<M2SlotInfo>,
 }
 
-/// Get detailed SMART data including temperature and read/write counters
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+struct MsftPartition {
+    disk_number: Option<u32>,
+    drive_letter: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+struct MsftPhysicalDisk {
+    device_id: Option<String>,
+    friendly_name: Option<String>,
+    model: Option<String>,
+    media_type: Option<u16>,
+    bus_type: Option<u16>,
+    serial_number: Option<String>,
+    firmware_version: Option<String>,
+    manufacturer: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+struct MsftStorageReliabilityCounter {
+    device_id: Option<String>,
+    health_status: Option<String>,
+    temperature: Option<u32>,
+    read_errors_total: Option<u64>,
+    write_errors_total: Option<u64>,
+    power_on_hours: Option<f64>,
+}
+
+/// Get detailed disk information via direct WMI to the Storage Management namespace.
 ///
-/// Uses Windows Storage Management API (Get-StorageReliabilityCounter) to
-/// retrieve comprehensive SMART attributes.
-fn get_smart_data_detailed(device_id: u64) -> Result<SmartData> {
+/// Uses 3 raw WMI queries on a single connection to `Root\Microsoft\Windows\Storage`:
+///   1. MSFT_Partition (drive-letter → disk-number resolution, only if input is a letter)
+///   2. MSFT_PhysicalDisk (model, media type, bus, serial, firmware)
+///   3. MSFT_StorageReliabilityCounter (SMART: temp, errors, power-on-hours, health)
+///
+/// `disk_name` accepts either a drive letter form (e.g. "C:\\") or a physical
+/// drive form (e.g. "\\.\PhysicalDrive0"). Other inputs return a fallback.
+///
+/// PCIe link speed (formerly via Get-PnpDeviceProperty) is not migrated — there's
+/// no clean WMI equivalent. NVMe gets the conservative PCIe 3.0 x4 default. The
+/// accuracy loss is small relative to the ~1.5s saved.
+pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     use crate::core::system_info::types::SmartStatus;
-    use std::process::Command;
 
-    // Get SMART data using Get-StorageReliabilityCounter
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "$disk = Get-PhysicalDisk -DeviceNumber {}; \
-                 $health = $disk.HealthStatus; \
-                 $reliability = Get-StorageReliabilityCounter -PhysicalDisk $disk -ErrorAction SilentlyContinue; \
-                 @{{ \
-                     Health = $health; \
-                     Temperature = $reliability.Temperature; \
-                     ReadErrorsTotal = $reliability.ReadErrorsTotal; \
-                     ReadErrorsCorrected = $reliability.ReadErrorsCorrected; \
-                     WriteErrorsTotal = $reliability.WriteErrorsTotal; \
-                     WriteErrorsCorrected = $reliability.WriteErrorsCorrected; \
-                     Wear = $reliability.Wear; \
-                     PowerOnHours = $reliability.PowerOnHours.TotalHours \
-                 }} | ConvertTo-Json",
-                device_id
-            )
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to get SMART data: {}", e)))?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&output_str) {
-        let health_str = json["Health"].as_str();
-        let smart_status = match health_str {
-            Some("Healthy") => Some(SmartStatus::Healthy),
-            Some("Warning") => Some(SmartStatus::Warning),
-            Some("Unhealthy") => Some(SmartStatus::Critical),
-            _ => Some(SmartStatus::Unknown),
+    // Parse + sanitize input.
+    let drive_letter: Option<char> =
+        if disk_name.len() >= 2 && disk_name.chars().nth(1) == Some(':') {
+            let c = disk_name.chars().next().unwrap().to_ascii_uppercase();
+            if c.is_ascii_alphabetic() {
+                Some(c)
+            } else {
+                None
+            }
+        } else {
+            None
         };
 
-        let temperature = json["Temperature"].as_u64().map(|t| t as u32);
+    let mut disk_number: Option<u32> =
+        if let Some(stripped) = disk_name.strip_prefix("\\\\.\\PhysicalDrive") {
+            stripped.parse().ok()
+        } else if let Some(stripped) = disk_name.strip_prefix("PhysicalDrive") {
+            stripped.parse().ok()
+        } else {
+            None
+        };
 
-        let power_on_hours = json["PowerOnHours"].as_f64().map(|h| h as u64);
-
-        // Calculate total bytes read/written from error counters (approximate)
-        // Note: Not all drives report this accurately
-        let bytes_read = json["ReadErrorsTotal"].as_u64();
-        let bytes_written = json["WriteErrorsTotal"].as_u64();
-
-        return Ok(SmartData {
-            status: smart_status,
-            temperature,
-            power_on_hours,
-            bytes_read,
-            bytes_written,
-        });
+    if drive_letter.is_none() && disk_number.is_none() {
+        return Ok(fallback_disk_details());
     }
 
-    // Fallback to basic health check
-    Ok(get_smart_data("").unwrap_or_default())
-}
-
-/// Get the physical disk number from a drive letter (e.g., "C" -> 0)
-fn get_disk_number_from_drive_letter(drive_letter: &str) -> Result<u64> {
-    use std::process::Command;
-
-    let ps_command = format!(
-        "Get-Partition -DriveLetter {} | Select-Object -ExpandProperty DiskNumber",
-        drive_letter
-    );
-
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps_command])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to get disk number: {}", e)))?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    let disk_number = output_str
-        .trim()
-        .parse::<u64>()
-        .map_err(|e| MscError::other(format!("Failed to parse disk number: {}", e)))?;
-
-    Ok(disk_number)
-}
-
-/// Get detailed disk information using modern Windows PowerShell APIs
-///
-/// Uses Get-PhysicalDisk instead of legacy Win32_DiskDrive for accurate hardware detection.
-/// Provides REAL media type (HDD/SSD/NVMe), bus type, and SMART data including temperature.
-pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
-    use std::process::Command;
-    // First, get mapping from mount point (letter) to disk number
-    let disk_number = if disk_name.len() >= 2 && disk_name.chars().nth(1) == Some(':') {
-        // It's a drive letter like "C:\", get the disk number
-        get_disk_number_from_drive_letter(&disk_name[0..1])?
-    } else if disk_name.contains("PhysicalDrive") {
-        // Extract number from "\\.\PhysicalDrive0"
-        disk_name
-            .split("PhysicalDrive")
-            .nth(1)
-            .and_then(|s| s.parse::<u64>().ok())
-            .ok_or_else(|| MscError::other("Cannot parse PhysicalDrive number"))?
-    } else {
-        // Try first disk as fallback
-        0
+    // Connect to the Storage Management namespace (separate from root\cimv2).
+    // wmi 0.18 handles COM init internally — we just pass the namespace path.
+    let wmi = match WMIConnection::with_namespace_path("Root\\Microsoft\\Windows\\Storage") {
+        Ok(w) => w,
+        Err(_) => return Ok(fallback_disk_details()),
     };
 
-    // Use Get-PhysicalDisk (modern, accurate API) instead of Win32_DiskDrive (legacy)
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-PhysicalDisk | Select-Object DeviceId, FriendlyName, Model, MediaType, BusType, \
-             HealthStatus, Size, SerialNumber, FirmwareVersion, Manufacturer | ConvertTo-Json",
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to run PowerShell: {}", e)))?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    let json_value: serde_json::Value = serde_json::from_str(&output_str)
-        .map_err(|e| MscError::other(format!("Failed to parse JSON: {}", e)))?;
-
-    let disk_array = if json_value.is_array() {
-        json_value.as_array().unwrap().clone()
-    } else {
-        vec![json_value.clone()]
-    };
-    // Try to match disk by DeviceId (disk number)
-    for disk_json in &disk_array {
-        // DeviceId can be a number or a string, handle both cases
-        let device_id = disk_json["DeviceId"].as_u64().or_else(|| {
-            disk_json["DeviceId"]
-                .as_str()
-                .and_then(|s| s.parse::<u64>().ok())
-        });
-
-        if let Some(dev_id) = device_id {
-            if dev_id == disk_number {
-                // Extract basic info
-                let model = disk_json["Model"].as_str();
-                let friendly_name = disk_json["FriendlyName"].as_str();
-                let bus_type_str = disk_json["BusType"].as_str();
-                let media_type_str = disk_json["MediaType"].as_str().unwrap_or("Unspecified");
-
-                // Determine disk type from REAL hardware data
-                let disk_type = match media_type_str {
-                    "SSD" => {
-                        // Check if it's NVMe or SATA SSD
-                        if let Some(bus) = bus_type_str {
-                            if bus.contains("NVMe") {
-                                DiskType::NVMe
-                            } else {
-                                DiskType::SSD
-                            }
-                        } else {
-                            DiskType::SSD
-                        }
-                    }
-                    "HDD" => DiskType::HDD,
-                    "SCM" => DiskType::NVMe, // Storage Class Memory (Intel Optane) - treat as NVMe
-                    _ => {
-                        // If MediaType is "Unspecified", check BusType
-                        if let Some(bus) = bus_type_str {
-                            if bus.contains("NVMe") {
-                                DiskType::NVMe
-                            } else if bus.contains("SATA") || bus.contains("ATA") {
-                                // For SATA, try to detect if SSD or HDD from model name
-                                detect_ssd_or_hdd_from_model(
-                                    model.unwrap_or(""),
-                                    friendly_name.unwrap_or(""),
-                                )
-                            } else {
-                                DiskType::Unknown
-                            }
-                        } else {
-                            DiskType::Unknown
-                        }
-                    }
-                };
-
-                // Get REAL bus type from PowerShell
-                let bus_type = detect_bus_type_from_powershell(bus_type_str);
-
-                // Get SMART data with temperature and counters
-                let smart_data = get_smart_data_detailed(dev_id).unwrap_or_default();
-
-                // Get precise interface speed (queries PCIe link for NVMe)
-                let interface_speed = get_interface_speed_precise(&bus_type, device_id);
-
-                // Extract manufacturer
-                let manufacturer = disk_json["Manufacturer"]
-                    .as_str()
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty() && s != "(Standard disk drives)")
-                    .or_else(|| extract_manufacturer_from_model(model.unwrap_or("")));
-
-                let serial_number = disk_json["SerialNumber"]
-                    .as_str()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty());
-
-                let firmware_version = disk_json["FirmwareVersion"]
-                    .as_str()
-                    .map(|s| s.to_string())
-                    .filter(|s| !s.is_empty());
-
-                return Ok(DiskDetailsWindows {
-                    disk_type,
-                    manufacturer,
-                    model: model.map(|s| s.to_string()),
-                    serial_number,
-                    firmware_version,
-                    bus_type,
-                    interface_speed,
-                    smart_status: smart_data.status,
-                    temperature_celsius: smart_data.temperature,
-                    power_on_hours: smart_data.power_on_hours,
-                    total_bytes_read: smart_data.bytes_read,
-                    total_bytes_written: smart_data.bytes_written,
-                });
-            }
+    // Resolve drive letter → disk number if needed.
+    if disk_number.is_none() {
+        if let Some(dl) = drive_letter {
+            let partitions: Vec<MsftPartition> = wmi
+                .raw_query(&format!(
+                    "SELECT DiskNumber, DriveLetter FROM MSFT_Partition WHERE DriveLetter = '{}'",
+                    dl
+                ))
+                .unwrap_or_default();
+            disk_number = partitions.into_iter().find_map(|p| p.disk_number);
         }
     }
 
-    // Fallback if not found
+    let target = match disk_number {
+        Some(n) => n,
+        None => return Ok(fallback_disk_details()),
+    };
+
+    // MSFT_PhysicalDisk: DeviceId is a string here (numeric digits) — match by string.
+    let disks: Vec<MsftPhysicalDisk> = wmi
+        .raw_query(&format!(
+            "SELECT DeviceId, FriendlyName, Model, MediaType, BusType, \
+             SerialNumber, FirmwareVersion, Manufacturer \
+             FROM MSFT_PhysicalDisk WHERE DeviceId = '{}'",
+            target
+        ))
+        .unwrap_or_default();
+
+    let disk = match disks.into_iter().next() {
+        Some(d) => d,
+        None => return Ok(fallback_disk_details()),
+    };
+
+    // MSFT_StorageReliabilityCounter: filter by same DeviceId.
+    let counters: Vec<MsftStorageReliabilityCounter> = wmi
+        .raw_query(&format!(
+            "SELECT DeviceId, HealthStatus, Temperature, ReadErrorsTotal, \
+             WriteErrorsTotal, PowerOnHours \
+             FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{}'",
+            target
+        ))
+        .unwrap_or_default();
+    let counter = counters.into_iter().next();
+
+    let model = disk.model.as_deref();
+    let friendly_name = disk.friendly_name.as_deref();
+    let bus_type = bus_type_from_num(disk.bus_type);
+    let media_type_str = media_type_label(disk.media_type);
+
+    let disk_type = match media_type_str {
+        "SSD" => match bus_type {
+            Some(BusType::NVMe) => DiskType::NVMe,
+            _ => DiskType::SSD,
+        },
+        "HDD" => DiskType::HDD,
+        "SCM" => DiskType::NVMe,
+        _ => match bus_type {
+            Some(BusType::NVMe) => DiskType::NVMe,
+            Some(BusType::SATA) => detect_ssd_or_hdd_from_model(
+                model.unwrap_or(""),
+                friendly_name.unwrap_or(""),
+            ),
+            _ => DiskType::Unknown,
+        },
+    };
+
+    // MSFT HealthStatus is uint16 (0=Healthy, 1=Warning, 2=Unhealthy, 5=Unknown)
+    // but raw_query may surface it as string in some Windows versions. Handle both.
+    let smart_status = match counter.as_ref().and_then(|c| c.health_status.as_deref()) {
+        Some("Healthy") | Some("0") => Some(SmartStatus::Healthy),
+        Some("Warning") | Some("1") => Some(SmartStatus::Warning),
+        Some("Unhealthy") | Some("2") => Some(SmartStatus::Critical),
+        Some(_) => Some(SmartStatus::Unknown),
+        None => None,
+    };
+
+    let temperature = counter.as_ref().and_then(|c| c.temperature);
+    let power_on_hours = counter
+        .as_ref()
+        .and_then(|c| c.power_on_hours)
+        .map(|h| h as u64);
+    let bytes_read = counter.as_ref().and_then(|c| c.read_errors_total);
+    let bytes_written = counter.as_ref().and_then(|c| c.write_errors_total);
+
+    // PCIe link query removed — fallback for NVMe is PCIe 3.0 x4.
+    let interface_speed = compute_interface_speed(&bus_type, None, None);
+
+    let manufacturer = disk
+        .manufacturer
+        .filter(|s| !s.is_empty() && s != "(Standard disk drives)")
+        .or_else(|| extract_manufacturer_from_model(model.unwrap_or("")));
+
+    let serial_number = disk
+        .serial_number
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let firmware_version = disk.firmware_version.filter(|s| !s.is_empty());
+
     Ok(DiskDetailsWindows {
+        disk_type,
+        manufacturer,
+        model: model.map(|s| s.to_string()),
+        serial_number,
+        firmware_version,
+        bus_type,
+        interface_speed,
+        smart_status,
+        temperature_celsius: temperature,
+        power_on_hours,
+        total_bytes_read: bytes_read,
+        total_bytes_written: bytes_written,
+    })
+}
+
+/// Map MSFT_PhysicalDisk.MediaType numeric to a label string used by the type detection.
+/// 0=Unspecified, 3=HDD, 4=SSD, 5=SCM (storage class memory)
+fn media_type_label(media_type: Option<u16>) -> &'static str {
+    match media_type {
+        Some(3) => "HDD",
+        Some(4) => "SSD",
+        Some(5) => "SCM",
+        _ => "Unspecified",
+    }
+}
+
+/// Map MSFT_PhysicalDisk.BusType numeric to BusType enum.
+/// Per docs: 1=SCSI, 7=USB, 10=SAS, 11=SATA, 17=NVMe (others rare on consumer hardware).
+fn bus_type_from_num(bus: Option<u16>) -> Option<BusType> {
+    match bus {
+        Some(17) => Some(BusType::NVMe),
+        Some(11) | Some(3) => Some(BusType::SATA), // 11=SATA, 3=ATA
+        Some(7) => Some(BusType::USB),
+        Some(1) | Some(10) | Some(9) => Some(BusType::SCSI), // SCSI/SAS/iSCSI
+        _ => None,
+    }
+}
+
+fn fallback_disk_details() -> DiskDetailsWindows {
+    DiskDetailsWindows {
         disk_type: DiskType::Unknown,
         manufacturer: None,
         model: None,
@@ -282,91 +273,40 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
         power_on_hours: None,
         total_bytes_read: None,
         total_bytes_written: None,
-    })
+    }
 }
 
-/// Detect bus type from PowerShell Get-PhysicalDisk output (REAL hardware detection)
-fn detect_bus_type_from_powershell(
-    bus_type_str: Option<&str>,
-) -> Option<crate::core::system_info::types::BusType> {
-    bus_type_str.and_then(|bus| match bus {
-        "NVMe" => Some(BusType::NVMe),
-        "SATA" | "ATA" | "ATAPI" => Some(BusType::SATA),
-        "USB" | "Usb" => Some(BusType::USB),
-        "SCSI" | "SAS" | "iSCSI" => Some(BusType::SCSI),
-        _ => None,
-    })
-}
-
-/// Get precise interface speed for NVMe drives by querying PCIe link information
-///
-/// This function queries the actual PCIe link speed and lane count from Windows,
-/// rather than guessing based on model name.
-fn get_interface_speed_precise(
+/// Map PCIe link speed (GT/s) + width (lanes) to an InterfaceSpeed enum.
+/// Falls back to typical defaults per bus when link info is missing.
+fn compute_interface_speed(
     bus_type: &Option<crate::core::system_info::types::BusType>,
-    device_id: Option<u64>,
+    speed: Option<u64>,
+    width: Option<u64>,
 ) -> Option<crate::core::system_info::types::InterfaceSpeed> {
     use crate::core::system_info::types::{BusType, InterfaceSpeed};
-    use std::process::Command;
 
     match bus_type {
         Some(BusType::NVMe) => {
-            // For NVMe, try to get PCIe link information from device manager
-            if let Some(dev_id) = device_id {
-                // Query using Get-PnpDeviceProperty for PCIe link speed
-                let output = Command::new("powershell")
-                    .args([
-                        "-NoProfile",
-                        "-Command",
-                        &format!(
-                            "$disk = Get-PhysicalDisk -DeviceNumber {}; \
-                             $pnp = Get-PnpDevice | Where-Object {{ $_.FriendlyName -eq $disk.FriendlyName }}; \
-                             if ($pnp) {{ \
-                                 $linkSpeed = Get-PnpDeviceProperty -InstanceId $pnp.InstanceId -KeyName 'DEVPKEY_PciDevice_CurrentLinkSpeed' -ErrorAction SilentlyContinue; \
-                                 $linkWidth = Get-PnpDeviceProperty -InstanceId $pnp.InstanceId -KeyName 'DEVPKEY_PciDevice_CurrentLinkWidth' -ErrorAction SilentlyContinue; \
-                                 @{{ Speed = $linkSpeed.Data; Width = $linkWidth.Data }} | ConvertTo-Json \
-                             }}",
-                            dev_id
-                        )
-                    ])
-                    .output();
-
-                if let Ok(output) = output {
-                    let output_str = String::from_utf8_lossy(&output.stdout);
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&output_str) {
-                        // Parse PCIe generation from link speed (GT/s)
-                        // PCIe 3.0 = 8 GT/s, PCIe 4.0 = 16 GT/s, PCIe 5.0 = 32 GT/s
-                        if let Some(speed) = json["Speed"].as_u64() {
-                            let width = json["Width"].as_u64().unwrap_or(4);
-
-                            // Determine PCIe generation
-                            if speed >= 32000 && width >= 4 {
-                                return Some(InterfaceSpeed::PCIe5x4);
-                            } else if speed >= 16000 && width >= 4 {
-                                return Some(InterfaceSpeed::PCIe4x4);
-                            } else if speed >= 8000 {
-                                if width >= 4 {
-                                    return Some(InterfaceSpeed::PCIe3x4);
-                                } else if width >= 2 {
-                                    return Some(InterfaceSpeed::PCIe3x2);
-                                }
-                            }
-                        }
+            if let (Some(s), Some(w)) = (speed, width) {
+                if s >= 32000 && w >= 4 {
+                    return Some(InterfaceSpeed::PCIe5x4);
+                }
+                if s >= 16000 && w >= 4 {
+                    return Some(InterfaceSpeed::PCIe4x4);
+                }
+                if s >= 8000 {
+                    if w >= 4 {
+                        return Some(InterfaceSpeed::PCIe3x4);
+                    }
+                    if w >= 2 {
+                        return Some(InterfaceSpeed::PCIe3x2);
                     }
                 }
             }
-
-            // Fallback: default to PCIe 3.0 x4 for NVMe
             Some(InterfaceSpeed::PCIe3x4)
         }
-        Some(BusType::SATA) => {
-            // Most modern SATA drives are SATA III (6 Gb/s)
-            Some(InterfaceSpeed::SATA6Gbps)
-        }
-        Some(BusType::USB) => {
-            // Default to USB 3.0 (can be improved with more detection)
-            Some(InterfaceSpeed::USB3_5Gbps)
-        }
+        Some(BusType::SATA) => Some(InterfaceSpeed::SATA6Gbps),
+        Some(BusType::USB) => Some(InterfaceSpeed::USB3_5Gbps),
         _ => None,
     }
 }
@@ -425,60 +365,6 @@ fn detect_ssd_or_hdd_from_model(model: &str, friendly_name: &str) -> DiskType {
 
     // Default to SSD for modern systems if unable to determine
     DiskType::SSD
-}
-
-#[derive(Default)]
-struct SmartData {
-    status: Option<crate::core::system_info::types::SmartStatus>,
-    temperature: Option<u32>,
-    power_on_hours: Option<u64>,
-    bytes_read: Option<u64>,
-    bytes_written: Option<u64>,
-}
-
-/// Get SMART data for a disk (basic implementation)
-fn get_smart_data(_model: &str) -> Result<SmartData> {
-    use crate::core::system_info::types::SmartStatus;
-    use std::process::Command;
-
-    // Try to get SMART status using PowerShell
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-PhysicalDisk | Select-Object HealthStatus, OperationalStatus | ConvertTo-Json",
-        ])
-        .output();
-
-    if let Ok(output) = output {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
-        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&output_str) {
-            let disk_data = if json_value.is_array() {
-                json_value.as_array().and_then(|arr| arr.first())
-            } else {
-                Some(&json_value)
-            };
-
-            if let Some(data) = disk_data {
-                let health_status = data["HealthStatus"].as_str();
-                let smart_status = match health_status {
-                    Some("Healthy") => Some(SmartStatus::Healthy),
-                    Some("Warning") => Some(SmartStatus::Warning),
-                    Some("Unhealthy") => Some(SmartStatus::Critical),
-                    _ => Some(SmartStatus::Unknown),
-                };
-
-                return Ok(SmartData {
-                    status: smart_status,
-                    ..Default::default()
-                });
-            }
-        }
-    }
-
-    // Could not get SMART data
-    Ok(SmartData::default())
 }
 
 /// Get disk type information using PowerShell (legacy function for backward compatibility)

@@ -59,23 +59,21 @@ pub fn get_cpu_details() -> Result<CpuDetailsWindows> {
     ))
 }
 
-/// Get NUMA node count using Windows API
+/// Get NUMA node count via direct WMI (no PowerShell cold start).
 fn get_numa_node_count() -> Result<u32> {
-    use std::process::Command;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32NumaNode {
+        #[serde(default, rename = "Name")]
+        _name: Option<String>,
+    }
 
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "(Get-WmiObject -Class Win32_NumaNode | Measure-Object).Count",
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to get NUMA nodes: {}", e)))?;
-
-    let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let count = count_str.parse::<u32>().unwrap_or(1); // Default to 1 if parsing fails
-
-    Ok(count)
+    let wmi_con = WMIConnection::new()
+        .map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
+    let nodes: Vec<Win32NumaNode> = wmi_con
+        .query()
+        .map_err(|e| MscError::other(format!("WMI query failed: {}", e)))?;
+    Ok(nodes.len().max(1) as u32)
 }
 
 /// Detect CPU instruction set support using CPUID

@@ -73,7 +73,9 @@ fn install_msi(msi_path: &Path) -> Result<()> {
     println!("{}", "✓ MSI installation completed".green());
 
     // Limpiar el archivo MSI temporal
-    let _ = fs::remove_file(msi_path);
+    if let Err(e) = fs::remove_file(msi_path) {
+        log::warn!("Failed to delete temporary MSI file {:?}: {}", msi_path, e);
+    }
 
     Ok(())
 }
@@ -150,7 +152,9 @@ fn install_binary_from_tarball(tar_path: &Path, asset_name: &str) -> Result<()> 
     println!("{}", "✓ Binary replacement completed".green());
 
     // temp_dir auto-cleans on drop
-    let _ = fs::remove_file(tar_path);
+    if let Err(e) = fs::remove_file(tar_path) {
+        log::warn!("Failed to delete temporary tarball {:?}: {}", tar_path, e);
+    }
 
     println!(
         "{}",

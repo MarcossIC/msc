@@ -9,7 +9,7 @@ pub mod dpapi;
 pub mod wget_cookies;
 pub mod wget_manager;
 pub mod wget_utils;
-pub mod wgetpostprocessing;
+pub mod postprocessing;
 
 // Re-export commonly used items
 pub use cdp_cookies::{
@@ -36,4 +36,4 @@ pub use wget_utils::{
     calculate_local_path_for_url, calculate_possible_local_paths, download_resource,
     extract_filename_from_url, is_local_path, is_placeholder_image,
 };
-pub use wgetpostprocessing::process_html_file_complete;
+pub use postprocessing::{process_html_file_complete, PostProcessor};

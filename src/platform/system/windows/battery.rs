@@ -2,67 +2,64 @@ use crate::core::system_info::types::{
     BatteryInfo, BatteryState, BatteryTechnology, PowerMode, PowerPlan, PowerPlanInfo,
 };
 use crate::error::{MscError, Result};
+use serde::Deserialize;
+use wmi::WMIConnection;
 
-/// Get battery information using PowerShell
-/// Get comprehensive battery information using multiple Windows APIs
-///
-/// This function combines data from:
-/// 1. Win32_Battery - Basic status and state
-/// 2. BatteryStaticData/BatteryFullChargedCapacity - Accurate capacity via WMI
-/// 3. Registry - Cycle count and additional metrics
-pub fn get_battery_info() -> Result<BatteryInfo> {
-    use std::process::Command;
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Win32Battery {
+    battery_status: Option<u16>,
+    estimated_charge_remaining: Option<u32>,
+    estimated_run_time: Option<u32>,
+    chemistry: Option<u16>,
+    design_voltage: Option<u32>,
+    manufacturer: Option<String>,
+    serial_number: Option<String>,
+    #[serde(rename = "ManufactureDate")]
+    manufacture_date: Option<String>,
+}
 
-    // First check if battery exists at all
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance -ClassName Win32_Battery | ConvertTo-Json",
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to run PowerShell: {}", e)))?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    // If no output or empty array, no battery present (desktop PC)
-    if output_str.trim().is_empty() || output_str.trim() == "[]" {
-        return Ok(BatteryInfo {
-            is_present: false,
-            state: BatteryState::Unknown,
-            percentage: None,
-            time_remaining_secs: None,
-            time_to_full_secs: None,
-            design_capacity_mwh: None,
-            full_charge_capacity_mwh: None,
-            health_percentage: None,
-            cycle_count: None,
-            technology: None,
-            voltage_mv: None,
-            design_voltage_mv: None,
-            discharge_rate_mw: None,
-            manufacturer: None,
-            serial_number: None,
-            manufacture_date: None,
-        });
+fn empty_battery() -> BatteryInfo {
+    BatteryInfo {
+        is_present: false,
+        state: BatteryState::Unknown,
+        percentage: None,
+        time_remaining_secs: None,
+        time_to_full_secs: None,
+        design_capacity_mwh: None,
+        full_charge_capacity_mwh: None,
+        health_percentage: None,
+        cycle_count: None,
+        technology: None,
+        voltage_mv: None,
+        design_voltage_mv: None,
+        discharge_rate_mw: None,
+        manufacturer: None,
+        serial_number: None,
+        manufacture_date: None,
     }
+}
 
-    // Parse basic battery info
-    let json_value: serde_json::Value = serde_json::from_str(&output_str)
-        .map_err(|e| MscError::other(format!("Failed to parse JSON: {}", e)))?;
+/// Get comprehensive battery information using multiple Windows APIs.
+///
+/// Combines:
+/// 1. Win32_Battery via direct WMI (basic status and state)
+/// 2. BatteryStaticData / BatteryFullChargedCapacity via WMI (accurate capacity)
+/// 3. Registry (cycle count and additional metrics)
+pub fn get_battery_info() -> Result<BatteryInfo> {
+    let wmi = WMIConnection::new()
+        .map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
 
-    let battery_json = if json_value.is_array() {
-        json_value
-            .as_array()
-            .and_then(|arr| arr.first())
-            .ok_or_else(|| MscError::other("Battery array is empty"))?
-    } else {
-        &json_value
+    let batteries: Vec<Win32Battery> = wmi
+        .query()
+        .map_err(|e| MscError::other(format!("WMI query failed: {}", e)))?;
+
+    let battery = match batteries.into_iter().next() {
+        Some(b) => b,
+        None => return Ok(empty_battery()), // No battery → desktop PC
     };
 
-    // Get basic state from Win32_Battery
-    let battery_status = battery_json["BatteryStatus"].as_u64().map(|s| s as u16);
-    let state = match battery_status {
+    let state = match battery.battery_status {
         Some(1) => BatteryState::Discharging,
         Some(2) => BatteryState::Charging,
         Some(3) => BatteryState::Full,
@@ -70,20 +67,18 @@ pub fn get_battery_info() -> Result<BatteryInfo> {
         _ => BatteryState::Unknown,
     };
 
-    let percentage = battery_json["EstimatedChargeRemaining"]
-        .as_u64()
-        .map(|p| p as u8);
-    let time_remaining_secs = battery_json["EstimatedRunTime"].as_u64().and_then(|t| {
-        if t < 71582788 {
-            Some((t * 60) as u32)
+    let percentage = battery.estimated_charge_remaining.map(|p| p as u8);
+
+    // EstimatedRunTime returns a sentinel ~71582788 when not discharging — filter it out.
+    let time_remaining_secs = battery.estimated_run_time.and_then(|t| {
+        if t < 71_582_788 {
+            Some(t * 60)
         } else {
             None
         }
-    }); // Filter out invalid values
+    });
 
-    // Get chemistry/technology
-    let chemistry = battery_json["Chemistry"].as_u64().map(|c| c as u16);
-    let technology = match chemistry {
+    let technology = match battery.chemistry {
         Some(1) => Some(BatteryTechnology::LeadAcid),
         Some(2) => Some(BatteryTechnology::NickelCadmium),
         Some(3) => Some(BatteryTechnology::NickelMetalHydride),
@@ -92,34 +87,27 @@ pub fn get_battery_info() -> Result<BatteryInfo> {
         _ => Some(BatteryTechnology::Unknown),
     };
 
-    // Get capacity information using more reliable WMI classes
     let (design_capacity, full_charge_capacity, cycle_count) = get_battery_capacity_wmi();
 
-    // Calculate health if we have capacity data
-    let health = if let (Some(design), Some(full)) = (design_capacity, full_charge_capacity) {
-        if design > 0 {
+    let health = match (design_capacity, full_charge_capacity) {
+        (Some(design), Some(full)) if design > 0 => {
             Some(((full as f32 / design as f32) * 100.0).min(100.0) as u8)
-        } else {
-            None
         }
-    } else {
-        None
+        _ => None,
     };
 
-    // Get real-time power info
     let (voltage_mv, discharge_rate_mw) = get_battery_power_info();
 
-    let design_voltage = battery_json["DesignVoltage"]
-        .as_u64()
-        .map(|v| v as u32)
-        .or(voltage_mv); // Use current voltage as fallback
+    let design_voltage = battery.design_voltage.or(voltage_mv);
+
+    let nz = |s: Option<String>| s.filter(|v| !v.is_empty());
 
     Ok(BatteryInfo {
         is_present: true,
         state,
         percentage,
         time_remaining_secs,
-        time_to_full_secs: None, // Could be calculated from charge rate
+        time_to_full_secs: None,
         design_capacity_mwh: design_capacity,
         full_charge_capacity_mwh: full_charge_capacity,
         health_percentage: health,
@@ -128,18 +116,9 @@ pub fn get_battery_info() -> Result<BatteryInfo> {
         voltage_mv,
         design_voltage_mv: design_voltage,
         discharge_rate_mw,
-        manufacturer: battery_json["Manufacturer"]
-            .as_str()
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty()),
-        serial_number: battery_json["SerialNumber"]
-            .as_str()
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty()),
-        manufacture_date: battery_json["ManufactureDate"]
-            .as_str()
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty()),
+        manufacturer: nz(battery.manufacturer),
+        serial_number: nz(battery.serial_number),
+        manufacture_date: nz(battery.manufacture_date),
     })
 }
 

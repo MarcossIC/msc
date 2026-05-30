@@ -1,6 +1,6 @@
 use crate::core::wget::{
     calculate_local_path_for_url, create_cookie_file, debug_database_info, extract_cookies_from_db,
-    extract_cookies_with_cdp, find_browser_cookie_db, format_cookies, process_html_file_complete,
+    extract_cookies_with_cdp, find_browser_cookie_db, format_cookies, PostProcessor,
     resolve_cookie_path, WgetManager,
 };
 use crate::core::{validation, Config};
@@ -68,7 +68,10 @@ pub fn execute_postprocessing(matches: &clap::ArgMatches) -> Result<()> {
 
     // 4. Run post-processing
     println!("{}", "⟳ Procesando archivos HTML...".cyan());
-    post_process_directory(&target_dir, &target_dir, &base_url)?;
+    let blacklist = validation::load_default_blacklist()
+        .unwrap_or_else(|_| crate::core::Blacklist::new());
+    let processor = PostProcessor::new(blacklist);
+    post_process_directory(&target_dir, &target_dir, &base_url, &processor)?;
 
     println!();
     println!(
@@ -569,13 +572,15 @@ impl Crawler {
             .dimmed()
         );
 
+        // Create processor once — shares blacklist across all files
+        let blacklist = validation::load_default_blacklist()
+            .unwrap_or_else(|_| crate::core::Blacklist::new());
+        let processor = PostProcessor::new(blacklist);
+
         for url_str in &self.visited {
             if let Ok(url) = Url::parse(url_str) {
-                // Calculate local path for this URL
-                // Crawler uses directory structure, so use calculate_local_path_for_url
                 if let Some(local_path) = calculate_local_path_for_url(&url, &self.target_dir) {
                     if local_path.exists() {
-                        // Only process HTML files
                         if local_path
                             .extension()
                             .is_some_and(|ext| ext == "html" || ext == "htm")
@@ -584,7 +589,7 @@ impl Crawler {
                                 "   {}",
                                 format!("⟳ Procesando {}", local_path.display()).dimmed()
                             );
-                            if let Err(e) = process_html_file_complete(
+                            if let Err(e) = processor.process_file(
                                 &local_path,
                                 &self.target_dir,
                                 &self.base_url,
@@ -946,7 +951,12 @@ fn extract_links_from_html(file_path: &PathBuf, base_url: &Url) -> Result<Vec<St
 }
 
 /// Post-process directory recursively (for crawler mode after all downloads complete)
-fn post_process_directory(current_dir: &PathBuf, root_dir: &PathBuf, base_url: &Url) -> Result<()> {
+fn post_process_directory(
+    current_dir: &PathBuf,
+    root_dir: &PathBuf,
+    base_url: &Url,
+    processor: &PostProcessor,
+) -> Result<()> {
     let entries = fs::read_dir(current_dir)?;
     for entry in entries {
         let entry = entry?;
@@ -957,14 +967,14 @@ fn post_process_directory(current_dir: &PathBuf, root_dir: &PathBuf, base_url: &
             if path.file_name().is_some_and(|n| n == "assets") {
                 continue;
             }
-            post_process_directory(&path, root_dir, base_url)?;
+            post_process_directory(&path, root_dir, base_url, processor)?;
         } else if path
             .extension()
             .is_some_and(|ext| ext == "html" || ext == "htm")
         {
             let msg = format!("⟳ Procesando {}", path.display());
             println!("   {}", msg.dimmed());
-            process_html_file_complete(&path, root_dir, base_url)?;
+            processor.process_file(&path, root_dir, base_url)?;
         }
     }
     Ok(())
@@ -983,7 +993,10 @@ fn process_downloaded_page(original_url: &str, target_dir: &PathBuf) -> Result<(
                 "   {}",
                 format!("⟳ Procesando archivo principal: {}", main_file.display()).dimmed()
             );
-            process_html_file_complete(&main_file, target_dir, &base_url)?;
+            let blacklist = validation::load_default_blacklist()
+                .unwrap_or_else(|_| crate::core::Blacklist::new());
+            let processor = PostProcessor::new(blacklist);
+            processor.process_file(&main_file, target_dir, &base_url)?;
         } else {
             // Fallback: if we can't find the specific file, we might warn the user
             // but we explicitly DO NOT want to scan the whole directory to avoid touching other files

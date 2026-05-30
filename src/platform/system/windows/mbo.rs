@@ -1,82 +1,90 @@
 use crate::core::system_info::types::MotherboardInfo;
-use crate::error::{MscError, Result};
+use crate::error::Result;
+#[cfg(windows)]
+use serde::Deserialize;
+#[cfg(windows)]
+use wmi::WMIConnection;
 
 #[cfg(not(windows))]
 pub fn get_motherboard_info() -> Result<MotherboardInfo> {
-    Err(MscError::other(
+    Err(crate::error::MscError::other(
         "get_motherboard_info sólo está disponible en Windows",
     ))
 }
 
-/// Get motherboard information using PowerShell
+/// Baseboard + BIOS query result (5 fields).
+#[cfg(windows)]
+pub struct BaseboardBiosInfo {
+    pub manufacturer: Option<String>,
+    pub product: Option<String>,
+    pub version: Option<String>,
+    pub bios_vendor: Option<String>,
+    pub bios_version: Option<String>,
+}
+
+/// Query baseboard + BIOS via direct WMI (2 small queries on the same connection).
+#[cfg(windows)]
+pub fn get_baseboard_bios() -> BaseboardBiosInfo {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32BaseBoard {
+        manufacturer: Option<String>,
+        product: Option<String>,
+        version: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32Bios {
+        manufacturer: Option<String>,
+        #[serde(rename = "SMBIOSBIOSVersion")]
+        smbios_bios_version: Option<String>,
+    }
+
+    let empty = || BaseboardBiosInfo {
+        manufacturer: None,
+        product: None,
+        version: None,
+        bios_vendor: None,
+        bios_version: None,
+    };
+
+    let wmi = match WMIConnection::new() {
+        Ok(w) => w,
+        Err(_) => return empty(),
+    };
+
+    let baseboards: Vec<Win32BaseBoard> = wmi.query().unwrap_or_default();
+    let bioses: Vec<Win32Bios> = wmi.query().unwrap_or_default();
+
+    let bb = baseboards.into_iter().next();
+    let bi = bioses.into_iter().next();
+
+    let nz = |s: Option<String>| s.filter(|v| !v.is_empty());
+
+    BaseboardBiosInfo {
+        manufacturer: nz(bb.as_ref().and_then(|b| b.manufacturer.clone())),
+        product: nz(bb.as_ref().and_then(|b| b.product.clone())),
+        version: nz(bb.as_ref().and_then(|b| b.version.clone())),
+        bios_vendor: nz(bi.as_ref().and_then(|b| b.manufacturer.clone())),
+        bios_version: nz(bi.as_ref().and_then(|b| b.smbios_bios_version.clone())),
+    }
+}
+
+/// Get motherboard information using PowerShell (orchestrates 4 sub-queries).
 #[cfg(windows)]
 pub fn get_motherboard_info() -> Result<MotherboardInfo> {
-    use std::process::Command;
-
-    // Query baseboard and BIOS info using PowerShell (more reliable than direct WMI)
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "$baseboard = Get-CimInstance -ClassName Win32_BaseBoard -ErrorAction SilentlyContinue | Select-Object -First 1; \
-             $bios = Get-CimInstance -ClassName Win32_BIOS -ErrorAction SilentlyContinue | Select-Object -First 1; \
-             @{ \
-                 Manufacturer = $baseboard.Manufacturer; \
-                 Product = $baseboard.Product; \
-                 Version = $baseboard.Version; \
-                 BiosVendor = $bios.Manufacturer; \
-                 BiosVersion = $bios.SMBIOSBIOSVersion \
-             } | ConvertTo-Json"
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to run PowerShell: {}", e)))?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    // Parse motherboard info
-    let (manufacturer, product, version, bios_vendor, bios_version) =
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&output_str) {
-            let manufacturer = json["Manufacturer"]
-                .as_str()
-                .map(|s| s.to_string())
-                .filter(|s| !s.is_empty());
-            let product = json["Product"]
-                .as_str()
-                .map(|s| s.to_string())
-                .filter(|s| !s.is_empty());
-            let version = json["Version"]
-                .as_str()
-                .map(|s| s.to_string())
-                .filter(|s| !s.is_empty());
-            let bios_vendor = json["BiosVendor"]
-                .as_str()
-                .map(|s| s.to_string())
-                .filter(|s| !s.is_empty());
-            let bios_version = json["BiosVersion"]
-                .as_str()
-                .map(|s| s.to_string())
-                .filter(|s| !s.is_empty());
-
-            (manufacturer, product, version, bios_vendor, bios_version)
-        } else {
-            (None, None, None, None, None)
-        };
-
-    // Get chipset information
+    let bb = get_baseboard_bios();
     let chipset = detect_chipset();
-
-    // Get TPM version
     let tpm_version = detect_tpm_version();
-
-    // Get DIMM slots count (from memory module query)
     let dimm_slots = get_dimm_slot_count();
 
     Ok(MotherboardInfo {
-        manufacturer,
-        product,
-        version,
-        bios_vendor,
-        bios_version,
+        manufacturer: bb.manufacturer,
+        product: bb.product,
+        version: bb.version,
+        bios_vendor: bb.bios_vendor,
+        bios_version: bb.bios_version,
         chipset,
         tpm_version,
         dimm_slots,
@@ -86,31 +94,32 @@ pub fn get_motherboard_info() -> Result<MotherboardInfo> {
     })
 }
 
-/// Detect motherboard chipset using PowerShell and WMI
+/// Detect motherboard chipset via direct WMI.
 ///
-/// This function queries PnP devices and USB controllers to identify the chipset.
-fn detect_chipset() -> Option<String> {
-    use std::process::Command;
-
-    // Try to get chipset from Win32_Bus or PnP devices
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance -ClassName Win32_PnPEntity | Where-Object { $_.Name -like '*Chipset*' -or $_.Name -like '*SMBus*' -or $_.Name -like '*LPC Controller*' } | Select-Object -First 1 -ExpandProperty Name"
-        ])
-        .output()
-        .ok()?;
-
-    let chipset_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    if !chipset_str.is_empty() {
-        // Extract chipset name from device string
-        // Example: "Intel(R) 600 Series Chipset Family LPC Controller (Z690)"
-        return Some(extract_chipset_name(&chipset_str));
+/// Queries Win32_PnPEntity with WHERE filter (no full-table scan) to find
+/// chipset/SMBus/LPC controller devices.
+pub fn detect_chipset() -> Option<String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32PnpEntity {
+        name: Option<String>,
     }
 
-    None
+    let wmi = WMIConnection::new().ok()?;
+
+    // raw_query lets us push the WHERE down to WMI, avoiding a full PnP scan.
+    let entities: Vec<Win32PnpEntity> = wmi
+        .raw_query(
+            "SELECT Name FROM Win32_PnPEntity \
+             WHERE Name LIKE '%Chipset%' OR Name LIKE '%SMBus%' OR Name LIKE '%LPC Controller%'",
+        )
+        .ok()?;
+
+    let first_name = entities.into_iter().find_map(|e| e.name)?;
+    if first_name.is_empty() {
+        return None;
+    }
+    Some(extract_chipset_name(&first_name))
 }
 
 /// Extract chipset name from PnP device string
@@ -141,14 +150,35 @@ fn extract_chipset_name(device_name: &str) -> String {
     device_name.replace("(R)", "").trim().to_string()
 }
 
-/// Detect TPM version using PowerShell
+/// Cache key for TPM version. TPM hardware does not change at runtime, so we
+/// cache for 30 days to avoid the ~5s WMI security-namespace cold start.
+const TPM_CACHE_KEY: &str = "tpm_version";
+const TPM_CACHE_TTL_DAYS: u64 = 30;
+
+/// Detect TPM version using PowerShell, with disk-cache (30-day TTL).
 ///
-/// This function queries Win32_Tpm WMI class to get the TPM specification version.
-fn detect_tpm_version() -> Option<crate::core::system_info::types::TpmVersion> {
+/// First call queries `root\CIMV2\Security\MicrosoftTpm` (slow). Subsequent
+/// calls within TTL read from the cache (microseconds), even when the result
+/// is `None` (TPM unavailable / no admin / disabled). Use `--clear-cache` if
+/// the hardware state changed.
+pub fn detect_tpm_version() -> Option<crate::core::system_info::types::TpmVersion> {
+    use crate::core::system_info::cache;
+    use crate::core::system_info::types::TpmVersion;
+
+    // Cache stores the full Option so negatives are remembered too.
+    if let Some(cached) = cache::get::<Option<TpmVersion>>(TPM_CACHE_KEY) {
+        return cached;
+    }
+
+    let result = query_tpm_version_uncached();
+    cache::set(TPM_CACHE_KEY, &result, TPM_CACHE_TTL_DAYS);
+    result
+}
+
+fn query_tpm_version_uncached() -> Option<crate::core::system_info::types::TpmVersion> {
     use crate::core::system_info::types::TpmVersion;
     use std::process::Command;
 
-    // Query TPM version from WMI
     let output = Command::new("powershell")
         .args([
             "-NoProfile",
@@ -178,19 +208,15 @@ fn detect_tpm_version() -> Option<crate::core::system_info::types::TpmVersion> {
     }
 }
 
-/// Get the number of DIMM slots from Win32_PhysicalMemoryArray
-fn get_dimm_slot_count() -> Option<u32> {
-    use std::process::Command;
+/// Get the number of DIMM slots from Win32_PhysicalMemoryArray via direct WMI.
+pub fn get_dimm_slot_count() -> Option<u32> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32PhysicalMemoryArray {
+        memory_devices: Option<u32>,
+    }
 
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance -ClassName Win32_PhysicalMemoryArray | Select-Object -First 1 -ExpandProperty MemoryDevices"
-        ])
-        .output()
-        .ok()?;
-
-    let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    count_str.parse::<u32>().ok()
+    let wmi = WMIConnection::new().ok()?;
+    let arrays: Vec<Win32PhysicalMemoryArray> = wmi.query().ok()?;
+    arrays.into_iter().next()?.memory_devices
 }

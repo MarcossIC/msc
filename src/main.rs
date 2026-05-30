@@ -1000,6 +1000,37 @@ fn build_cli() -> Command {
                                 .help("Show only Energy information (battery, power plan)")
                                 .action(clap::ArgAction::SetTrue),
                         )
+                        .arg(
+                            Arg::new("profile")
+                                .long("profile")
+                                .help("Show per-section timing breakdown after collection")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("no-cache")
+                                .long("no-cache")
+                                .help("Bypass disk cache and query everything fresh")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("clear-cache")
+                                .long("clear-cache")
+                                .help("Wipe the sys info cache before running (forces fresh queries this run)")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("json")
+                                .long("json")
+                                .help("Emit machine-readable JSON to stdout instead of formatted text")
+                                .action(clap::ArgAction::SetTrue),
+                        )
+                        .arg(
+                            Arg::new("compact")
+                                .long("compact")
+                                .help("With --json, emit a single-line JSON document (default is pretty-printed)")
+                                .action(clap::ArgAction::SetTrue)
+                                .requires("json"),
+                        )
                 )
                 .subcommand(
                     Command::new("monitor")

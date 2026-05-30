@@ -117,7 +117,11 @@ impl UpdateManager {
 
         let mut hasher = Sha256::new();
         hasher.update(&file_data);
-        let calculated_hash = format!("{:x}", hasher.finalize());
+        let calculated_hash = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
 
         if calculated_hash.to_lowercase() != expected_hash.to_lowercase() {
             return Err(anyhow!(

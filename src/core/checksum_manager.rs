@@ -1,7 +1,6 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use sha2::{Digest, Sha256};
-use std::fs::File;
-use std::io;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::core::checksum_cache::ChecksumCache;
@@ -281,15 +280,15 @@ impl ChecksumManager {
     pub fn verify_file(path: &Path, expected_hash: &str) -> Result<()> {
         log::info!("Verifying file: {}", path.display());
 
-        let mut file = File::open(path).context(format!(
-            "Failed to open file for verification: {}",
+        let file_data = fs::read(path).context(format!(
+            "Failed to read file for verification: {}",
             path.display()
         ))?;
 
         let mut hasher = Sha256::new();
-        io::copy(&mut file, &mut hasher).context("Failed to read file for hashing")?;
+        hasher.update(&file_data);
 
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
 
         ensure!(
             hash.eq_ignore_ascii_case(expected_hash),
@@ -313,13 +312,13 @@ impl ChecksumManager {
 
     /// Calculate SHA256 hash of a file
     pub fn calculate_hash(path: &Path) -> Result<String> {
-        let mut file =
-            File::open(path).context(format!("Failed to open file: {}", path.display()))?;
+        let file_data =
+            fs::read(path).context(format!("Failed to read file: {}", path.display()))?;
 
         let mut hasher = Sha256::new();
-        io::copy(&mut file, &mut hasher).context("Failed to read file")?;
+        hasher.update(&file_data);
 
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>())
     }
 
     /// Clean up expired cache entries
@@ -365,6 +364,7 @@ impl ChecksumManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
 

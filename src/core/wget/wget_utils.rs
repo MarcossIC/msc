@@ -322,6 +322,7 @@ pub fn extract_filename_from_url(url: &str) -> String {
 }
 
 pub fn download_resource(url: &str, path: &PathBuf) -> Result<()> {
+    // Double-check avoids the download, but the real race protection is below.
     if path.exists() {
         return Ok(());
     }
@@ -338,7 +339,23 @@ pub fn download_resource(url: &str, path: &PathBuf) -> Result<()> {
     }
 
     let bytes = response.bytes()?;
-    fs::write(path, bytes)?;
+
+    // Write to a temp file then rename — this is atomic on the same filesystem
+    // and prevents two threads from writing to the same path simultaneously.
+    // If another thread already created the file, the rename simply overwrites
+    // with identical content (idempotent).
+    let temp_path = path.with_extension(format!(
+        "tmp.{}_{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::write(&temp_path, &bytes)?;
+    if let Err(e) = fs::rename(&temp_path, path) {
+        // rename can fail cross-device; fall back to copy + delete
+        let _ = fs::copy(&temp_path, path);
+        let _ = fs::remove_file(&temp_path);
+        log::warn!("Atomic rename failed, used copy fallback: {}", e);
+    }
     Ok(())
 }
 

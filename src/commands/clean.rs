@@ -18,6 +18,47 @@ use crate::platform::get_recycle_bin_directory;
 use crate::platform::{elevate_and_rerun, is_elevated};
 use crate::ui::{format_size, read_confirmation, read_exact_confirmation, select_from_list};
 
+/// Maximum directory depth to descend inside each project when scanning for cache folders.
+/// Depth 0 = the project root itself. With value 2, the deepest cache folder we can find
+/// lives at `project/<L1>/<L2>/<cache>` (e.g. `app/backend/src-tauri/target`).
+const MAX_PROJECT_SCAN_DEPTH: usize = 2;
+
+/// Folder names treated as project cache and deleted on `clean start --work-cache`.
+/// We do NOT descend into them after a hit — once matched, the folder is removed wholesale.
+const CACHE_FOLDERS: &[&str] = &[
+    "target",
+    "dist",
+    "node_modules",
+    "playwright-report",
+    ".next",
+];
+
+/// Folder names that block traversal during work cache scanning.
+/// When the scanner sees one of these names, it neither deletes it nor descends into it,
+/// even if depth budget remains. Source code, IDE/VCS metadata, and tooling dirs live here.
+const TRAVERSAL_IGNORED: &[&str] = &[
+    "src",
+    "app",
+    "public",
+    "capabilities",
+    "gen",
+    "icons",
+    "images",
+    "scripts",
+    ".github",
+    ".claude",
+    ".vscode",
+    ".git",
+    ".idea",
+    ".cursor",
+    ".cargo",
+    "doc",
+    "docs",
+    "info",
+    "msc",
+    "packaging",
+];
+
 /// Categorizes directories by whether they require admin privileges
 #[derive(Debug)]
 struct DirectoriesByPrivilege {
@@ -189,7 +230,111 @@ fn perform_cleanup(
     Ok(stats)
 }
 
-/// Clean work cache directories (target, dist, node_modules) in work directory projects
+/// Aggregated counters for a work cache cleanup run.
+#[derive(Default)]
+struct WorkCacheTotals {
+    total_size: u64,
+    total_files: usize,
+    cleaned_count: usize,
+}
+
+/// Recursively walk a project looking for cache folders defined in `CACHE_FOLDERS`.
+///
+/// Behavior:
+/// - When a folder name matches `TRAVERSAL_IGNORED`, the scanner neither deletes it nor
+///   descends into it (even if depth budget remains).
+/// - When a folder name matches `CACHE_FOLDERS`, it is deleted (or simulated under dry_run)
+///   and the scanner does NOT descend into it.
+/// - Otherwise, the scanner descends until `current_depth` reaches `MAX_PROJECT_SCAN_DEPTH`.
+fn scan_project_cache(
+    project_root: &std::path::Path,
+    current: &std::path::Path,
+    current_depth: usize,
+    project_name: &str,
+    dry_run: bool,
+    totals: &mut WorkCacheTotals,
+) {
+    use std::fs;
+
+    let entries = match fs::read_dir(current) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+
+        let entry_name = match entry_path.file_name() {
+            Some(n) => n.to_string_lossy().to_string(),
+            None => continue,
+        };
+
+        if TRAVERSAL_IGNORED.contains(&entry_name.as_str()) {
+            continue;
+        }
+
+        if CACHE_FOLDERS.contains(&entry_name.as_str()) {
+            let (folder_size, file_count) = calculate_dir_size(&entry_path);
+            let relative = entry_path
+                .strip_prefix(project_root)
+                .unwrap_or(&entry_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            if dry_run {
+                println!(
+                    "{} {} in {}/{}",
+                    "Would delete:".yellow(),
+                    format_size(folder_size).yellow().bold(),
+                    project_name.cyan(),
+                    relative.cyan().bold()
+                );
+                totals.cleaned_count += 1;
+                totals.total_size += folder_size;
+                totals.total_files += file_count;
+            } else {
+                print!(
+                    "{} {}",
+                    "Deleting:".cyan(),
+                    format!("{}/{}", project_name, relative).cyan()
+                );
+
+                match fs::remove_dir_all(&entry_path) {
+                    Ok(_) => {
+                        println!(" {} ({})", "✓".green(), format_size(folder_size).dimmed());
+                        totals.cleaned_count += 1;
+                        totals.total_size += folder_size;
+                        totals.total_files += file_count;
+                    }
+                    Err(e) => {
+                        println!(" {} ({})", "✗".red(), e.to_string().red());
+                    }
+                }
+            }
+            continue;
+        }
+
+        if current_depth < MAX_PROJECT_SCAN_DEPTH {
+            scan_project_cache(
+                project_root,
+                &entry_path,
+                current_depth + 1,
+                project_name,
+                dry_run,
+                totals,
+            );
+        }
+    }
+}
+
+/// Clean cache folders inside each project under the configured work directory.
+///
+/// Cache folders matched: see `CACHE_FOLDERS`.
+/// Scanned recursively up to `MAX_PROJECT_SCAN_DEPTH` levels per project,
+/// pruning on `TRAVERSAL_IGNORED` matches.
 fn clean_work_cache(config: &crate::core::Config, dry_run: bool) -> Result<()> {
     use std::fs;
     use std::path::PathBuf;
@@ -240,12 +385,13 @@ fn clean_work_cache(config: &crate::core::Config, dry_run: bool) -> Result<()> {
         println!();
     }
 
-    // Cache folders to clean
-    let cache_folders = ["target", "dist", "node_modules"];
-
     println!(
         "{}",
-        "Scanning work directory for project cache folders...".dimmed()
+        format!(
+            "Scanning work directory for project cache folders (depth up to {})...",
+            MAX_PROJECT_SCAN_DEPTH
+        )
+        .dimmed()
     );
     println!();
 
@@ -258,9 +404,7 @@ fn clean_work_cache(config: &crate::core::Config, dry_run: bool) -> Result<()> {
         }
     };
 
-    let mut total_size: u64 = 0;
-    let mut total_files: usize = 0;
-    let mut cleaned_count: usize = 0;
+    let mut totals = WorkCacheTotals::default();
 
     for entry in entries {
         let entry = match entry {
@@ -281,51 +425,24 @@ fn clean_work_cache(config: &crate::core::Config, dry_run: bool) -> Result<()> {
             None => continue,
         };
 
-        // Skip if folder is in ignore list
+        // Skip if the project is on the user-defined ignore list
         if ignored_folders.contains(&folder_name) {
             continue;
         }
 
-        // Check for cache folders in this project
-        for cache_folder in &cache_folders {
-            let cache_path = project_path.join(cache_folder);
-
-            if cache_path.exists() && cache_path.is_dir() {
-                // Calculate size
-                let (folder_size, file_count) = calculate_dir_size(&cache_path);
-
-                if dry_run {
-                    println!(
-                        "{} {} in {}/{}",
-                        "Would delete:".yellow(),
-                        format_size(folder_size).yellow().bold(),
-                        folder_name.cyan(),
-                        cache_folder.cyan().bold()
-                    );
-                } else {
-                    print!(
-                        "{} {}",
-                        "Deleting:".cyan(),
-                        format!("{}/{}", folder_name, cache_folder).cyan()
-                    );
-
-                    // Delete the folder
-                    match fs::remove_dir_all(&cache_path) {
-                        Ok(_) => {
-                            println!(" {} ({})", "✓".green(), format_size(folder_size).dimmed());
-                            cleaned_count += 1;
-                        }
-                        Err(e) => {
-                            println!(" {} ({})", "✗".red(), e.to_string().red());
-                        }
-                    }
-                }
-
-                total_size += folder_size;
-                total_files += file_count;
-            }
-        }
+        scan_project_cache(
+            &project_path,
+            &project_path,
+            0,
+            &folder_name,
+            dry_run,
+            &mut totals,
+        );
     }
+
+    let total_size = totals.total_size;
+    let total_files = totals.total_files;
+    let cleaned_count = totals.cleaned_count;
 
     println!();
     println!("{}", "═".repeat(50).cyan());
@@ -974,20 +1091,23 @@ pub fn handle_list(_matches: &clap::ArgMatches) -> Result<()> {
     if let Some(work_path) = config.get_work_path() {
         // Clean the Windows long path prefix
         let cleaned_work_path = work_path.strip_prefix("\\\\?\\").unwrap_or(work_path);
-        let cache_folders = ["target", "dist", "node_modules"];
 
-        for cache_folder in &cache_folders {
+        for cache_folder in CACHE_FOLDERS {
             println!(
                 "    {} {}",
                 "•".dimmed(),
-                format!("{}\\<project>\\{}", cleaned_work_path, cache_folder).yellow()
+                format!("{}\\<project>\\**\\{}", cleaned_work_path, cache_folder).yellow()
             );
         }
 
         println!();
         println!(
             "      {}",
-            "(only included with --work-cache or -WC flag)".dimmed()
+            format!(
+                "(scanned recursively up to {} levels deep — only with --work-cache or -WC)",
+                MAX_PROJECT_SCAN_DEPTH
+            )
+            .dimmed()
         );
 
         // Show ignored folders

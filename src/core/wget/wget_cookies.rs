@@ -223,8 +223,14 @@ pub fn find_firefox_cookie_db(profiles_dir: &Path) -> Result<PathBuf> {
 
 /// Extract cookies from browser database
 pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cookie>> {
-    // Create a temporary copy of the database because browsers lock it
-    let temp_db = env::temp_dir().join(format!("msc_cookies_temp_{}.db", std::process::id()));
+    // Create a temporary copy of the database because browsers lock it.
+    // Include PID + thread ID to prevent collisions from concurrent calls.
+    let unique_id = format!(
+        "{}_{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    );
+    let temp_db = env::temp_dir().join(format!("msc_cookies_temp_{}.db", unique_id));
 
     // Copy main database file
     fs::copy(db_path, &temp_db).context("No se pudo copiar la base de datos de cookies. Asegúrate de que el navegador esté cerrado.")?;
@@ -454,10 +460,20 @@ pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cooki
         }
     }
 
-    // Clean up temp files
-    let _ = fs::remove_file(&temp_db);
-    let _ = fs::remove_file(&temp_wal);
-    let _ = fs::remove_file(&temp_shm);
+    // Clean up temp files — these contain browser cookies in plaintext.
+    // Log failures so the user knows sensitive data may remain on disk.
+    for path in [&temp_db, &temp_wal, &temp_shm] {
+        if path.exists() {
+            if let Err(e) = fs::remove_file(path) {
+                log::warn!(
+                    "Failed to delete temporary cookie file {:?}: {}. \
+                     This file may contain sensitive data — please delete it manually.",
+                    path,
+                    e
+                );
+            }
+        }
+    }
 
     Ok(cookies)
 }
@@ -562,8 +578,13 @@ pub fn debug_database_info(db_path: &Path) -> Result<()> {
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
     println!();
 
-    // Create temporary copy
-    let temp_db = env::temp_dir().join(format!("msc_debug_{}.db", std::process::id()));
+    // Create temporary copy with unique name to prevent concurrent collisions
+    let unique_id = format!(
+        "{}_{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    );
+    let temp_db = env::temp_dir().join(format!("msc_debug_{}.db", unique_id));
     fs::copy(db_path, &temp_db)?;
 
     // Copy WAL files if they exist
@@ -716,10 +737,19 @@ pub fn debug_database_info(db_path: &Path) -> Result<()> {
         }
     }
 
-    // Clean up
-    let _ = fs::remove_file(&temp_db);
-    let _ = fs::remove_file(&temp_wal);
-    let _ = fs::remove_file(&temp_shm);
+    // Clean up — same sensitive-data concern as the main extraction path.
+    for path in [&temp_db, &temp_wal, &temp_shm] {
+        if path.exists() {
+            if let Err(e) = fs::remove_file(path) {
+                log::warn!(
+                    "Failed to delete temporary cookie file {:?}: {}. \
+                     This file may contain sensitive data — please delete it manually.",
+                    path,
+                    e
+                );
+            }
+        }
+    }
 
     println!("{}", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".cyan());
     println!();

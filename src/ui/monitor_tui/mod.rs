@@ -5,6 +5,7 @@
 mod app;
 mod event_handler;
 mod render;
+mod render_cache;
 mod widgets;
 
 pub use app::{run_monitor_app, MonitorApp, MonitorAppConfig};

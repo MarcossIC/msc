@@ -4,6 +4,7 @@ pub mod formatters;
 pub mod monitor_tui;
 pub mod progress;
 pub mod prompts;
+pub mod spinner;
 pub mod system_formatters;
 
 // Re-export commonly used items for cleaner imports

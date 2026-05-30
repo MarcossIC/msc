@@ -10,6 +10,7 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::env;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -99,9 +100,9 @@ pub fn browser_display_name(browser: &str) -> &str {
 /// Binds to port 0 (OS assigns a free port), captures the assigned port,
 /// then drops the listener to release it for Chrome.
 ///
-/// There's a small TOCTOU window between releasing the port and Chrome binding it.
-/// In practice this is negligible because the OS reuse delay is short and we
-/// launch Chrome immediately after.
+/// There is an inherent TOCTOU window between releasing the port and Chrome
+/// binding it.  We mitigate this by retrying with a fresh port if Chrome
+/// fails to start (see `IsolatedChrome::launch`).
 pub fn find_free_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .context("No se pudo encontrar un puerto libre para CDP")?;
@@ -109,6 +110,9 @@ pub fn find_free_port() -> Result<u16> {
     drop(listener);
     Ok(port)
 }
+
+/// Maximum number of port-retry attempts when Chrome fails to bind.
+const PORT_RETRY_ATTEMPTS: usize = 3;
 
 // ============================================================================
 // ISOLATED CHROME — NEW ARCHITECTURE
@@ -156,55 +160,93 @@ impl IsolatedChrome {
     /// - Chrome failed to start or crashed
     /// - CDP did not become ready within timeout
     pub fn launch(browser: &str) -> Result<Self> {
-        let cdp_port = find_free_port()?;
         let browser_path = find_browser_executable(browser)?;
         let original_profile = get_original_profile_path(browser)?;
         let browser_display = browser_display_name(browser);
 
-        println!(
-            "{}",
-            format!(
-                "🚀 Lanzando {} aislado en puerto {}...",
-                browser_display, cdp_port
+        // Retry loop mitigates the TOCTOU window in find_free_port():
+        // if another process grabs the port between our bind and Chrome's bind,
+        // we simply pick a new port and try again.
+        let mut last_error = None;
+        for attempt in 0..PORT_RETRY_ATTEMPTS {
+            let cdp_port = find_free_port()?;
+
+            if attempt == 0 {
+                println!(
+                    "{}",
+                    format!(
+                        "🚀 Lanzando {} aislado en puerto {}...",
+                        browser_display, cdp_port
+                    )
+                    .cyan()
+                    .bold()
+                );
+                println!(
+                    "{}",
+                    format!("   Perfil: {}", original_profile.display()).dimmed()
+                );
+            } else {
+                println!(
+                    "{}",
+                    format!(
+                        "   ↻ Reintentando en puerto {} (intento {}/{})",
+                        cdp_port,
+                        attempt + 1,
+                        PORT_RETRY_ATTEMPTS
+                    )
+                    .yellow()
+                );
+            }
+
+            let process = Command::new(&browser_path)
+                .arg(format!("--remote-debugging-port={}", cdp_port))
+                .arg(format!("--user-data-dir={}", original_profile.display()))
+                .arg("--headless=new")
+                .arg("--disable-gpu")
+                .arg("--disable-software-rasterizer")
+                .arg("--no-first-run")
+                .arg("--no-default-browser-check")
+                .arg("--disable-blink-features=AutomationControlled")
+                .arg("--disable-extensions")
+                .arg("--disable-popup-blocking")
+                .arg("--disable-background-networking")
+                .arg("--disable-client-side-phishing-detection")
+                .arg("--disable-sync")
+                .arg("--metrics-recording-only")
+                .arg("about:blank")
+                .spawn()
+                .with_context(|| {
+                    format!("No se pudo lanzar {} en modo aislado", browser_display)
+                })?;
+
+            let mut instance = Self {
+                process,
+                cdp_port,
+                browser_type: browser.to_string(),
+            };
+
+            match instance.wait_for_cdp_ready() {
+                Ok(()) => return Ok(instance),
+                Err(e) => {
+                    log::warn!(
+                        "CDP launch attempt {} failed on port {}: {}",
+                        attempt + 1,
+                        cdp_port,
+                        e
+                    );
+                    // Drop kills the failed process
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "No se pudo lanzar {} después de {} intentos",
+                browser_display,
+                PORT_RETRY_ATTEMPTS
             )
-            .cyan()
-            .bold()
-        );
-        println!(
-            "{}",
-            format!("   Perfil: {}", original_profile.display()).dimmed()
-        );
-
-        let process = Command::new(&browser_path)
-            .arg(format!("--remote-debugging-port={}", cdp_port))
-            .arg(format!("--user-data-dir={}", original_profile.display()))
-            .arg("--headless=new")
-            .arg("--disable-gpu")
-            .arg("--disable-software-rasterizer")
-            .arg("--no-first-run")
-            .arg("--no-default-browser-check")
-            // Anti-detection flags (inspired by nlm/chromedp)
-            .arg("--disable-blink-features=AutomationControlled")
-            .arg("--disable-extensions")
-            .arg("--disable-popup-blocking")
-            .arg("--disable-background-networking")
-            .arg("--disable-client-side-phishing-detection")
-            .arg("--disable-sync")
-            .arg("--metrics-recording-only")
-            .arg("--no-default-browser-check")
-            .arg("about:blank")
-            .spawn()
-            .with_context(|| format!("No se pudo lanzar {} en modo aislado", browser_display))?;
-
-        let mut instance = Self {
-            process,
-            cdp_port,
-            browser_type: browser.to_string(),
-        };
-
-        instance.wait_for_cdp_ready()?;
-
-        Ok(instance)
+        }))
     }
 
     /// Get the CDP port this instance is listening on
@@ -220,7 +262,7 @@ impl IsolatedChrome {
     /// Check if CDP is responding on this instance's port
     pub fn is_cdp_ready(&self) -> bool {
         std::net::TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", self.cdp_port).parse().unwrap(),
+            &SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.cdp_port).into(),
             Duration::from_millis(200),
         )
         .is_ok()
@@ -430,7 +472,7 @@ impl ChromeInstance {
 
     fn is_cdp_active() -> bool {
         std::net::TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", LEGACY_CDP_PORT).parse().unwrap(),
+            &SocketAddrV4::new(Ipv4Addr::LOCALHOST, LEGACY_CDP_PORT).into(),
             Duration::from_millis(100),
         )
         .is_ok()
@@ -629,7 +671,10 @@ pub fn wait_for_file_release(db_path: &PathBuf) -> Result<()> {
 
     Err(anyhow::anyhow!(
         "Chrome no liberó los archivos después de 3 segundos: {}",
-        last_error.unwrap()
+        last_error
+            .as_ref()
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown error".into())
     ))
 }
 
@@ -705,7 +750,7 @@ pub fn launch_with_original_profile(browser: &str, original_profile: &Path) -> R
 
         // Check if CDP is responding
         if std::net::TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", LEGACY_CDP_PORT).parse().unwrap(),
+            &SocketAddrV4::new(Ipv4Addr::LOCALHOST, LEGACY_CDP_PORT).into(),
             Duration::from_millis(200),
         )
         .is_ok()
@@ -742,7 +787,7 @@ pub fn launch_with_original_profile(browser: &str, original_profile: &Path) -> R
         std::thread::sleep(check_interval);
         print!(".");
         use std::io::{self, Write};
-        io::stdout().flush().unwrap();
+        let _ = io::stdout().flush();
     }
     println!();
 
@@ -902,7 +947,7 @@ mod tests {
         // We just verify the check itself doesn't panic
         let port = find_free_port().unwrap();
         let ready = std::net::TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", port).parse().unwrap(),
+            &SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into(),
             Duration::from_millis(100),
         )
         .is_ok();
@@ -927,7 +972,7 @@ mod tests {
             // Verify CDP is no longer responding on that port
             std::thread::sleep(Duration::from_millis(500));
             let still_running = std::net::TcpStream::connect_timeout(
-                &format!("127.0.0.1:{}", port).parse().unwrap(),
+                &SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into(),
                 Duration::from_millis(200),
             )
             .is_ok();

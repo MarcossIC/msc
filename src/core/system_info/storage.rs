@@ -1,15 +1,24 @@
 use crate::core::system_info::types::{DiskType, StorageInfo};
 use crate::error::Result;
+use std::time::{Duration, Instant};
 use sysinfo::Disks;
 
 #[cfg(windows)]
 use crate::platform::system_info_windows;
 
 pub fn collect() -> Result<Vec<StorageInfo>> {
+    collect_with_subs().map(|(info, _)| info)
+}
+
+/// Collect storage info AND per-disk timings.
+pub fn collect_with_subs() -> Result<(Vec<StorageInfo>, Vec<(String, Duration)>)> {
     let disks = Disks::new_with_refreshed_list();
     let mut storage = Vec::new();
+    let mut subs: Vec<(String, Duration)> = Vec::new();
 
     for disk in disks.list() {
+        let disk_t = Instant::now();
+
         let total = disk.total_space();
         let available = disk.available_space();
         let used = total.saturating_sub(available);
@@ -119,6 +128,19 @@ pub fn collect() -> Result<Vec<StorageInfo>> {
             )
         };
 
+        let label = mount_point
+            .chars()
+            .take(8)
+            .collect::<String>()
+            .replace('\\', "")
+            .replace(':', "");
+        let label = if label.is_empty() {
+            format!("disk{}", subs.len())
+        } else {
+            label
+        };
+        subs.push((format!("storage.{}", label), disk_t.elapsed()));
+
         storage.push(StorageInfo {
             name: disk_name,
             mount_point: disk.mount_point().to_string_lossy().to_string(),
@@ -142,7 +164,7 @@ pub fn collect() -> Result<Vec<StorageInfo>> {
         });
     }
 
-    Ok(storage)
+    Ok((storage, subs))
 }
 
 fn detect_disk_type(name: &str) -> DiskType {

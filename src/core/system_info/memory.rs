@@ -1,17 +1,17 @@
 use crate::core::system_info::memory_prediction;
 use crate::core::system_info::types::MemoryInfo;
 use crate::error::Result;
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 
-#[cfg(windows)]
-use crate::platform::system::windows::mbo::get_motherboard_info;
 #[cfg(windows)]
 use crate::platform::system::windows::ram::get_memory_details;
 
-pub fn collect() -> Result<MemoryInfo> {
-    let refresh = RefreshKind::nothing()
-        .with_memory(MemoryRefreshKind::everything())
-        .with_cpu(CpuRefreshKind::everything());
+/// Collect memory information.
+///
+/// `cpu_model` and `motherboard_model` are passed in by the caller to avoid
+/// re-running CPU/motherboard collection (each is expensive on Windows).
+pub fn collect(cpu_model: &str, motherboard_model: Option<&str>) -> Result<MemoryInfo> {
+    let refresh = RefreshKind::nothing().with_memory(MemoryRefreshKind::everything());
     let sys = System::new_with_specifics(refresh);
 
     let total = sys.total_memory();
@@ -21,13 +21,6 @@ pub fn collect() -> Result<MemoryInfo> {
         (used as f32 / total as f32) * 100.0
     } else {
         0.0
-    };
-
-    // Get CPU model for memory prediction
-    let cpu_model = if let Some(cpu) = sys.cpus().first() {
-        cpu.brand().to_string()
-    } else {
-        "Unknown".to_string()
     };
 
     // Get detailed info from platform-specific code
@@ -48,18 +41,11 @@ pub fn collect() -> Result<MemoryInfo> {
     let (ddr_type, speed_mhz, modules, total_slots, used_slots, max_capacity) =
         (None, None, vec![], None, None, None);
 
-    // Get motherboard model for chipset detection
-    #[cfg(windows)]
-    let motherboard_model = get_motherboard_info().ok().and_then(|mb| mb.product);
-
-    #[cfg(not(windows))]
-    let motherboard_model: Option<String> = None;
-
     // Perform memory capacity prediction
     let prediction = if total_slots.is_some() || !modules.is_empty() {
         Some(memory_prediction::predict_memory_capacity(
-            &cpu_model,
-            motherboard_model.as_deref(),
+            cpu_model,
+            motherboard_model,
             ddr_type,
             &modules,
             total_slots,

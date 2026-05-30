@@ -110,7 +110,7 @@ impl TempCleaner {
                 continue;
             }
 
-            count_files_recursive(path, &mut stats, self.min_age, self.max_age);
+            count_files_recursive(path, &mut stats, self.min_age, self.max_age, 0);
         }
 
         stats
@@ -162,6 +162,7 @@ impl TempCleaner {
                 self.min_age,
                 self.max_age,
                 &self.cancel_flag,
+                0,
             );
         }
 
@@ -215,12 +216,27 @@ fn should_delete_file(
     true
 }
 
+/// Maximum directory traversal depth to prevent stack overflow on
+/// pathological directory structures (e.g., 10,000 levels of nesting).
+const MAX_RECURSION_DEPTH: usize = 128;
+
 fn count_files_recursive(
     dir: &Path,
     stats: &mut CleanupStats,
     min_age: Option<Duration>,
     max_age: Option<Duration>,
+    depth: usize,
 ) {
+    if depth >= MAX_RECURSION_DEPTH {
+        log::warn!(
+            "Skipping directory {:?}: max depth ({}) reached",
+            dir,
+            MAX_RECURSION_DEPTH
+        );
+        stats.other_errors += 1;
+        return;
+    }
+
     match fs::read_dir(dir) {
         Ok(entries) => {
             for entry_result in entries {
@@ -237,7 +253,7 @@ fn count_files_recursive(
                                         stats.skipped_files += 1;
                                     }
                                 } else if metadata.is_dir() {
-                                    count_files_recursive(&entry.path(), stats, min_age, max_age);
+                                    count_files_recursive(&entry.path(), stats, min_age, max_age, depth + 1);
                                 }
                             }
                             Err(e) => {
@@ -304,9 +320,20 @@ fn delete_files_recursive_with_tracking<F>(
     min_age: Option<Duration>,
     max_age: Option<Duration>,
     cancel_flag: &Arc<AtomicBool>,
+    depth: usize,
 ) where
     F: FnMut(usize, usize),
 {
+    if depth >= MAX_RECURSION_DEPTH {
+        log::warn!(
+            "Skipping directory {:?}: max depth ({}) reached",
+            dir,
+            MAX_RECURSION_DEPTH
+        );
+        ctx.other_errors += 1;
+        return;
+    }
+
     match fs::read_dir(dir) {
         Ok(entries) => {
             for entry_result in entries {
@@ -378,6 +405,7 @@ fn delete_files_recursive_with_tracking<F>(
                                         min_age,
                                         max_age,
                                         cancel_flag,
+                                        depth + 1,
                                     );
                                 }
                             }

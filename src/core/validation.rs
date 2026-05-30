@@ -5,7 +5,6 @@ use anyhow::{anyhow, ensure, Context, Result};
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use unicode_normalization::UnicodeNormalization;
 use url::Url;
 
 use super::Blacklist;
@@ -280,215 +279,45 @@ pub fn redact_url_credentials(input: &str) -> String {
             return input.to_owned();
         }
 
-        // These setters only fail if the URL cannot have credentials,
-        // which is not the case here because credentials already exist.
-        url.set_username("***")
+        // Setters can fail for URLs that "cannot have credentials" (e.g. file://).
+        // Fall through to the regex fallback if that happens instead of panicking.
+        if url
+            .set_username("***")
             .and_then(|_| url.set_password(Some("***")))
-            .expect("URL already contains credentials; redaction must succeed");
-
-        return url.to_string();
+            .is_ok()
+        {
+            return url.to_string();
+        }
     }
 
     // Fallback: conservative regex-based redaction
-    static CREDENTIALS_RE: OnceLock<Regex> = OnceLock::new();
-    let re = CREDENTIALS_RE.get_or_init(|| {
-        Regex::new(r"(?i)\b(https?://)([^:@/]+):([^@/]+)@").expect("Hardcoded regex must be valid")
-    });
+    static CREDENTIALS_RE: OnceLock<Option<Regex>> = OnceLock::new();
+    let Some(re) = CREDENTIALS_RE.get_or_init(|| {
+        Regex::new(r"(?i)\b(https?://)([^:@/]+):([^@/]+)@").ok()
+    }) else {
+        // Regex compilation failed — should never happen with a hardcoded pattern,
+        // but return input unmodified rather than panicking.
+        return input.to_owned();
+    };
 
     re.replace(input, "$1***:***@").to_string()
 }
 
-/// See docs/security.md for security considerations
+/// Validate an alias command for shell injection vulnerabilities.
+///
+/// Delegates to `alias_validator::validate_alias_command` — the single source of truth.
+/// This re-export exists for backward compatibility with code importing from `validation`.
 pub fn validate_alias_command(command: &str) -> Result<()> {
-    // SECURITY: Normalize Unicode to prevent homoglyph attacks
-    // NFKC (Compatibility Decomposition) converts visually similar chars to canonical form
-    // Example: Greek Question Mark (U+037E ;) becomes ASCII semicolon (U+003B ;)
-    let normalized: String = command.nfkc().collect();
-
-    let trimmed = normalized.trim();
-
-    ensure!(!trimmed.is_empty(), "Alias command cannot be empty");
-    ensure!(
-        !normalized.contains('\0'),
-        "Alias command contains null byte"
-    );
-
-    // Run blacklist checks on NORMALIZED string
-    ensure!(
-        !normalized.contains(';'),
-        "Alias command contains semicolon (;) - detected via Unicode normalization"
-    );
-    ensure!(
-        !normalized.contains('|'),
-        "Alias command contains pipe operator (|)"
-    );
-    ensure!(
-        !normalized.contains('&'),
-        "Alias command contains ampersand (&)"
-    );
-
-    const DANGEROUS_KEYWORDS: &[&str] = &[
-        ";", "|", "&&", "||", "&", "`", "$(", "$", ">", "<", "*", "?", "[", "]", "~", "\n", "\r",
-        "(", ")", "{", "}", "!",
-    ];
-
-    for ch in DANGEROUS_KEYWORDS {
-        ensure!(
-            !normalized.contains(ch),
-            "Alias command contains dangerous character '{}'",
-            ch
-        );
-    }
-
-    // Check for control characters (0x00-0x1F, 0x7F)
-    for c in normalized.chars() {
-        ensure!(
-            !c.is_control() || c == '\n' || c == '\r' || c == '\t',
-            "Alias command contains control character (0x{:02X})",
-            c as u32
-        );
-    }
-
-    ensure!(
-        !normalized.contains('\t'),
-        "Alias command contains tab character"
-    );
-
-    ensure!(
-        !normalized.contains('"') && !normalized.contains('\''),
-        "Alias command contains quotes"
-    );
-
-    ensure!(
-        !normalized.contains("exec"),
-        "Alias command contains 'exec' keyword"
-    );
-    ensure!(
-        !normalized.contains("eval"),
-        "Alias command contains 'eval' keyword"
-    );
-
-    ensure!(
-        command.len() <= 500,
-        "Alias command is too long ({} characters, max 500)",
-        command.len()
-    );
-
-    Ok(())
+    super::alias_validator::validate_alias_command(command)
 }
 
-/// See docs/security.md for security considerations
+/// Validate an alias command for Windows-specific shell injection vulnerabilities.
+///
+/// Delegates to `alias_validator::validate_alias_command` — the single source of truth.
+/// The canonical implementation already applies Windows-specific checks when compiled
+/// on Windows (`cfg(target_os = "windows")`).
 pub fn validate_alias_command_windows(command: &str) -> Result<()> {
-    // SECURITY: Normalize Unicode to prevent homoglyph attacks
-    // NFKC (Compatibility Decomposition) converts visually similar chars to canonical form
-    // Example: Greek Question Mark (U+037E ;) becomes ASCII semicolon (U+003B ;)
-    let normalized: String = command.nfkc().collect();
-
-    let trimmed = normalized.trim();
-
-    // Basic checks
-    ensure!(!trimmed.is_empty(), "Alias command cannot be empty");
-    ensure!(
-        !normalized.contains('\0'),
-        "Alias command contains null byte - security risk"
-    );
-
-    // CRITICAL: Check for command injection characters (WINDOWS-SPECIFIC)
-    // Note: Backslash (\) is NOT included because it's needed for Windows paths
-    const DANGEROUS_CHARS: &[(&str, &str)] = &[
-        (";", "command separator - prevents command injection"),
-        ("|", "pipe operator - prevents command injection"),
-        (
-            "&",
-            "background/chaining operator - prevents command injection",
-        ),
-        ("`", "command substitution - prevents command injection"),
-        (
-            "$",
-            "variable/command substitution - prevents command injection",
-        ),
-        (">", "output redirection - prevents file manipulation"),
-        ("<", "input redirection - prevents file manipulation"),
-        ("\n", "newline - prevents multi-line injection"),
-        ("\r", "carriage return - prevents injection"),
-        ("(", "subshell - prevents command substitution"),
-        (")", "subshell - prevents command substitution"),
-        ("{", "brace expansion - prevents injection"),
-        ("}", "brace expansion - prevents injection"),
-        ("*", "wildcard - prevents unexpected file operations"),
-        ("?", "wildcard - prevents unexpected file operations"),
-        ("[", "wildcard - prevents unexpected file operations"),
-        ("]", "wildcard - prevents unexpected file operations"),
-        ("!", "history expansion - prevents injection"),
-        ("~", "home directory expansion - prevents path manipulation"),
-    ];
-
-    for (ch, reason) in DANGEROUS_CHARS {
-        ensure!(
-            !normalized.contains(ch),
-            "Alias command contains dangerous character '{}' - {}",
-            ch,
-            reason
-        );
-    }
-
-    // Windows-specific dangerous characters
-    const WINDOWS_DANGEROUS: &[(&str, &str)] = &[
-        ("%", "batch variable expansion - prevents injection"),
-        ("^", "CMD escape character - prevents bypass"),
-    ];
-
-    for (ch, reason) in WINDOWS_DANGEROUS {
-        ensure!(
-            !normalized.contains(ch),
-            "Windows alias command contains dangerous character '{}' - {}",
-            ch,
-            reason
-        );
-    }
-
-    // Check for control characters (0x00-0x1F, 0x7F)
-    for c in normalized.chars() {
-        ensure!(
-            !c.is_control() || c == '\n' || c == '\r' || c == '\t',
-            "Alias command contains control character (0x{:02X})",
-            c as u32
-        );
-    }
-
-    // Additional pattern checks for obfuscated attacks
-    ensure!(
-        !normalized.contains("exec"),
-        "Alias command contains 'exec' keyword - potential code execution"
-    );
-    ensure!(
-        !normalized.contains("eval"),
-        "Alias command contains 'eval' keyword - potential code execution"
-    );
-
-    // Check for PowerShell-specific patterns
-    let normalized_lower = normalized.to_lowercase();
-    ensure!(
-        !normalized_lower.contains("invoke-expression"),
-        "Command contains PowerShell Invoke-Expression - code execution risk"
-    );
-    ensure!(
-        !normalized_lower.contains("iex"),
-        "Command contains PowerShell IEX - code execution risk"
-    );
-    ensure!(
-        !normalized_lower.contains("downloadstring"),
-        "Command contains DownloadString - remote code execution risk"
-    );
-
-    // Length check
-    ensure!(
-        command.len() <= 500,
-        "Alias command is too long ({} characters, max 500)",
-        command.len()
-    );
-
-    Ok(())
+    super::alias_validator::validate_alias_command(command)
 }
 
 #[cfg(test)]
@@ -661,11 +490,28 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_alias_command_windows_injection() {
+    fn test_validate_alias_command_windows_cross_platform_injection() {
+        // These contain characters blocked on ALL platforms (& is in the cross-platform list)
         let malicious_commands = vec![
             "notepad & calc.exe",
-            "echo %PATH%",
             "dir ^& malicious",
+        ];
+
+        for cmd in malicious_commands {
+            assert!(
+                validate_alias_command_windows(cmd).is_err(),
+                "Should reject malicious Windows command: {}",
+                cmd
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_validate_alias_command_windows_specific_injection() {
+        // These contain Windows-only patterns (%, ^, iex, downloadstring)
+        let malicious_commands = vec![
+            "echo %PATH%",
             "powershell -c IEX",
             "cmd /c downloadstring",
         ];
