@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use std::fs;
 
-use crate::core::wget::wget_utils::{download_resource, extract_filename_from_url};
+use crate::core::wget::wget_utils::extract_filename_from_url;
 
 use super::super::context::ProcessingContext;
 
@@ -47,7 +47,7 @@ fn extract_js_variable_cdn(ctx: &mut ProcessingContext) -> Result<()> {
                 var_name_str.yellow(),
                 file_name.dimmed()
             );
-            match download_resource(cdn_url_str, &local_path) {
+            match ctx.downloader.download(cdn_url_str, &local_path) {
                 Ok(_) => {
                     let replacement = format!(r#"{} = "{}""#, var_name_str, relative_path);
                     replacements.push((full_match.as_str().to_string(), replacement));
@@ -106,7 +106,7 @@ fn extract_generic_cdn(ctx: &mut ProcessingContext) -> Result<()> {
                 "🌐 Descargando recurso CDN genérico:".cyan().dimmed(),
                 file_name.dimmed()
             );
-            match download_resource(cdn_url_str, &local_path) {
+            match ctx.downloader.download(cdn_url_str, &local_path) {
                 Ok(_) => {
                     replacements.push((cdn_url_str.to_string(), relative_path));
                 }
@@ -129,4 +129,48 @@ fn extract_generic_cdn(ctx: &mut ProcessingContext) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::wget::postprocessing::downloader::FakeDownloader;
+    use crate::core::Blacklist;
+    use tempfile::tempdir;
+    use url::Url;
+
+    #[test]
+    fn js_variable_cdn_downloaded_and_rewritten() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let file_path = base.join("page.html");
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let downloader = FakeDownloader { fail: false };
+        let content =
+            r#"<script>var playlistJs = "https://media-cdn.example.com/stream.m3u8";</script>"#;
+        let mut ctx = ProcessingContext::with_downloader(
+            &file_path,
+            base,
+            &base_url,
+            &blacklist,
+            content.to_string(),
+            &downloader,
+        );
+
+        extract_cdn_resources(&mut ctx).unwrap();
+
+        assert!(
+            ctx.content.contains(r#"playlistJs = "assets/stream.m3u8""#),
+            "got: {}",
+            ctx.content
+        );
+        assert!(
+            !ctx.content.contains("media-cdn.example.com"),
+            "la URL CDN debe quedar reemplazada, got: {}",
+            ctx.content
+        );
+        assert!(base.join("assets").join("stream.m3u8").exists());
+    }
 }

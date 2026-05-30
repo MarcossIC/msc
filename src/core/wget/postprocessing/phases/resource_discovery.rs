@@ -4,8 +4,7 @@ use std::fs;
 
 use crate::core::validation::validate_url_not_blacklisted;
 use crate::core::wget::wget_utils::{
-    calculate_local_path_for_url, download_resource, extract_filename_from_url,
-    is_placeholder_image,
+    calculate_local_path_for_url, extract_filename_from_url, is_placeholder_image,
 };
 
 use super::super::context::{ProcessingContext, Replacement};
@@ -61,7 +60,7 @@ fn resolve_and_download(
     };
 
     if !final_path.exists() {
-        match download_resource(&full_url, &final_path) {
+        match ctx.downloader.download(&full_url, &final_path) {
             Ok(_) => {
                 println!(
                     "   {} {} -> {}",
@@ -254,6 +253,7 @@ fn process_anchor_link(ctx: &mut ProcessingContext, url_str: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::wget::postprocessing::downloader::FakeDownloader;
     use crate::core::Blacklist;
     use tempfile::tempdir;
     use url::Url;
@@ -335,5 +335,55 @@ mod tests {
         assert_eq!(r.target, "/chapter-2");
         assert_eq!(r.replacement, "chapter-2.html");
         assert!(!r.is_image);
+    }
+
+    // --- Capa 4: camino de descarga con downloader inyectado (sin red) ---
+
+    #[test]
+    fn resolve_downloads_when_asset_missing() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let file_path = base.join("page.html");
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let downloader = FakeDownloader { fail: false };
+        let ctx = ProcessingContext::with_downloader(
+            &file_path,
+            base,
+            &base_url,
+            &blacklist,
+            String::new(),
+            &downloader,
+        );
+
+        let res = resolve_and_download(&ctx, "http://cdn/new.png", "").unwrap();
+        assert_eq!(res, Some("assets/new.png".to_string()));
+        assert!(
+            base.join("assets").join("new.png").exists(),
+            "el downloader debió crear el archivo"
+        );
+    }
+
+    #[test]
+    fn resolve_returns_none_when_download_fails() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let file_path = base.join("page.html");
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let downloader = FakeDownloader { fail: true };
+        let ctx = ProcessingContext::with_downloader(
+            &file_path,
+            base,
+            &base_url,
+            &blacklist,
+            String::new(),
+            &downloader,
+        );
+
+        let res = resolve_and_download(&ctx, "http://cdn/x.png", "").unwrap();
+        assert_eq!(res, None, "una descarga fallida debe resolver a None");
     }
 }

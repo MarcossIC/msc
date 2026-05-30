@@ -29,6 +29,7 @@
 //! See `sites/ts_reader.rs` for a complete example.
 
 pub mod context;
+pub mod downloader;
 mod phases;
 pub mod pipeline;
 pub mod sanitizer;

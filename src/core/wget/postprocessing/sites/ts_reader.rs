@@ -3,7 +3,7 @@ use std::fs;
 use url::Url;
 
 use crate::core::wget::wget_utils::{
-    calculate_possible_local_paths, download_resource, extract_filename_from_url, is_local_path,
+    calculate_possible_local_paths, extract_filename_from_url, is_local_path,
 };
 
 use super::super::context::ProcessingContext;
@@ -165,7 +165,7 @@ fn localize_image(image_val: &mut serde_json::Value, ctx: &ProcessingContext) ->
     };
 
     if !final_path.exists() {
-        match download_resource(&full_url, &final_path) {
+        match ctx.downloader.download(&full_url, &final_path) {
             Ok(_) => {
                 *image_val = serde_json::Value::String(replacement_path);
                 true
@@ -184,6 +184,7 @@ fn localize_image(image_val: &mut serde_json::Value, ctx: &ProcessingContext) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::wget::postprocessing::downloader::FakeDownloader;
     use crate::core::Blacklist;
     use tempfile::tempdir;
 
@@ -243,5 +244,34 @@ mod tests {
             res,
             Some(serde_json::Value::String("chapter-2/index.html".to_string()))
         );
+    }
+
+    // --- Capa 4: descarga de imágenes del JSON con downloader inyectado ---
+
+    #[test]
+    fn process_downloads_missing_image() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let file_path = base.join("page.html");
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let downloader = FakeDownloader { fail: false };
+        let content =
+            r#"<script>ts_reader.run({"sources":[{"images":["http://cdn/new1.png"]}]});</script>"#;
+        let mut ctx = ProcessingContext::with_downloader(
+            &file_path,
+            base,
+            &base_url,
+            &blacklist,
+            content.to_string(),
+            &downloader,
+        );
+
+        TsReaderProcessor.process(&mut ctx).unwrap();
+
+        assert!(ctx.content.contains("assets/new1.png"), "got: {}", ctx.content);
+        assert!(ctx.content.contains(r#""lazyload":false"#), "got: {}", ctx.content);
+        assert!(base.join("assets").join("new1.png").exists());
     }
 }
