@@ -82,9 +82,11 @@ struct MsftStorageReliabilityCounter {
 /// `disk_name` accepts either a drive letter form (e.g. "C:\\") or a physical
 /// drive form (e.g. "\\.\PhysicalDrive0"). Other inputs return a fallback.
 ///
-/// PCIe link speed (formerly via Get-PnpDeviceProperty) is not migrated — there's
-/// no clean WMI equivalent. NVMe gets the conservative PCIe 3.0 x4 default. The
-/// accuracy loss is small relative to the ~1.5s saved.
+/// PCIe link speed (formerly via Get-PnpDeviceProperty) is not migrated yet —
+/// there's no clean WMI equivalent. When the real link speed is unknown, NVMe
+/// interface_speed is left `None` ("generation unknown") rather than assuming a
+/// generation. A real reader (SetupAPI + DEVPKEY_PciDevice_CurrentLinkSpeed) is
+/// the planned follow-up; until then we report the bus type without a fake gen.
 pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     use crate::core::system_info::types::SmartStatus;
 
@@ -204,7 +206,8 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     let bytes_read = counter.as_ref().and_then(|c| c.read_errors_total);
     let bytes_written = counter.as_ref().and_then(|c| c.write_errors_total);
 
-    // PCIe link query removed — fallback for NVMe is PCIe 3.0 x4.
+    // No real PCIe link data available here → compute_interface_speed returns
+    // None for NVMe (generation unknown) instead of fabricating PCIe 3.0 x4.
     let interface_speed = compute_interface_speed(&bus_type, None, None);
 
     let manufacturer = disk
@@ -302,7 +305,13 @@ fn compute_interface_speed(
                     }
                 }
             }
-            Some(InterfaceSpeed::PCIe3x4)
+            // No real link data → DON'T fabricate a generation.
+            // `None` means "NVMe, generation unknown"; the formatter renders just
+            // "Interface: NVMe". Returning Some(PCIe3x4) here used to mislabel every
+            // Gen4/Gen5 drive as Gen3 — a wrong value is worse than an absent one.
+            // When the SetupAPI/DEVPKEY link-speed reader lands, pass real
+            // (speed, width) and this branch becomes unreachable for detectable disks.
+            None
         }
         Some(BusType::SATA) => Some(InterfaceSpeed::SATA6Gbps),
         Some(BusType::USB) => Some(InterfaceSpeed::USB3_5Gbps),
@@ -445,13 +454,12 @@ fn generate_m2_slot_details(total_slots: u32, used_slots: u32) -> Vec<M2SlotInfo
     for slot_num in 0..total_slots {
         let is_used = slot_num < used_slots;
 
-        // Most modern motherboards support both NVMe and SATA on M.2 slots
-        // Slot 1 is typically PCIe 4.0 x4, others are PCIe 3.0 x4
-        let (pcie_gen, pcie_lanes) = if slot_num == 0 {
-            (Some(4), Some(4)) // Primary slot is usually PCIe 4.0 x4
-        } else {
-            (Some(3), Some(4)) // Secondary slots are usually PCIe 3.0 x4
-        };
+        // We do NOT read the actual M.2 slot PCIe capabilities from the firmware
+        // yet (would need Win32_SystemSlot / SMBIOS type 9). Guessing "slot 0 is
+        // Gen4, the rest Gen3" was pure fiction and directly contradicted the
+        // disk's own reported interface. Leave it None until we read real data;
+        // the formatter renders an honest "Unknown" instead of a made-up gen.
+        let (pcie_gen, pcie_lanes): (Option<u32>, Option<u32>) = (None, None);
 
         slots.push(M2SlotInfo {
             slot_number: slot_num + 1,
@@ -541,4 +549,100 @@ fn detect_total_m2_slots() -> Option<u32> {
 
     // Fallback: assume 2 M.2 slots (common on modern motherboards)
     Some(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::system_info::types::{BusType, InterfaceSpeed};
+
+    // --- compute_interface_speed: honesty over assumption ---
+
+    #[test]
+    fn nvme_without_link_data_is_none_not_assumed_gen3() {
+        // Regression guard: this used to return Some(PCIe3x4), mislabeling every
+        // Gen4/Gen5 NVMe drive as Gen3. A wrong value is worse than an absent one.
+        assert_eq!(
+            compute_interface_speed(&Some(BusType::NVMe), None, None),
+            None,
+            "NVMe without real link data must be None (generation unknown)"
+        );
+    }
+
+    #[test]
+    fn nvme_gen3_link_data_is_detected() {
+        assert_eq!(
+            compute_interface_speed(&Some(BusType::NVMe), Some(8000), Some(4)),
+            Some(InterfaceSpeed::PCIe3x4)
+        );
+    }
+
+    #[test]
+    fn nvme_gen4_link_data_is_detected() {
+        assert_eq!(
+            compute_interface_speed(&Some(BusType::NVMe), Some(16000), Some(4)),
+            Some(InterfaceSpeed::PCIe4x4)
+        );
+    }
+
+    #[test]
+    fn nvme_gen5_link_data_is_detected() {
+        assert_eq!(
+            compute_interface_speed(&Some(BusType::NVMe), Some(32000), Some(4)),
+            Some(InterfaceSpeed::PCIe5x4)
+        );
+    }
+
+    #[test]
+    fn nvme_partial_link_data_is_none() {
+        // Only speed, no width (or vice versa) → still can't be sure → None.
+        assert_eq!(
+            compute_interface_speed(&Some(BusType::NVMe), Some(16000), None),
+            None
+        );
+    }
+
+    #[test]
+    fn sata_is_classified_from_bus_type() {
+        // SATA III is the de-facto standard for the bus; this is a bus
+        // classification, not a fabricated link-speed reading.
+        assert_eq!(
+            compute_interface_speed(&Some(BusType::SATA), None, None),
+            Some(InterfaceSpeed::SATA6Gbps)
+        );
+    }
+
+    #[test]
+    fn unknown_bus_is_none() {
+        assert_eq!(compute_interface_speed(&None, None, None), None);
+    }
+
+    // --- generate_m2_slot_details: no fabricated PCIe generations ---
+
+    #[test]
+    fn m2_slots_do_not_fabricate_pcie_generation() {
+        // Regression guard: slot 0 was hardcoded PCIe 4.0 and the rest PCIe 3.0,
+        // which directly contradicted the disk's own reported interface.
+        let slots = generate_m2_slot_details(3, 1);
+        assert_eq!(slots.len(), 3);
+        for slot in &slots {
+            assert_eq!(
+                slot.pcie_generation, None,
+                "M.2 slot PCIe generation must not be fabricated"
+            );
+            assert_eq!(
+                slot.pcie_lanes, None,
+                "M.2 slot PCIe lanes must not be fabricated"
+            );
+        }
+    }
+
+    #[test]
+    fn m2_slots_track_used_count() {
+        // The used/total bookkeeping is still meaningful and must survive the fix.
+        let slots = generate_m2_slot_details(3, 1);
+        assert!(slots[0].is_used);
+        assert!(!slots[1].is_used);
+        assert!(!slots[2].is_used);
+    }
 }
