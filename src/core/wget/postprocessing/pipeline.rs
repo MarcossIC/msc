@@ -122,3 +122,65 @@ impl PostProcessor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// End-to-end characterization of the full pipeline over a single fixture
+    /// that exercises several phases at once. Assets are pre-created so NO
+    /// network access happens. Verified against the behavior of the legacy
+    /// `wgetpostprocessing.rs` (commit 02719ef).
+    #[test]
+    fn process_file_applies_full_pipeline_offline() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        // Pre-create the asset so the external image resolves locally (no download).
+        std::fs::create_dir_all(base.join("assets")).unwrap();
+        std::fs::write(base.join("assets").join("photo.png"), b"img").unwrap();
+
+        let html = r#"<!DOCTYPE html>
+<html>
+<head>
+<link rel="dns-prefetch" href="//cdn.tracker.com">
+<title>Test</title>
+</head>
+<body>
+<img src="http://images.example.org/photo.png">
+<a href="/local/page">enlace interno</a>
+<a rel=nofollow href="http://external.com">externo</a>
+<script>var redirectUrl = "http://spam.com"; window.location = redirectUrl;</script>
+<script>console.log("contenido legitimo");</script>
+<iframe src="https://www.googletagmanager.com/ns.html?id=GTM-XXX"></iframe>
+<script>var x = 1; preventAutoplayForAVModal = false; var y = 2;</script>
+</body>
+</html>"#;
+
+        let file_path = base.join("page.html");
+        std::fs::write(&file_path, html).unwrap();
+
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let processor = PostProcessor::new(Blacklist::new());
+        processor.process_file(&file_path, base, &base_url).unwrap();
+
+        let out = std::fs::read_to_string(&file_path).unwrap();
+
+        // Resource discovery: external image localized to the pre-created asset.
+        assert!(out.contains(r#"src="assets/photo.png""#), "img not localized:\n{}", out);
+        // Absolute path conversion: "/local/page" -> "local/page" (depth 0).
+        assert!(out.contains(r#"href="local/page""#), "absolute path not converted:\n{}", out);
+        // Dangerous script removal: redirect gone, legit script kept.
+        assert!(!out.contains("redirectUrl"), "redirect script not removed:\n{}", out);
+        assert!(out.contains("contenido legitimo"), "legit script wrongly removed:\n{}", out);
+        // Sanitize rules: dns-prefetch link and GTM iframe removed.
+        assert!(!out.contains("dns-prefetch"), "dns-prefetch not removed:\n{}", out);
+        assert!(!out.contains("googletagmanager"), "GTM iframe not removed:\n{}", out);
+        // Quirk fix: autoplay forced to true.
+        assert!(out.contains("preventAutoplayForAVModal = true;"), "autoplay not fixed:\n{}", out);
+        assert!(!out.contains("= false"), "autoplay still false:\n{}", out);
+        // Sanitize rule: bare rel=nofollow quoted.
+        assert!(out.contains(r#"rel="nofollow""#), "nofollow not quoted:\n{}", out);
+        assert!(!out.contains("rel=nofollow"), "bare nofollow remains:\n{}", out);
+    }
+}
