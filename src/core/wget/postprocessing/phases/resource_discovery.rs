@@ -250,3 +250,90 @@ fn process_anchor_link(ctx: &mut ProcessingContext, url_str: &str) {
         is_image: false,
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Blacklist;
+    use tempfile::tempdir;
+    use url::Url;
+
+    #[test]
+    fn external_url_detection() {
+        assert!(is_external_url("http://x.com/a"));
+        assert!(is_external_url("https://x.com/a"));
+        assert!(is_external_url("//cdn.com/a"));
+        assert!(!is_external_url("/local/path"));
+        assert!(!is_external_url("relative/path"));
+    }
+
+    #[test]
+    fn ignores_fonts_gtm_and_php() {
+        assert!(should_ignore_url("https://fonts.googleapis.com/css"));
+        assert!(should_ignore_url("https://fonts.gstatic.com/x"));
+        assert!(should_ignore_url("https://www.googletagmanager.com/gtm.js"));
+        assert!(should_ignore_url("https://x.com/wp-login.php"));
+        assert!(should_ignore_url("https://x.com/xmlrpc.php"));
+        assert!(!should_ignore_url("https://x.com/image.png"));
+    }
+
+    // --- Capa 2: resolución de rutas con filesystem real, sin red ---
+    // El asset se pre-crea en disco, así `resolve_and_download` toma el
+    // camino "ya existe" y nunca llama a `download_resource`.
+
+    #[test]
+    fn resolve_returns_local_path_when_asset_exists() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let file_path = base.join("page.html");
+        std::fs::create_dir_all(base.join("assets")).unwrap();
+        std::fs::write(base.join("assets").join("x.png"), b"img").unwrap();
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let ctx = ProcessingContext::new(&file_path, base, &base_url, &blacklist, String::new());
+
+        let res = resolve_and_download(&ctx, "http://cdn/x.png", "").unwrap();
+        assert_eq!(res, Some("assets/x.png".to_string()));
+    }
+
+    #[test]
+    fn resolve_returns_global_relative_when_only_global_exists() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        // Página anidada un nivel bajo base; solo el assets GLOBAL tiene el archivo.
+        let file_path = base.join("sub").join("page.html");
+        std::fs::create_dir_all(base.join("assets")).unwrap();
+        std::fs::write(base.join("assets").join("y.png"), b"img").unwrap();
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let ctx = ProcessingContext::new(&file_path, base, &base_url, &blacklist, String::new());
+
+        let res = resolve_and_download(&ctx, "http://cdn/y.png", "").unwrap();
+        assert_eq!(res, Some("../assets/y.png".to_string()));
+    }
+
+    #[test]
+    fn anchor_link_rewritten_when_local_target_exists() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let site = base.join("example.com");
+        std::fs::create_dir_all(&site).unwrap();
+        std::fs::write(site.join("chapter-2.html"), b"<html></html>").unwrap();
+        let file_path = site.join("page.html");
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let mut ctx =
+            ProcessingContext::new(&file_path, base, &base_url, &blacklist, String::new());
+
+        process_anchor_link(&mut ctx, "/chapter-2");
+
+        assert_eq!(ctx.replacements.len(), 1);
+        let r = &ctx.replacements[0];
+        assert_eq!(r.target, "/chapter-2");
+        assert_eq!(r.replacement, "chapter-2.html");
+        assert!(!r.is_image);
+    }
+}

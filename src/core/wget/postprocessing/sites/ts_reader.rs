@@ -180,3 +180,68 @@ fn localize_image(image_val: &mut serde_json::Value, ctx: &ProcessingContext) ->
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Blacklist;
+    use tempfile::tempdir;
+
+    #[test]
+    fn matches_only_ts_reader_pages() {
+        let p = TsReaderProcessor;
+        let url = Url::parse("https://example.com/").unwrap();
+        assert!(p.matches(&url, r#"<script>ts_reader.run({"sources":[]});</script>"#));
+        assert!(!p.matches(&url, "<html><body>nada que ver</body></html>"));
+    }
+
+    // --- Capa 2: procesamiento con filesystem real, sin red ---
+    // El asset se pre-crea, así `localize_image` toma el camino "ya existe".
+
+    #[test]
+    fn process_disables_lazyload_and_localizes_existing_image() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let file_path = base.join("page.html");
+        std::fs::create_dir_all(base.join("assets")).unwrap();
+        std::fs::write(base.join("assets").join("img1.png"), b"img").unwrap();
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let content =
+            r#"<script>ts_reader.run({"sources":[{"images":["http://cdn/img1.png"]}]});</script>"#;
+        let mut ctx =
+            ProcessingContext::new(&file_path, base, &base_url, &blacklist, content.to_string());
+
+        TsReaderProcessor.process(&mut ctx).unwrap();
+
+        assert!(ctx.content.contains(r#""lazyload":false"#), "got: {}", ctx.content);
+        assert!(ctx.content.contains("assets/img1.png"), "got: {}", ctx.content);
+        assert!(
+            !ctx.content.contains("http://cdn/img1.png"),
+            "la URL remota debe quedar localizada, got: {}",
+            ctx.content
+        );
+    }
+
+    #[test]
+    fn localize_nav_url_resolves_existing_local_page() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let site = base.join("example.com");
+        std::fs::create_dir_all(site.join("chapter-2")).unwrap();
+        std::fs::write(site.join("chapter-2").join("index.html"), b"<html></html>").unwrap();
+        let file_path = site.join("page.html");
+
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let ctx = ProcessingContext::new(&file_path, base, &base_url, &blacklist, String::new());
+
+        let nav = serde_json::Value::String("https://example.com/chapter-2/".to_string());
+        let res = localize_nav_url(Some(&nav), &ctx);
+        assert_eq!(
+            res,
+            Some(serde_json::Value::String("chapter-2/index.html".to_string()))
+        );
+    }
+}

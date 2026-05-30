@@ -72,3 +72,43 @@ pub fn convert_absolute_paths(ctx: &mut ProcessingContext) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Blacklist;
+    use std::path::Path;
+    use url::Url;
+
+    /// Run `convert_absolute_paths`. `depth` is derived from how deeply
+    /// `file_path` nests under `base_dir` — no disk access involved.
+    fn run(file_path: &str, base_dir: &str, content: &str) -> String {
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let bd = Path::new(base_dir);
+        let fp = Path::new(file_path);
+        let mut ctx =
+            ProcessingContext::new(fp, bd, &base_url, &blacklist, content.to_string());
+        convert_absolute_paths(&mut ctx).unwrap();
+        ctx.content
+    }
+
+    #[test]
+    fn root_depth_strips_leading_slash() {
+        let out = run("/site/page.html", "/site", r#"<a href="/blog/post">x</a>"#);
+        assert!(out.contains(r#"href="blog/post""#), "got: {}", out);
+    }
+
+    #[test]
+    fn nested_depth_prepends_parent_dirs() {
+        let out = run("/site/a/b/page.html", "/site", r#"<img src="/img/x.png">"#);
+        assert!(out.contains(r#"src="../../img/x.png""#), "got: {}", out);
+    }
+
+    #[test]
+    fn skips_protocol_relative_urls() {
+        let input = r#"<img src="//cdn.com/x.png">"#;
+        let out = run("/site/page.html", "/site", input);
+        assert_eq!(out, input, "las URLs // no se tocan");
+    }
+}

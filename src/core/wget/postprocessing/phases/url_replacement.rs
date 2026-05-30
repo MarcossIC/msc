@@ -78,3 +78,69 @@ fn apply_image_replacement(
         ctx.content = ctx.content.replace(&repl.target, &repl.replacement);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::super::context::Replacement;
+    use crate::core::Blacklist;
+    use std::path::Path;
+    use url::Url;
+
+    fn run(content: &str, replacements: Vec<Replacement>) -> String {
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let base_dir = Path::new("/site");
+        let file_path = Path::new("/site/page.html");
+        let mut ctx = ProcessingContext::new(
+            file_path,
+            base_dir,
+            &base_url,
+            &blacklist,
+            content.to_string(),
+        );
+        ctx.replacements = replacements;
+        apply_replacements(&mut ctx).unwrap();
+        ctx.content
+    }
+
+    #[test]
+    fn non_image_replacement_is_global() {
+        let out = run(
+            r#"<script src="http://cdn/app.js"></script>"#,
+            vec![Replacement {
+                target: "http://cdn/app.js".to_string(),
+                replacement: "assets/app.js".to_string(),
+                is_image: false,
+            }],
+        );
+        assert!(out.contains(r#"src="assets/app.js""#), "got: {}", out);
+    }
+
+    #[test]
+    fn image_replacement_rewrites_src_within_tag() {
+        let out = run(
+            r#"<img src="ph.png" data-src="http://cdn/x.png">"#,
+            vec![Replacement {
+                target: "http://cdn/x.png".to_string(),
+                replacement: "assets/x.png".to_string(),
+                is_image: true,
+            }],
+        );
+        assert!(out.contains(r#"src="assets/x.png""#), "got: {}", out);
+    }
+
+    #[test]
+    fn image_replacement_handles_amp_encoded_url() {
+        let out = run(
+            r#"<img src="http://x/a?b=1&amp;c=2">"#,
+            vec![Replacement {
+                target: "http://x/a?b=1&c=2".to_string(),
+                replacement: "assets/a.png".to_string(),
+                is_image: true,
+            }],
+        );
+        assert!(out.contains(r#"src="assets/a.png""#), "got: {}", out);
+        assert!(!out.contains("&amp;c=2"), "got: {}", out);
+    }
+}

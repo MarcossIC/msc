@@ -77,3 +77,51 @@ fn fix_embed_code_escaping(ctx: &mut ProcessingContext) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Blacklist;
+    use std::path::Path;
+    use url::Url;
+
+    /// Run `apply_quirk_fixes` over `content` and return the resulting HTML.
+    /// Paths are synthetic — these phases never touch disk.
+    fn run(content: &str) -> String {
+        let blacklist = Blacklist::new();
+        let base_url = Url::parse("https://example.com/").unwrap();
+        let base_dir = Path::new("/site");
+        let file_path = Path::new("/site/page.html");
+        let mut ctx = ProcessingContext::new(
+            file_path,
+            base_dir,
+            &base_url,
+            &blacklist,
+            content.to_string(),
+        );
+        apply_quirk_fixes(&mut ctx).unwrap();
+        ctx.content
+    }
+
+    #[test]
+    fn forces_autoplay_prevention_true() {
+        let out = run("var x; preventAutoplayForAVModal = false; var y;");
+        assert!(out.contains("preventAutoplayForAVModal = true;"), "got: {}", out);
+        assert!(!out.contains("= false"), "got: {}", out);
+    }
+
+    #[test]
+    fn escapes_embed_code_quotes() {
+        let out = run(r#"{"embedCode":"<iframe src="http://x.com/v"></iframe>"}"#);
+        // Las comillas internas del iframe deben quedar escapadas para JSON válido.
+        assert!(out.contains(r#"src=\""#), "got: {}", out);
+        assert!(out.contains(r"\/"), "got: {}", out);
+    }
+
+    #[test]
+    fn leaves_content_without_quirks_untouched() {
+        let input = "<html><body><p>nada que arreglar</p></body></html>";
+        let out = run(input);
+        assert_eq!(out, input);
+    }
+}

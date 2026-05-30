@@ -249,3 +249,81 @@ pub fn default_sanitize_rules() -> Vec<SanitizeRule> {
         },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_sanitize_rules_all_compile() {
+        for rule in default_sanitize_rules() {
+            let pattern = if rule.dotall {
+                format!("(?s){}", rule.pattern)
+            } else {
+                rule.pattern.to_string()
+            };
+            assert!(
+                regex::Regex::new(&pattern).is_ok(),
+                "regex inválido en regla '{}': {}",
+                rule.name,
+                rule.pattern
+            );
+        }
+    }
+
+    #[test]
+    fn removes_redirect_script() {
+        let mut content =
+            r#"<html><script>var redirectUrl = "http://evil.com";</script><p>ok</p></html>"#
+                .to_string();
+        remove_dangerous_scripts(&mut content);
+        assert!(!content.contains("redirectUrl"), "got: {}", content);
+        assert!(content.contains("<p>ok</p>"));
+    }
+
+    #[test]
+    fn removes_gtm_analytics_script() {
+        let mut content =
+            r#"<script src="https://www.googletagmanager.com/gtm.js?id=GTM-XXX"></script>"#
+                .to_string();
+        remove_dangerous_scripts(&mut content);
+        assert!(!content.contains("googletagmanager"), "got: {}", content);
+    }
+
+    #[test]
+    fn keeps_harmless_script() {
+        let mut content = r#"<script>console.log("hola");</script>"#.to_string();
+        let original = content.clone();
+        remove_dangerous_scripts(&mut content);
+        assert_eq!(content, original, "no debe tocar scripts inocentes");
+    }
+
+    #[test]
+    fn remove_dangerous_scripts_is_idempotent() {
+        let mut content =
+            r#"<script>var redirectUrl = "x";</script><div>contenido</div>"#.to_string();
+        remove_dangerous_scripts(&mut content);
+        let once = content.clone();
+        remove_dangerous_scripts(&mut content);
+        assert_eq!(content, once, "correr dos veces debe dar el mismo resultado");
+    }
+
+    #[test]
+    fn apply_rules_removes_dns_prefetch_link() {
+        let rules = default_sanitize_rules();
+        let mut content =
+            r#"<head><link rel="dns-prefetch" href="//cdn.x.com"><title>t</title></head>"#
+                .to_string();
+        apply_sanitize_rules(&mut content, &rules);
+        assert!(!content.contains("dns-prefetch"), "got: {}", content);
+        assert!(content.contains("<title>t</title>"));
+    }
+
+    #[test]
+    fn apply_rules_quotes_bare_nofollow() {
+        let rules = default_sanitize_rules();
+        let mut content = r#"<a rel=nofollow href="x">link</a>"#.to_string();
+        apply_sanitize_rules(&mut content, &rules);
+        assert!(content.contains(r#"rel="nofollow""#), "got: {}", content);
+    }
+}
