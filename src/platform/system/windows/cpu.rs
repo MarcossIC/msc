@@ -68,8 +68,8 @@ fn get_numa_node_count() -> Result<u32> {
         _name: Option<String>,
     }
 
-    let wmi_con = WMIConnection::new()
-        .map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
+    let wmi_con =
+        WMIConnection::new().map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
     let nodes: Vec<Win32NumaNode> = wmi_con
         .query()
         .map_err(|e| MscError::other(format!("WMI query failed: {}", e)))?;

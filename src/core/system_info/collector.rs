@@ -61,8 +61,7 @@ pub fn collect_system_info_with_profile_progress(
     progress: Option<Arc<AtomicUsize>>,
 ) -> Result<(SystemInfo, CollectorTimings)> {
     let total_start = Instant::now();
-    let progress = progress; // moved into outer scope; closures borrow &progress
-    let progress_ref = &progress;
+    let progress_ref = &progress; // closures borrow the param directly
 
     // ------ Stage 1 ------
     let s1 = std::thread::scope(|s| {
@@ -117,8 +116,12 @@ pub fn collect_system_info_with_profile_progress(
         });
 
         (
-            recover(cpu_h.join(), "cpu", || (cpu::get_fallback(), Duration::ZERO)),
-            recover(mbo_h.join(), "motherboard", || ((None, Vec::new()), Duration::ZERO)),
+            recover(cpu_h.join(), "cpu", || {
+                (cpu::get_fallback(), Duration::ZERO)
+            }),
+            recover(mbo_h.join(), "motherboard", || {
+                ((None, Vec::new()), Duration::ZERO)
+            }),
             recover(gpu_h.join(), "gpu", || (vec![], Duration::ZERO)),
             recover(net_h.join(), "network", || {
                 ((network::get_fallback(), Vec::new()), Duration::ZERO)

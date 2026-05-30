@@ -94,9 +94,7 @@ fn should_ignore_url(url_str: &str) -> bool {
 }
 
 fn is_external_url(url_str: &str) -> bool {
-    url_str.starts_with("http://")
-        || url_str.starts_with("https://")
-        || url_str.starts_with("//")
+    url_str.starts_with("http://") || url_str.starts_with("https://") || url_str.starts_with("//")
 }
 
 /// Phase 2: Traverse DOM elements, discover external resources, download them locally.

@@ -288,7 +288,11 @@ impl ChecksumManager {
         let mut hasher = Sha256::new();
         hasher.update(&file_data);
 
-        let hash = hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let hash = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
 
         ensure!(
             hash.eq_ignore_ascii_case(expected_hash),
@@ -318,7 +322,11 @@ impl ChecksumManager {
         let mut hasher = Sha256::new();
         hasher.update(&file_data);
 
-        Ok(hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect::<String>())
+        Ok(hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>())
     }
 
     /// Clean up expired cache entries

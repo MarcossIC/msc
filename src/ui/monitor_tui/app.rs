@@ -261,10 +261,7 @@ impl MonitorApp {
                 let hot = if usage > 90.0 { " !" } else { "" };
                 rc.core_data.push(CachedCore {
                     compact_label: format!("C{:02} {:>5.1}%{}", i, usage, hot),
-                    full_label: format!(
-                        "C{:02} [{:>5.1}%] @ {:>4} MHz{}",
-                        i, usage, freq, hot
-                    ),
+                    full_label: format!("C{:02} [{:>5.1}%] @ {:>4} MHz{}", i, usage, freq, hot),
                     usage,
                     color,
                 });

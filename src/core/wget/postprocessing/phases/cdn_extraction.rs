@@ -88,8 +88,7 @@ fn extract_generic_cdn(ctx: &mut ProcessingContext) -> Result<()> {
         let cdn_url_str = cdn_url_match.as_str();
 
         // Skip Google Fonts
-        if cdn_url_str.contains("fonts.googleapis.com")
-            || cdn_url_str.contains("fonts.gstatic.com")
+        if cdn_url_str.contains("fonts.googleapis.com") || cdn_url_str.contains("fonts.gstatic.com")
         {
             continue;
         }
@@ -111,7 +110,11 @@ fn extract_generic_cdn(ctx: &mut ProcessingContext) -> Result<()> {
                     replacements.push((cdn_url_str.to_string(), relative_path));
                 }
                 Err(e) => {
-                    log::warn!("Failed to download generic CDN resource {}: {}", cdn_url_str, e);
+                    log::warn!(
+                        "Failed to download generic CDN resource {}: {}",
+                        cdn_url_str,
+                        e
+                    );
                     println!(
                         "   {} {}",
                         "⚠️  Error descargando:".yellow(),

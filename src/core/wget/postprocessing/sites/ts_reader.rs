@@ -156,10 +156,7 @@ fn localize_image(image_val: &mut serde_json::Value, ctx: &ProcessingContext) ->
         rel_to_global.push_str(&file_name);
         (global_path, rel_to_global)
     } else if fs::create_dir_all(&local_assets_dir).is_ok() {
-        (
-            local_path,
-            format!("{}{}", ctx.assets_rel_path, file_name),
-        )
+        (local_path, format!("{}{}", ctx.assets_rel_path, file_name))
     } else {
         return false;
     };
@@ -216,8 +213,16 @@ mod tests {
 
         TsReaderProcessor.process(&mut ctx).unwrap();
 
-        assert!(ctx.content.contains(r#""lazyload":false"#), "got: {}", ctx.content);
-        assert!(ctx.content.contains("assets/img1.png"), "got: {}", ctx.content);
+        assert!(
+            ctx.content.contains(r#""lazyload":false"#),
+            "got: {}",
+            ctx.content
+        );
+        assert!(
+            ctx.content.contains("assets/img1.png"),
+            "got: {}",
+            ctx.content
+        );
         assert!(
             !ctx.content.contains("http://cdn/img1.png"),
             "la URL remota debe quedar localizada, got: {}",
@@ -242,7 +247,9 @@ mod tests {
         let res = localize_nav_url(Some(&nav), &ctx);
         assert_eq!(
             res,
-            Some(serde_json::Value::String("chapter-2/index.html".to_string()))
+            Some(serde_json::Value::String(
+                "chapter-2/index.html".to_string()
+            ))
         );
     }
 
@@ -270,8 +277,16 @@ mod tests {
 
         TsReaderProcessor.process(&mut ctx).unwrap();
 
-        assert!(ctx.content.contains("assets/new1.png"), "got: {}", ctx.content);
-        assert!(ctx.content.contains(r#""lazyload":false"#), "got: {}", ctx.content);
+        assert!(
+            ctx.content.contains("assets/new1.png"),
+            "got: {}",
+            ctx.content
+        );
+        assert!(
+            ctx.content.contains(r#""lazyload":false"#),
+            "got: {}",
+            ctx.content
+        );
         assert!(base.join("assets").join("new1.png").exists());
     }
 }

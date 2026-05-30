@@ -66,8 +66,8 @@ pub fn get_network_info_profiled() -> Result<(NetworkInfo, Vec<(String, Duration
     // uses `.query()` for `Win32_BaseBoard`/`Win32_Processor`. Explicit SQL
     // sidesteps the inference and is also more selective (named columns only).
     let t = Instant::now();
-    let wmi = WMIConnection::new()
-        .map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
+    let wmi =
+        WMIConnection::new().map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
 
     let adapters: Vec<Win32NetworkAdapter> = wmi
         .raw_query(
@@ -268,7 +268,10 @@ fn ping_ipv4(ip: &str) -> Option<u32> {
         .lines()
         .find(|l| l.contains("time=") || l.contains("tiempo="))
     {
-        if let Some(pos) = time_line.find("time=").or_else(|| time_line.find("tiempo=")) {
+        if let Some(pos) = time_line
+            .find("time=")
+            .or_else(|| time_line.find("tiempo="))
+        {
             let time_str = &time_line[pos..];
             if let Some(ms_pos) = time_str.find("ms") {
                 let val = time_str[5..ms_pos].trim();

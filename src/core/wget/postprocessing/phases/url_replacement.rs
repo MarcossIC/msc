@@ -57,10 +57,7 @@ fn apply_image_replacement(
                         let mut new_tag = tag_content.to_string();
                         new_tag = new_tag.replace(curr_target.as_str(), &repl.replacement);
                         new_tag = src_pattern
-                            .replace(
-                                &new_tag,
-                                format!("src=\"{}\"", repl.replacement).as_str(),
-                            )
+                            .replace(&new_tag, format!("src=\"{}\"", repl.replacement).as_str())
                             .to_string();
 
                         ctx.content.replace_range(start..end, &new_tag);
@@ -81,8 +78,8 @@ fn apply_image_replacement(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::context::Replacement;
+    use super::*;
     use crate::core::Blacklist;
     use std::path::Path;
     use url::Url;

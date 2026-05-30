@@ -292,9 +292,9 @@ pub fn redact_url_credentials(input: &str) -> String {
 
     // Fallback: conservative regex-based redaction
     static CREDENTIALS_RE: OnceLock<Option<Regex>> = OnceLock::new();
-    let Some(re) = CREDENTIALS_RE.get_or_init(|| {
-        Regex::new(r"(?i)\b(https?://)([^:@/]+):([^@/]+)@").ok()
-    }) else {
+    let Some(re) =
+        CREDENTIALS_RE.get_or_init(|| Regex::new(r"(?i)\b(https?://)([^:@/]+):([^@/]+)@").ok())
+    else {
         // Regex compilation failed — should never happen with a hardcoded pattern,
         // but return input unmodified rather than panicking.
         return input.to_owned();
@@ -492,10 +492,7 @@ mod tests {
     #[test]
     fn test_validate_alias_command_windows_cross_platform_injection() {
         // These contain characters blocked on ALL platforms (& is in the cross-platform list)
-        let malicious_commands = vec![
-            "notepad & calc.exe",
-            "dir ^& malicious",
-        ];
+        let malicious_commands = vec!["notepad & calc.exe", "dir ^& malicious"];
 
         for cmd in malicious_commands {
             assert!(
@@ -510,11 +507,7 @@ mod tests {
     #[test]
     fn test_validate_alias_command_windows_specific_injection() {
         // These contain Windows-only patterns (%, ^, iex, downloadstring)
-        let malicious_commands = vec![
-            "echo %PATH%",
-            "powershell -c IEX",
-            "cmd /c downloadstring",
-        ];
+        let malicious_commands = vec!["echo %PATH%", "powershell -c IEX", "cmd /c downloadstring"];
 
         for cmd in malicious_commands {
             assert!(

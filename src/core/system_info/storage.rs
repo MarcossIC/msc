@@ -10,8 +10,11 @@ pub fn collect() -> Result<Vec<StorageInfo>> {
     collect_with_subs().map(|(info, _)| info)
 }
 
+/// Storage info paired with per-disk collection timings.
+type StorageWithSubs = (Vec<StorageInfo>, Vec<(String, Duration)>);
+
 /// Collect storage info AND per-disk timings.
-pub fn collect_with_subs() -> Result<(Vec<StorageInfo>, Vec<(String, Duration)>)> {
+pub fn collect_with_subs() -> Result<StorageWithSubs> {
     let disks = Disks::new_with_refreshed_list();
     let mut storage = Vec::new();
     let mut subs: Vec<(String, Duration)> = Vec::new();
@@ -132,8 +135,7 @@ pub fn collect_with_subs() -> Result<(Vec<StorageInfo>, Vec<(String, Duration)>)
             .chars()
             .take(8)
             .collect::<String>()
-            .replace('\\', "")
-            .replace(':', "");
+            .replace(['\\', ':'], "");
         let label = if label.is_empty() {
             format!("disk{}", subs.len())
         } else {

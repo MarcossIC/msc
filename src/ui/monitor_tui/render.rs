@@ -297,8 +297,8 @@ fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
     let rc = &app.render_cache;
 
     if mem_inner.height < 3 {
-        let summary = Paragraph::new(rc.mem_summary.as_str())
-            .style(Style::default().fg(Color::White));
+        let summary =
+            Paragraph::new(rc.mem_summary.as_str()).style(Style::default().fg(Color::White));
         frame.render_widget(summary, mem_inner);
     } else {
         let mem_layout = Layout::default()
@@ -313,8 +313,8 @@ fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
         let ram_gauge = colored_gauge(rc.mem_display as f64, &rc.ram_text);
         frame.render_widget(ram_gauge, mem_layout[0]);
 
-        let cache_text = Paragraph::new(rc.cache_text.as_str())
-            .style(Style::default().fg(Color::Blue));
+        let cache_text =
+            Paragraph::new(rc.cache_text.as_str()).style(Style::default().fg(Color::Blue));
         frame.render_widget(cache_text, mem_layout[1]);
 
         let swap_gauge = colored_gauge(app.metrics.memory.swap_percent as f64, &rc.swap_text);
@@ -331,8 +331,8 @@ fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
 
     if app.metrics.gpu.is_some() {
         if gpu_inner.height < 3 {
-            let summary = Paragraph::new(rc.gpu_summary.as_str())
-                .style(Style::default().fg(Color::Cyan));
+            let summary =
+                Paragraph::new(rc.gpu_summary.as_str()).style(Style::default().fg(Color::Cyan));
             frame.render_widget(summary, gpu_inner);
         } else {
             let gpu_layout = Layout::default()
@@ -344,20 +344,18 @@ fn render_memory_gpu_section(frame: &mut Frame, area: Rect, app: &MonitorApp) {
                 ])
                 .split(gpu_inner);
 
-            let name = Paragraph::new(rc.gpu_name.as_str())
-                .style(Style::default().fg(Color::Cyan));
+            let name = Paragraph::new(rc.gpu_name.as_str()).style(Style::default().fg(Color::Cyan));
             frame.render_widget(name, gpu_layout[0]);
 
             let usage_gauge = colored_gauge(rc.gpu_display as f64, &rc.gpu_usage_text);
             frame.render_widget(usage_gauge, gpu_layout[1]);
 
-            let details = Paragraph::new(rc.gpu_details.as_str())
-                .style(Style::default().fg(Color::White));
+            let details =
+                Paragraph::new(rc.gpu_details.as_str()).style(Style::default().fg(Color::White));
             frame.render_widget(details, gpu_layout[2]);
         }
     } else {
-        let no_gpu =
-            Paragraph::new("No GPU detected").style(Style::default().fg(Color::DarkGray));
+        let no_gpu = Paragraph::new("No GPU detected").style(Style::default().fg(Color::DarkGray));
         frame.render_widget(no_gpu, gpu_inner);
     }
 }
@@ -557,15 +555,23 @@ fn render_processes_section(frame: &mut Frame, area: Rect, app: &mut MonitorApp)
 
     let sort_by_mem = app.render_cache.process_sort_by_memory;
     let base_style = Style::default().add_modifier(Modifier::BOLD);
-    let active_style = base_style.fg(Color::Cyan).add_modifier(Modifier::UNDERLINED);
+    let active_style = base_style
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::UNDERLINED);
 
     let header = Row::new(vec![
         Cell::from("PID").style(base_style),
         Cell::from("Name").style(base_style),
-        Cell::from(if sort_by_mem { "CPU %" } else { "CPU % ▼" })
-            .style(if sort_by_mem { base_style } else { active_style }),
-        Cell::from(if sort_by_mem { "Memory ▼" } else { "Memory" })
-            .style(if sort_by_mem { active_style } else { base_style }),
+        Cell::from(if sort_by_mem { "CPU %" } else { "CPU % ▼" }).style(if sort_by_mem {
+            base_style
+        } else {
+            active_style
+        }),
+        Cell::from(if sort_by_mem { "Memory ▼" } else { "Memory" }).style(if sort_by_mem {
+            active_style
+        } else {
+            base_style
+        }),
     ])
     .height(1);
 

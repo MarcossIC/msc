@@ -28,7 +28,11 @@ pub fn apply_sanitize_rules(content: &mut String, rules: &[SanitizeRule]) {
         };
 
         let Ok(re) = regex::Regex::new(&pattern) else {
-            log::warn!("Invalid sanitize regex for '{}': {}", rule.name, rule.pattern);
+            log::warn!(
+                "Invalid sanitize regex for '{}': {}",
+                rule.name,
+                rule.pattern
+            );
             continue;
         };
 
@@ -87,12 +91,9 @@ pub fn remove_dangerous_scripts(content: &mut String) {
     if !removals.is_empty() {
         println!(
             "   {}",
-            format!(
-                "🛡️  Eliminando {} scripts peligrosos...",
-                removals.len()
-            )
-            .yellow()
-            .dimmed()
+            format!("🛡️  Eliminando {} scripts peligrosos...", removals.len())
+                .yellow()
+                .dimmed()
         );
         for (script, name, emoji) in &removals {
             println!(
@@ -131,16 +132,13 @@ fn default_script_predicates() -> Vec<ScriptPredicate> {
             emoji: "🍪",
             matches: |full, _| {
                 full.contains("src=")
-                    && (full.contains("cookie_banner.js")
-                        || full.contains("cookie_banner.min.js"))
+                    && (full.contains("cookie_banner.js") || full.contains("cookie_banner.min.js"))
             },
         },
         ScriptPredicate {
             name: "analytics/tracking",
             emoji: "📊",
-            matches: |full, _| {
-                full.contains("googletagmanager.com/gtm.js")
-            },
+            matches: |full, _| full.contains("googletagmanager.com/gtm.js"),
         },
         ScriptPredicate {
             name: "CAPTCHA/reCAPTCHA",
@@ -305,7 +303,10 @@ mod tests {
         remove_dangerous_scripts(&mut content);
         let once = content.clone();
         remove_dangerous_scripts(&mut content);
-        assert_eq!(content, once, "correr dos veces debe dar el mismo resultado");
+        assert_eq!(
+            content, once,
+            "correr dos veces debe dar el mismo resultado"
+        );
     }
 
     #[test]

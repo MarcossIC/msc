@@ -6,9 +6,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::{cursor, execute, queue, style::Print, terminal};
 
-const FRAMES: &[&str] = &[
-    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
-];
+const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const FRAME_INTERVAL_MS: u64 = 80;
 
 /// Background spinner that writes to stderr so stdout stays usable for JSON / pipes.

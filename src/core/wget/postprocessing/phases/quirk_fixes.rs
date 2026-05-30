@@ -106,7 +106,11 @@ mod tests {
     #[test]
     fn forces_autoplay_prevention_true() {
         let out = run("var x; preventAutoplayForAVModal = false; var y;");
-        assert!(out.contains("preventAutoplayForAVModal = true;"), "got: {}", out);
+        assert!(
+            out.contains("preventAutoplayForAVModal = true;"),
+            "got: {}",
+            out
+        );
         assert!(!out.contains("= false"), "got: {}", out);
     }
 

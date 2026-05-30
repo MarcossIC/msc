@@ -54,12 +54,7 @@ impl PostProcessor {
     /// 6. Apply sanitize rules (dns-prefetch, GTM, forms, promos)
     /// 7. Extract CDN resources
     /// 8. Fix HTML/JS quirks
-    pub fn process_file(
-        &self,
-        file_path: &Path,
-        base_dir: &Path,
-        base_url: &Url,
-    ) -> Result<()> {
+    pub fn process_file(&self, file_path: &Path, base_dir: &Path, base_url: &Url) -> Result<()> {
         let content = std::fs::read_to_string(file_path)?;
 
         // Log blacklist status on first file (non-empty blacklist)
@@ -72,7 +67,8 @@ impl PostProcessor {
             );
         }
 
-        let mut ctx = ProcessingContext::new(file_path, base_dir, base_url, &self.blacklist, content);
+        let mut ctx =
+            ProcessingContext::new(file_path, base_dir, base_url, &self.blacklist, content);
 
         // Phase 2: Resource discovery and downloading (critical — propagates errors)
         phases::discover_and_download_resources(&mut ctx)?;
@@ -167,20 +163,56 @@ mod tests {
         let out = std::fs::read_to_string(&file_path).unwrap();
 
         // Resource discovery: external image localized to the pre-created asset.
-        assert!(out.contains(r#"src="assets/photo.png""#), "img not localized:\n{}", out);
+        assert!(
+            out.contains(r#"src="assets/photo.png""#),
+            "img not localized:\n{}",
+            out
+        );
         // Absolute path conversion: "/local/page" -> "local/page" (depth 0).
-        assert!(out.contains(r#"href="local/page""#), "absolute path not converted:\n{}", out);
+        assert!(
+            out.contains(r#"href="local/page""#),
+            "absolute path not converted:\n{}",
+            out
+        );
         // Dangerous script removal: redirect gone, legit script kept.
-        assert!(!out.contains("redirectUrl"), "redirect script not removed:\n{}", out);
-        assert!(out.contains("contenido legitimo"), "legit script wrongly removed:\n{}", out);
+        assert!(
+            !out.contains("redirectUrl"),
+            "redirect script not removed:\n{}",
+            out
+        );
+        assert!(
+            out.contains("contenido legitimo"),
+            "legit script wrongly removed:\n{}",
+            out
+        );
         // Sanitize rules: dns-prefetch link and GTM iframe removed.
-        assert!(!out.contains("dns-prefetch"), "dns-prefetch not removed:\n{}", out);
-        assert!(!out.contains("googletagmanager"), "GTM iframe not removed:\n{}", out);
+        assert!(
+            !out.contains("dns-prefetch"),
+            "dns-prefetch not removed:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("googletagmanager"),
+            "GTM iframe not removed:\n{}",
+            out
+        );
         // Quirk fix: autoplay forced to true.
-        assert!(out.contains("preventAutoplayForAVModal = true;"), "autoplay not fixed:\n{}", out);
+        assert!(
+            out.contains("preventAutoplayForAVModal = true;"),
+            "autoplay not fixed:\n{}",
+            out
+        );
         assert!(!out.contains("= false"), "autoplay still false:\n{}", out);
         // Sanitize rule: bare rel=nofollow quoted.
-        assert!(out.contains(r#"rel="nofollow""#), "nofollow not quoted:\n{}", out);
-        assert!(!out.contains("rel=nofollow"), "bare nofollow remains:\n{}", out);
+        assert!(
+            out.contains(r#"rel="nofollow""#),
+            "nofollow not quoted:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("rel=nofollow"),
+            "bare nofollow remains:\n{}",
+            out
+        );
     }
 }

@@ -1,7 +1,7 @@
 use crate::core::wget::{
     calculate_local_path_for_url, create_cookie_file, debug_database_info, extract_cookies_from_db,
-    extract_cookies_with_cdp, find_browser_cookie_db, format_cookies, PostProcessor,
-    resolve_cookie_path, WgetManager,
+    extract_cookies_with_cdp, find_browser_cookie_db, format_cookies, resolve_cookie_path,
+    PostProcessor, WgetManager,
 };
 use crate::core::{validation, Config};
 use anyhow::{anyhow, Context, Result};
@@ -68,8 +68,8 @@ pub fn execute_postprocessing(matches: &clap::ArgMatches) -> Result<()> {
 
     // 4. Run post-processing
     println!("{}", "⟳ Procesando archivos HTML...".cyan());
-    let blacklist = validation::load_default_blacklist()
-        .unwrap_or_else(|_| crate::core::Blacklist::new());
+    let blacklist =
+        validation::load_default_blacklist().unwrap_or_else(|_| crate::core::Blacklist::new());
     let processor = PostProcessor::new(blacklist);
     post_process_directory(&target_dir, &target_dir, &base_url, &processor)?;
 
@@ -573,33 +573,30 @@ impl Crawler {
         );
 
         // Create processor once — shares blacklist across all files
-        let blacklist = validation::load_default_blacklist()
-            .unwrap_or_else(|_| crate::core::Blacklist::new());
+        let blacklist =
+            validation::load_default_blacklist().unwrap_or_else(|_| crate::core::Blacklist::new());
         let processor = PostProcessor::new(blacklist);
 
         for url_str in &self.visited {
             if let Ok(url) = Url::parse(url_str) {
                 if let Some(local_path) = calculate_local_path_for_url(&url, &self.target_dir) {
-                    if local_path.exists() {
-                        if local_path
+                    if local_path.exists()
+                        && local_path
                             .extension()
                             .is_some_and(|ext| ext == "html" || ext == "htm")
+                    {
+                        println!(
+                            "   {}",
+                            format!("⟳ Procesando {}", local_path.display()).dimmed()
+                        );
+                        if let Err(e) =
+                            processor.process_file(&local_path, &self.target_dir, &self.base_url)
                         {
                             println!(
                                 "   {}",
-                                format!("⟳ Procesando {}", local_path.display()).dimmed()
+                                format!("⚠️  Error procesando {}: {}", local_path.display(), e)
+                                    .yellow()
                             );
-                            if let Err(e) = processor.process_file(
-                                &local_path,
-                                &self.target_dir,
-                                &self.base_url,
-                            ) {
-                                println!(
-                                    "   {}",
-                                    format!("⚠️  Error procesando {}: {}", local_path.display(), e)
-                                        .yellow()
-                                );
-                            }
                         }
                     }
                 }
@@ -981,7 +978,7 @@ fn post_process_directory(
 }
 
 /// Process the downloaded page(s) to ensure all links are local and resources are downloaded (single page mode)
-fn process_downloaded_page(original_url: &str, target_dir: &PathBuf) -> Result<()> {
+fn process_downloaded_page(original_url: &str, target_dir: &Path) -> Result<()> {
     let base_url = Url::parse(original_url)
         .with_context(|| format!("Invalid URL received: {}", original_url))?;
 

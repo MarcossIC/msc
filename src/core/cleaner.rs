@@ -253,7 +253,13 @@ fn count_files_recursive(
                                         stats.skipped_files += 1;
                                     }
                                 } else if metadata.is_dir() {
-                                    count_files_recursive(&entry.path(), stats, min_age, max_age, depth + 1);
+                                    count_files_recursive(
+                                        &entry.path(),
+                                        stats,
+                                        min_age,
+                                        max_age,
+                                        depth + 1,
+                                    );
                                 }
                             }
                             Err(e) => {

@@ -125,7 +125,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     if disk_number.is_none() {
         if let Some(dl) = drive_letter {
             let partitions: Vec<MsftPartition> = wmi
-                .raw_query(&format!(
+                .raw_query(format!(
                     "SELECT DiskNumber, DriveLetter FROM MSFT_Partition WHERE DriveLetter = '{}'",
                     dl
                 ))
@@ -141,7 +141,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
 
     // MSFT_PhysicalDisk: DeviceId is a string here (numeric digits) — match by string.
     let disks: Vec<MsftPhysicalDisk> = wmi
-        .raw_query(&format!(
+        .raw_query(format!(
             "SELECT DeviceId, FriendlyName, Model, MediaType, BusType, \
              SerialNumber, FirmwareVersion, Manufacturer \
              FROM MSFT_PhysicalDisk WHERE DeviceId = '{}'",
@@ -156,7 +156,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
 
     // MSFT_StorageReliabilityCounter: filter by same DeviceId.
     let counters: Vec<MsftStorageReliabilityCounter> = wmi
-        .raw_query(&format!(
+        .raw_query(format!(
             "SELECT DeviceId, HealthStatus, Temperature, ReadErrorsTotal, \
              WriteErrorsTotal, PowerOnHours \
              FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{}'",
@@ -179,10 +179,9 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
         "SCM" => DiskType::NVMe,
         _ => match bus_type {
             Some(BusType::NVMe) => DiskType::NVMe,
-            Some(BusType::SATA) => detect_ssd_or_hdd_from_model(
-                model.unwrap_or(""),
-                friendly_name.unwrap_or(""),
-            ),
+            Some(BusType::SATA) => {
+                detect_ssd_or_hdd_from_model(model.unwrap_or(""), friendly_name.unwrap_or(""))
+            }
             _ => DiskType::Unknown,
         },
     };

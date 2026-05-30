@@ -43,8 +43,8 @@ pub use pipeline::PostProcessor;
 /// Prefer `PostProcessor::new(blacklist).process_file()` for batch processing
 /// to avoid reloading the blacklist for every file.
 pub fn process_html_file_complete(
-    file_path: &std::path::PathBuf,
-    base_dir: &std::path::PathBuf,
+    file_path: &std::path::Path,
+    base_dir: &std::path::Path,
     base_url: &url::Url,
 ) -> anyhow::Result<()> {
     let blacklist = crate::core::validation::load_default_blacklist()

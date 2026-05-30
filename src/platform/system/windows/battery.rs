@@ -47,8 +47,8 @@ fn empty_battery() -> BatteryInfo {
 /// 2. BatteryStaticData / BatteryFullChargedCapacity via WMI (accurate capacity)
 /// 3. Registry (cycle count and additional metrics)
 pub fn get_battery_info() -> Result<BatteryInfo> {
-    let wmi = WMIConnection::new()
-        .map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
+    let wmi =
+        WMIConnection::new().map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
 
     let batteries: Vec<Win32Battery> = wmi
         .query()
@@ -70,13 +70,10 @@ pub fn get_battery_info() -> Result<BatteryInfo> {
     let percentage = battery.estimated_charge_remaining.map(|p| p as u8);
 
     // EstimatedRunTime returns a sentinel ~71582788 when not discharging — filter it out.
-    let time_remaining_secs = battery.estimated_run_time.and_then(|t| {
-        if t < 71_582_788 {
-            Some(t * 60)
-        } else {
-            None
-        }
-    });
+    let time_remaining_secs =
+        battery
+            .estimated_run_time
+            .and_then(|t| if t < 71_582_788 { Some(t * 60) } else { None });
 
     let technology = match battery.chemistry {
         Some(1) => Some(BatteryTechnology::LeadAcid),

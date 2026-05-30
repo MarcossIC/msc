@@ -153,3 +153,9 @@ impl RenderCache {
         }
     }
 }
+
+impl Default for RenderCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}

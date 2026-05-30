@@ -14,8 +14,7 @@ pub fn convert_absolute_paths(ctx: &mut ProcessingContext) -> Result<()> {
         .context("Failed to create absolute path regex")?;
 
     // Calculate nesting depth relative to base_dir
-    let relative_to_base =
-        pathdiff::diff_paths(ctx.base_dir, &ctx.parent_dir).unwrap_or_default();
+    let relative_to_base = pathdiff::diff_paths(ctx.base_dir, &ctx.parent_dir).unwrap_or_default();
     let depth = relative_to_base.components().count();
 
     let mut prefix_to_root = String::new();
@@ -87,8 +86,7 @@ mod tests {
         let base_url = Url::parse("https://example.com/").unwrap();
         let bd = Path::new(base_dir);
         let fp = Path::new(file_path);
-        let mut ctx =
-            ProcessingContext::new(fp, bd, &base_url, &blacklist, content.to_string());
+        let mut ctx = ProcessingContext::new(fp, bd, &base_url, &blacklist, content.to_string());
         convert_absolute_paths(&mut ctx).unwrap();
         ctx.content
     }

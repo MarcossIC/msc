@@ -225,11 +225,7 @@ pub fn find_firefox_cookie_db(profiles_dir: &Path) -> Result<PathBuf> {
 pub fn extract_cookies_from_db(db_path: &Path, domain: &str) -> Result<Vec<Cookie>> {
     // Create a temporary copy of the database because browsers lock it.
     // Include PID + thread ID to prevent collisions from concurrent calls.
-    let unique_id = format!(
-        "{}_{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    );
+    let unique_id = format!("{}_{:?}", std::process::id(), std::thread::current().id());
     let temp_db = env::temp_dir().join(format!("msc_cookies_temp_{}.db", unique_id));
 
     // Copy main database file
@@ -579,11 +575,7 @@ pub fn debug_database_info(db_path: &Path) -> Result<()> {
     println!();
 
     // Create temporary copy with unique name to prevent concurrent collisions
-    let unique_id = format!(
-        "{}_{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    );
+    let unique_id = format!("{}_{:?}", std::process::id(), std::thread::current().id());
     let temp_db = env::temp_dir().join(format!("msc_debug_{}.db", unique_id));
     fs::copy(db_path, &temp_db)?;
 
