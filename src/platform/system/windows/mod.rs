@@ -6,6 +6,7 @@ pub mod cpu;
 pub mod gpu;
 pub mod mbo;
 pub mod network;
+pub mod pcie_link;
 pub mod ram;
 pub mod storage;
 

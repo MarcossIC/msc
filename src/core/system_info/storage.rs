@@ -131,6 +131,12 @@ pub fn collect_with_subs() -> Result<StorageWithSubs> {
             )
         };
 
+        // Physical drive number → join key for the PCIe link map (Windows only).
+        #[cfg(windows)]
+        let disk_number = disk_details.as_ref().and_then(|d| d.device_number);
+        #[cfg(not(windows))]
+        let disk_number: Option<u32> = None;
+
         let label = mount_point
             .chars()
             .take(8)
@@ -158,6 +164,7 @@ pub fn collect_with_subs() -> Result<StorageWithSubs> {
             firmware_version,
             bus_type,
             interface_speed,
+            disk_number,
             smart_status,
             temperature_celsius,
             power_on_hours,
@@ -167,6 +174,23 @@ pub fn collect_with_subs() -> Result<StorageWithSubs> {
     }
 
     Ok((storage, subs))
+}
+
+/// PCIe link map: physical drive number → real `InterfaceSpeed::Pcie`.
+///
+/// Runs the native reader on Windows; returns an empty map elsewhere. Designed
+/// to run in its OWN collector thread (parallel to storage) so its cost stays
+/// off the storage critical path; the collector merges the result afterwards.
+#[cfg(windows)]
+pub fn disk_link_map(
+) -> std::collections::HashMap<u32, crate::core::system_info::types::InterfaceSpeed> {
+    crate::platform::system_info_windows::read_disk_link_map()
+}
+
+#[cfg(not(windows))]
+pub fn disk_link_map(
+) -> std::collections::HashMap<u32, crate::core::system_info::types::InterfaceSpeed> {
+    std::collections::HashMap::new()
 }
 
 fn detect_disk_type(name: &str) -> DiskType {

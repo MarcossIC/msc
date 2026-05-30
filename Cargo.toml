@@ -94,6 +94,11 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_Security_Cryptography",
     "Win32_Foundation",
+    # SetupAPI / cfgmgr32 — PCIe link-speed reader (DEVPKEY_PciDevice_*)
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Properties",
+    # DeviceIoControl — IOCTL_STORAGE_GET_DEVICE_NUMBER (disk → physical number)
+    "Win32_System_IO",
 ] }
 
 [target.'cfg(unix)'.dependencies]

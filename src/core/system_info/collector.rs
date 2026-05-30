@@ -114,6 +114,10 @@ pub fn collect_system_info_with_profile_progress(
             tick(progress_ref);
             r
         });
+        // PCIe link reader: its OWN Stage 1 thread, parallel to storage, so its
+        // ~1-4ms stays off the storage critical path. No `tick` — it's not a
+        // user-visible section, just an enrichment merged in after the join.
+        let link_h = s.spawn(|| storage::disk_link_map());
 
         (
             recover(cpu_h.join(), "cpu", || {
@@ -132,6 +136,7 @@ pub fn collect_system_info_with_profile_progress(
             recover(os_h.join(), "os", || (os::get_fallback(), Duration::ZERO)),
             recover(bat_h.join(), "battery", || (None, Duration::ZERO)),
             recover(pwr_h.join(), "power_plan", || (None, Duration::ZERO)),
+            recover(link_h.join(), "disk_links", std::collections::HashMap::new),
         )
     });
 
@@ -139,10 +144,22 @@ pub fn collect_system_info_with_profile_progress(
     let ((motherboard_info, mbo_subs), mbo_dur) = s1.1;
     let (gpu_info, gpu_dur) = s1.2;
     let ((network_info, net_subs), net_dur) = s1.3;
-    let ((storage_info, stor_subs), stor_dur) = s1.4;
+    let ((mut storage_info, stor_subs), stor_dur) = s1.4;
     let (os_info, os_dur) = s1.5;
     let (battery_info, bat_dur) = s1.6;
     let (power_plan_info, pwr_dur) = s1.7;
+    let disk_link_map = s1.8;
+
+    // Assign each disk its REAL PCIe link by physical drive number. Only disks
+    // the reader resolved are touched; others keep interface_speed = None (we
+    // never fabricate a generation). Different NVMe can land on different gen/width.
+    for disk in &mut storage_info {
+        if let Some(n) = disk.disk_number {
+            if let Some(speed) = disk_link_map.get(&n) {
+                disk.interface_speed = Some(speed.clone());
+            }
+        }
+    }
 
     // ------ Stage 2 ------ (depends on cpu + motherboard from stage 1)
     let cpu_model: &str = cpu_info.model.as_str();

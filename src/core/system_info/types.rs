@@ -378,6 +378,10 @@ pub struct StorageInfo {
     // Bus and interface
     pub bus_type: Option<BusType>,
     pub interface_speed: Option<InterfaceSpeed>,
+    /// Physical drive number (\\.\PhysicalDriveN). Used to join with the PCIe
+    /// link-speed map produced by the parallel reader, so each disk gets ITS
+    /// real link (different NVMe can run at different gen/width).
+    pub disk_number: Option<u32>,
 
     // SMART data
     pub smart_status: Option<SmartStatus>,
@@ -434,11 +438,12 @@ pub enum InterfaceSpeed {
     SATA3Gbps,
     SATA6Gbps,
 
-    // PCIe NVMe
-    PCIe3x2, // PCIe 3.0 x2 lanes
-    PCIe3x4, // PCIe 3.0 x4 lanes
-    PCIe4x4, // PCIe 4.0 x4 lanes
-    PCIe5x4, // PCIe 5.0 x4 lanes
+    // PCIe NVMe — generation (1–6) × lane width (1,2,4,8,16).
+    // ONE variant models the full gen×width space instead of a handful of
+    // hardcoded combos. Real links like Gen4 x2 are now representable; the old
+    // closed set (PCIe3x2/3x4/4x4/5x4) couldn't express them and silently
+    // misclassified them — the same modeling gap that caused the hardcoding bug.
+    Pcie { gen: u8, width: u8 },
 
     // USB
     USB3_5Gbps,
@@ -448,16 +453,35 @@ pub enum InterfaceSpeed {
     Unknown,
 }
 
+/// Approximate per-lane unidirectional throughput (GB/s) for a PCIe generation.
+/// Marketing-rounded (Gen3 ≈ 1, Gen4 ≈ 2, Gen5 ≈ 4) so totals match common specs:
+/// Gen3 x4 ≈ 4 GB/s, Gen4 x4 ≈ 8 GB/s, Gen4 x2 ≈ 4 GB/s, Gen5 x4 ≈ 16 GB/s.
+fn pcie_lane_gbps(gen: u8) -> f32 {
+    match gen {
+        1 => 0.25,
+        2 => 0.5,
+        3 => 1.0,
+        4 => 2.0,
+        5 => 4.0,
+        6 => 8.0,
+        _ => 0.0,
+    }
+}
+
 impl std::fmt::Display for InterfaceSpeed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InterfaceSpeed::SATA1_5Gbps => write!(f, "SATA 1.5 Gb/s"),
             InterfaceSpeed::SATA3Gbps => write!(f, "SATA 3 Gb/s"),
             InterfaceSpeed::SATA6Gbps => write!(f, "SATA 6 Gb/s (SATA III)"),
-            InterfaceSpeed::PCIe3x2 => write!(f, "PCIe 3.0 x2 (~2 GB/s)"),
-            InterfaceSpeed::PCIe3x4 => write!(f, "PCIe 3.0 x4 (~4 GB/s)"),
-            InterfaceSpeed::PCIe4x4 => write!(f, "PCIe 4.0 x4 (~8 GB/s)"),
-            InterfaceSpeed::PCIe5x4 => write!(f, "PCIe 5.0 x4 (~16 GB/s)"),
+            InterfaceSpeed::Pcie { gen, width } => {
+                let total = pcie_lane_gbps(*gen) * (*width as f32);
+                if total.fract() == 0.0 {
+                    write!(f, "PCIe {}.0 x{} (~{} GB/s)", gen, width, total as u32)
+                } else {
+                    write!(f, "PCIe {}.0 x{} (~{:.1} GB/s)", gen, width, total)
+                }
+            }
             InterfaceSpeed::USB3_5Gbps => write!(f, "USB 3.0 (5 Gb/s)"),
             InterfaceSpeed::USB3_10Gbps => write!(f, "USB 3.1 Gen 2 (10 Gb/s)"),
             InterfaceSpeed::USB3_20Gbps => write!(f, "USB 3.2 Gen 2x2 (20 Gb/s)"),

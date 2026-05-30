@@ -6,6 +6,9 @@ use wmi::WMIConnection;
 /// Detailed disk information from Windows
 pub struct DiskDetailsWindows {
     pub disk_type: DiskType,
+    /// Physical drive number (the WMI DeviceId / \\.\PhysicalDriveN index),
+    /// used to join with the PCIe link map. None when detection fell back.
+    pub device_number: Option<u32>,
     pub manufacturer: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
@@ -224,6 +227,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
 
     Ok(DiskDetailsWindows {
         disk_type,
+        device_number: Some(target),
         manufacturer,
         model: model.map(|s| s.to_string()),
         serial_number,
@@ -264,6 +268,7 @@ fn bus_type_from_num(bus: Option<u16>) -> Option<BusType> {
 fn fallback_disk_details() -> DiskDetailsWindows {
     DiskDetailsWindows {
         disk_type: DiskType::Unknown,
+        device_number: None,
         manufacturer: None,
         model: None,
         serial_number: None,
@@ -290,19 +295,22 @@ fn compute_interface_speed(
     match bus_type {
         Some(BusType::NVMe) => {
             if let (Some(s), Some(w)) = (speed, width) {
-                if s >= 32000 && w >= 4 {
-                    return Some(InterfaceSpeed::PCIe5x4);
-                }
-                if s >= 16000 && w >= 4 {
-                    return Some(InterfaceSpeed::PCIe4x4);
-                }
-                if s >= 8000 {
-                    if w >= 4 {
-                        return Some(InterfaceSpeed::PCIe3x4);
-                    }
-                    if w >= 2 {
-                        return Some(InterfaceSpeed::PCIe3x2);
-                    }
+                // `s` is the link speed in MT/s (GT/s × 1000). Map it to a PCIe
+                // generation and keep the real lane width — together they model
+                // ANY combo (e.g. Gen4 x2), unlike the old fixed variants.
+                let gen = match s {
+                    x if x >= 32000 => Some(5),
+                    x if x >= 16000 => Some(4),
+                    x if x >= 8000 => Some(3),
+                    x if x >= 5000 => Some(2),
+                    x if x >= 2500 => Some(1),
+                    _ => None,
+                };
+                if let Some(g) = gen {
+                    return Some(InterfaceSpeed::Pcie {
+                        gen: g,
+                        width: w as u8,
+                    });
                 }
             }
             // No real link data → DON'T fabricate a generation.
@@ -573,7 +581,7 @@ mod tests {
     fn nvme_gen3_link_data_is_detected() {
         assert_eq!(
             compute_interface_speed(&Some(BusType::NVMe), Some(8000), Some(4)),
-            Some(InterfaceSpeed::PCIe3x4)
+            Some(InterfaceSpeed::Pcie { gen: 3, width: 4 })
         );
     }
 
@@ -581,7 +589,7 @@ mod tests {
     fn nvme_gen4_link_data_is_detected() {
         assert_eq!(
             compute_interface_speed(&Some(BusType::NVMe), Some(16000), Some(4)),
-            Some(InterfaceSpeed::PCIe4x4)
+            Some(InterfaceSpeed::Pcie { gen: 4, width: 4 })
         );
     }
 
@@ -589,7 +597,18 @@ mod tests {
     fn nvme_gen5_link_data_is_detected() {
         assert_eq!(
             compute_interface_speed(&Some(BusType::NVMe), Some(32000), Some(4)),
-            Some(InterfaceSpeed::PCIe5x4)
+            Some(InterfaceSpeed::Pcie { gen: 5, width: 4 })
+        );
+    }
+
+    #[test]
+    fn nvme_gen4_x2_is_representable() {
+        // This is the WD_BLACK SN7100's real link. The OLD closed enum had no
+        // PCIe4x2 variant and would have misclassified it as PCIe3x2 (wrong
+        // generation). The {gen, width} model captures it exactly.
+        assert_eq!(
+            compute_interface_speed(&Some(BusType::NVMe), Some(16000), Some(2)),
+            Some(InterfaceSpeed::Pcie { gen: 4, width: 2 })
         );
     }
 

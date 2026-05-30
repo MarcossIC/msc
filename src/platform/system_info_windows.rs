@@ -4,3 +4,4 @@
 pub use super::system::windows::{
     get_available_storage_slots, get_disk_details, get_disk_type, DiskDetailsWindows, StorageSlots,
 };
+pub use super::system::windows::pcie_link::read_disk_link_map;
