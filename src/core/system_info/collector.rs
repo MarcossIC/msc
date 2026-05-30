@@ -29,6 +29,23 @@ fn tick(progress: &Option<Arc<AtomicUsize>>) {
     }
 }
 
+/// Join a scoped collector thread, recovering from an internal panic.
+///
+/// Each collector thread already turns its own `Err` into a fallback, so
+/// `join()` yields `Err` *only* when the collector itself panicked — a stray
+/// `unwrap`/index deep in a WMI, raw-cpuid, or Windows API path. Rather than
+/// let that panic abort the whole `sys` command (the project's flagship
+/// diagnostic), we log it and substitute the same fallback the thread would
+/// have used. Consuming the `Err` here is also what stops `thread::scope` from
+/// re-panicking: `join()` `.take()`s the packet result, so `Packet::drop` never
+/// flags the scope as panicked.
+fn recover<T>(result: std::thread::Result<T>, section: &str, fallback: impl FnOnce() -> T) -> T {
+    result.unwrap_or_else(|_| {
+        log::warn!("system_info: '{section}' collector panicked; using fallback");
+        fallback()
+    })
+}
+
 /// Collect all system information in parallel with per-section timing data.
 ///
 /// Stage 1: 8 independent collectors run concurrently via `thread::scope`.
@@ -100,14 +117,18 @@ pub fn collect_system_info_with_profile_progress(
         });
 
         (
-            cpu_h.join().unwrap(),
-            mbo_h.join().unwrap(),
-            gpu_h.join().unwrap(),
-            net_h.join().unwrap(),
-            stor_h.join().unwrap(),
-            os_h.join().unwrap(),
-            bat_h.join().unwrap(),
-            pwr_h.join().unwrap(),
+            recover(cpu_h.join(), "cpu", || (cpu::get_fallback(), Duration::ZERO)),
+            recover(mbo_h.join(), "motherboard", || ((None, Vec::new()), Duration::ZERO)),
+            recover(gpu_h.join(), "gpu", || (vec![], Duration::ZERO)),
+            recover(net_h.join(), "network", || {
+                ((network::get_fallback(), Vec::new()), Duration::ZERO)
+            }),
+            recover(stor_h.join(), "storage", || {
+                ((Vec::new(), Vec::new()), Duration::ZERO)
+            }),
+            recover(os_h.join(), "os", || (os::get_fallback(), Duration::ZERO)),
+            recover(bat_h.join(), "battery", || (None, Duration::ZERO)),
+            recover(pwr_h.join(), "power_plan", || (None, Duration::ZERO)),
         )
     });
 
@@ -138,7 +159,12 @@ pub fn collect_system_info_with_profile_progress(
             r
         });
 
-        (mem_h.join().unwrap(), npu_h.join().unwrap())
+        (
+            recover(mem_h.join(), "memory", || {
+                (memory::get_fallback(), Duration::ZERO)
+            }),
+            recover(npu_h.join(), "npu", || (None, Duration::ZERO)),
+        )
     });
 
     let (memory_info, mem_dur) = s2.0;
@@ -224,4 +250,42 @@ fn detect_npu(cpu_model: &str) -> Option<NpuInfo> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recover;
+    use std::time::Duration;
+
+    #[test]
+    fn recover_passes_value_through_on_ok() {
+        let v = recover(Ok((42u32, Duration::from_millis(5))), "cpu", || {
+            (0, Duration::ZERO)
+        });
+        assert_eq!(v, (42, Duration::from_millis(5)));
+    }
+
+    #[test]
+    fn recover_returns_fallback_on_err() {
+        let err: std::thread::Result<(u32, Duration)> = Err(Box::new("boom"));
+        let v = recover(err, "cpu", || (99, Duration::ZERO));
+        assert_eq!(v, (99, Duration::ZERO));
+    }
+
+    #[test]
+    fn panicking_scoped_thread_is_recovered_not_propagated() {
+        // The decisive test: a scoped collector that panics must NOT crash the
+        // scope. `join()` `.take()`s the packet result, so consuming the `Err`
+        // here stops `thread::scope` from re-panicking with
+        // "a scoped thread panicked". If the `.take()` reasoning were wrong,
+        // this test would itself panic instead of returning the fallback.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {})); // silence child-thread backtrace
+        let out = std::thread::scope(|s| {
+            let h = s.spawn(|| -> u32 { panic!("collector exploded") });
+            recover(h.join(), "panicky", || 7)
+        });
+        std::panic::set_hook(prev);
+        assert_eq!(out, 7);
+    }
 }
