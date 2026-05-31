@@ -99,6 +99,8 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Devices_Properties",
     # DeviceIoControl — IOCTL_STORAGE_GET_DEVICE_NUMBER (disk → physical number)
     "Win32_System_IO",
+    # TBS (TPM Base Services) — Tbsi_GetDeviceInfo: native TPM version, no WMI, no admin
+    "Win32_System_TpmBaseServices",
 ] }
 
 [target.'cfg(unix)'.dependencies]

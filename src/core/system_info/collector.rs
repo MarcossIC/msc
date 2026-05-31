@@ -19,7 +19,25 @@ pub fn collect_system_info() -> Result<SystemInfo> {
 
 /// Collect all system information in parallel with per-section timing data.
 pub fn collect_system_info_with_profile() -> Result<(SystemInfo, CollectorTimings)> {
-    collect_system_info_with_profile_progress(None)
+    // WAN probes are opt-in; the convenience wrappers default them off so a plain
+    // `collect_system_info()` never pays the external round-trip.
+    collect_system_info_with_profile_progress(None, false)
+}
+
+/// Run an opt-in WAN probe only when explicitly requested.
+///
+/// WAN lookups (public IP, internet latency) hit the network and add ~370ms to
+/// the normal `sys info` path, so they're gated behind `--wan`. When disabled we
+/// must SKIP the probe entirely — not run it and discard the result — so the cost
+/// actually leaves the critical path (the filter affects collection, not render).
+/// A skipped probe yields `None`, which the renderer omits outright: never a
+/// misleading `-` that reads as "the lookup failed".
+fn wan_probe<T>(enabled: bool, probe: impl FnOnce() -> Option<T>) -> Option<T> {
+    if enabled {
+        probe()
+    } else {
+        None
+    }
 }
 
 #[inline]
@@ -57,8 +75,13 @@ fn recover<T>(result: std::thread::Result<T>, section: &str, fallback: impl FnOn
 ///
 /// `progress`, when `Some`, is incremented once per completed section so a
 /// foreground spinner can render `(done/TOTAL_SECTIONS)`.
+///
+/// `wan` gates the external WAN probes (public IP + internet latency). When
+/// `false` (the default for a normal run) those probes are skipped entirely so
+/// the ~370ms network round-trip never lands on the critical path.
 pub fn collect_system_info_with_profile_progress(
     progress: Option<Arc<AtomicUsize>>,
+    wan: bool,
 ) -> Result<(SystemInfo, CollectorTimings)> {
     let total_start = Instant::now();
     let progress_ref = &progress; // closures borrow the param directly
@@ -66,7 +89,10 @@ pub fn collect_system_info_with_profile_progress(
     // ------ Stage 1 ------
     let s1 = std::thread::scope(|s| {
         let cpu_h = s.spawn(|| {
-            let r = timed(|| cpu::collect().unwrap_or_else(|_| cpu::get_fallback()));
+            let r = timed(|| match cpu::collect_with_subs() {
+                Ok((info, subs)) => (info, subs),
+                Err(_) => (cpu::get_fallback(), Vec::new()),
+            });
             tick(progress_ref);
             r
         });
@@ -115,13 +141,26 @@ pub fn collect_system_info_with_profile_progress(
             r
         });
         // PCIe link reader: its OWN Stage 1 thread, parallel to storage, so its
-        // ~1-4ms stays off the storage critical path. No `tick` — it's not a
-        // user-visible section, just an enrichment merged in after the join.
-        let link_h = s.spawn(|| storage::disk_link_map());
+        // ~1-4ms stays off the storage critical path. No `tick` (not a
+        // user-visible section) but DOES go through `timed` so its cost shows up
+        // as a `storage.pcie_link` sub-row — an unmeasured thread once hid a
+        // multi-second regression behind a falling Σ work.
+        let link_h = s.spawn(|| timed(storage::disk_link_map));
+        // Public-IP lookup: its OWN Stage 1 thread so the external HTTP round
+        // trip (tight timeout, skipped offline) never serializes with the WMI
+        // network query. `timed` so it surfaces as `network.public_ip`. Opt-in
+        // via `--wan`; when off, `wan_probe` skips the round-trip and the thread
+        // returns instantly (the timing row reads ~0µs, honestly "not probed").
+        let pubip_h = s.spawn(|| timed(|| wan_probe(wan, network::fetch_public_ip)));
+        // Internet (WAN) latency: its OWN Stage 1 thread (concurrent pings to
+        // 1.1.1.1). `timed` so it surfaces as `network.internet_latency` — this
+        // is the row that exposes a slow WAN probe instead of letting it inflate
+        // the wall-clock invisibly. Also gated behind `--wan`.
+        let inet_h = s.spawn(|| timed(|| wan_probe(wan, network::internet_latency)));
 
         (
             recover(cpu_h.join(), "cpu", || {
-                (cpu::get_fallback(), Duration::ZERO)
+                ((cpu::get_fallback(), Vec::new()), Duration::ZERO)
             }),
             recover(mbo_h.join(), "motherboard", || {
                 ((None, Vec::new()), Duration::ZERO)
@@ -136,19 +175,29 @@ pub fn collect_system_info_with_profile_progress(
             recover(os_h.join(), "os", || (os::get_fallback(), Duration::ZERO)),
             recover(bat_h.join(), "battery", || (None, Duration::ZERO)),
             recover(pwr_h.join(), "power_plan", || (None, Duration::ZERO)),
-            recover(link_h.join(), "disk_links", std::collections::HashMap::new),
+            recover(link_h.join(), "disk_links", || {
+                (std::collections::HashMap::new(), Duration::ZERO)
+            }),
+            recover(pubip_h.join(), "public_ip", || (None, Duration::ZERO)),
+            recover(inet_h.join(), "internet_latency", || (None, Duration::ZERO)),
         )
     });
 
-    let (cpu_info, cpu_dur) = s1.0;
+    let ((cpu_info, cpu_subs), cpu_dur) = s1.0;
     let ((motherboard_info, mbo_subs), mbo_dur) = s1.1;
     let (gpu_info, gpu_dur) = s1.2;
-    let ((network_info, net_subs), net_dur) = s1.3;
+    let ((mut network_info, net_subs), net_dur) = s1.3;
     let ((mut storage_info, stor_subs), stor_dur) = s1.4;
     let (os_info, os_dur) = s1.5;
     let (battery_info, bat_dur) = s1.6;
     let (power_plan_info, pwr_dur) = s1.7;
-    let disk_link_map = s1.8;
+    let (disk_link_map, link_dur) = s1.8;
+    let (public_ip, pubip_dur) = s1.9;
+    let (internet_latency, inet_dur) = s1.10;
+
+    // Merge the parallel external lookups into the network section.
+    network_info.public_ip = public_ip;
+    network_info.internet_latency_ms = internet_latency;
 
     // Assign each disk its REAL PCIe link by physical drive number. Only disks
     // the reader resolved are touched; others keep interface_speed = None (we
@@ -195,14 +244,21 @@ pub fn collect_system_info_with_profile_progress(
     // ------ Build timings in display order ------
     let mut t = CollectorTimings::new();
     t.sections.push(("cpu".to_string(), cpu_dur));
+    t.sections.extend(cpu_subs);
     t.sections.push(("motherboard".to_string(), mbo_dur));
     t.sections.extend(mbo_subs);
     t.sections.push(("memory".to_string(), mem_dur));
     t.sections.push(("gpu".to_string(), gpu_dur));
     t.sections.push(("network".to_string(), net_dur));
     t.sections.extend(net_subs);
+    // External network enrichments run on their own parallel threads; report
+    // them as network sub-rows so their cost is visible without inflating Σ work.
+    t.sections.push(("network.public_ip".to_string(), pubip_dur));
+    t.sections
+        .push(("network.internet_latency".to_string(), inet_dur));
     t.sections.push(("storage".to_string(), stor_dur));
     t.sections.extend(stor_subs);
+    t.sections.push(("storage.pcie_link".to_string(), link_dur));
     t.sections.push(("os".to_string(), os_dur));
     t.sections.push(("npu".to_string(), npu_dur));
     t.sections.push(("battery".to_string(), bat_dur));
@@ -274,8 +330,33 @@ fn detect_npu(cpu_model: &str) -> Option<NpuInfo> {
 
 #[cfg(test)]
 mod tests {
-    use super::recover;
+    use super::{recover, wan_probe};
     use std::time::Duration;
+
+    #[test]
+    fn wan_probe_runs_probe_when_enabled() {
+        assert_eq!(wan_probe(true, || Some(42u32)), Some(42));
+    }
+
+    #[test]
+    fn wan_probe_yields_none_when_disabled() {
+        assert_eq!(wan_probe(false, || Some(42u32)), None);
+    }
+
+    #[test]
+    fn wan_probe_does_not_invoke_probe_when_disabled() {
+        // The decisive guarantee: gating WAN OFF must SKIP the work, not run it
+        // and throw the result away. If the probe ran, the ~370ms round-trip
+        // would still hit the critical path — the whole point of the flag is to
+        // avoid it. Proving `called` stays false proves we never paid the cost.
+        let mut called = false;
+        let result = wan_probe(false, || {
+            called = true;
+            Some(1u32)
+        });
+        assert!(!called, "probe must not run when WAN is disabled");
+        assert_eq!(result, None);
+    }
 
     #[test]
     fn recover_passes_value_through_on_ok() {

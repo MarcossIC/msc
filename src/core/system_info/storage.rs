@@ -65,6 +65,7 @@ pub fn collect_with_subs() -> Result<StorageWithSubs> {
             power_on_hours,
             total_bytes_read,
             total_bytes_written,
+            wear_percent,
         ) = {
             if let Some(ref details) = disk_details {
                 (
@@ -80,11 +81,13 @@ pub fn collect_with_subs() -> Result<StorageWithSubs> {
                     details.power_on_hours,
                     details.total_bytes_read,
                     details.total_bytes_written,
+                    details.wear_percent,
                 )
             } else {
                 // Fallback to basic detection
                 (
                     detect_disk_type(&disk_name),
+                    None,
                     None,
                     None,
                     None,
@@ -114,9 +117,11 @@ pub fn collect_with_subs() -> Result<StorageWithSubs> {
             power_on_hours,
             total_bytes_read,
             total_bytes_written,
+            wear_percent,
         ) = {
             (
                 detect_disk_type(&disk_name),
+                None,
                 None,
                 None,
                 None,
@@ -170,6 +175,7 @@ pub fn collect_with_subs() -> Result<StorageWithSubs> {
             power_on_hours,
             total_bytes_read,
             total_bytes_written,
+            wear_percent,
         });
     }
 

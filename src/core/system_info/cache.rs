@@ -65,6 +65,11 @@ fn now_secs() -> u64 {
 
 /// Try to read a cached value for `key`. Returns None if cache is disabled,
 /// the entry is missing, expired, or fails to deserialize.
+///
+/// Currently unused: TPM (the former sole consumer) moved to the instant native
+/// TBS API and no longer caches. Retained for the next slow-and-stable consumer
+/// (e.g. SMART/storage), alongside the `--no-cache`/`--clear-cache` flags.
+#[allow(dead_code)]
 pub fn get<T: DeserializeOwned>(key: &str) -> Option<T> {
     if !is_enabled() {
         return None;
@@ -79,6 +84,10 @@ pub fn get<T: DeserializeOwned>(key: &str) -> Option<T> {
 }
 
 /// Store `value` under `key` with a TTL in days. No-op if cache is disabled.
+///
+/// Currently unused — see [`get`] for why the TPM consumer was removed. Kept
+/// for the next slow-and-stable metric that genuinely benefits from caching.
+#[allow(dead_code)]
 pub fn set<T: Serialize>(key: &str, value: &T, ttl_days: u64) {
     if !is_enabled() {
         return;

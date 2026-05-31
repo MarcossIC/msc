@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use crate::platform::system::windows::mbo::{
-    detect_chipset, detect_tpm_version, get_baseboard_bios, get_dimm_slot_count,
-    get_motherboard_info,
+    detect_chipset, detect_secure_boot, detect_tpm_version, get_baseboard_bios,
+    get_dimm_slot_count, get_motherboard_info,
 };
 
 pub fn collect() -> Result<MotherboardInfo> {
@@ -44,6 +44,10 @@ pub fn collect_with_subs() -> Result<(MotherboardInfo, Vec<(String, Duration)>)>
         subs.push(("motherboard.tpm".to_string(), t.elapsed()));
 
         let t = Instant::now();
+        let secure_boot = detect_secure_boot();
+        subs.push(("motherboard.secure_boot".to_string(), t.elapsed()));
+
+        let t = Instant::now();
         let dimm_slots = get_dimm_slot_count();
         subs.push(("motherboard.dimm_slots".to_string(), t.elapsed()));
 
@@ -55,6 +59,7 @@ pub fn collect_with_subs() -> Result<(MotherboardInfo, Vec<(String, Duration)>)>
             bios_version: bb.bios_version,
             chipset,
             tpm_version,
+            secure_boot,
             dimm_slots,
             pcie_slots: None,
             m2_slots_total: None,

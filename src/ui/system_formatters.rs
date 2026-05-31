@@ -1,5 +1,6 @@
 use crate::core::system_info::types::*;
 use colored::*;
+use std::collections::HashMap;
 
 /// Filter for controlling which system information sections to display
 #[derive(Debug, Clone)]
@@ -28,6 +29,91 @@ impl DisplayFilter {
             os: true,
             npu: true,
             energy: true,
+        }
+    }
+}
+
+/// One printable row inside a [`Section`].
+enum Row {
+    /// `label: value` pair. The label is right-padded (and dimmed) so that all
+    /// fields sharing the same `indent` align their values vertically.
+    Field {
+        indent: usize,
+        label: String,
+        value: String,
+    },
+    /// A line printed verbatim — sub-headers, bars, bullets, anything that is
+    /// not a plain `label: value` pair. Caller owns its indentation and color.
+    Raw(String),
+    /// A blank separator line.
+    Blank,
+}
+
+/// Accumulates the rows of a single output section and renders them with
+/// per-indent-level label alignment: within each indentation level the label
+/// column is as wide as the longest label at that level, so values line up.
+///
+/// Why per-level and not per-section: a section may mix a 2-space group
+/// (e.g. GPU `Model:`, `Vendor:`) with a 4-space sub-group (e.g. the
+/// `NVIDIA Metrics:` fields). Each group aligns against its own peers.
+struct Section {
+    rows: Vec<Row>,
+}
+
+impl Section {
+    fn new() -> Self {
+        Self { rows: Vec::new() }
+    }
+
+    /// Push an aligned `label: value` pair at the given indentation (in spaces).
+    fn field(&mut self, indent: usize, label: &str, value: impl std::fmt::Display) {
+        self.rows.push(Row::Field {
+            indent,
+            label: label.to_string(),
+            value: value.to_string(),
+        });
+    }
+
+    /// Push a verbatim line (already indented and colored by the caller).
+    fn raw(&mut self, line: impl std::fmt::Display) {
+        self.rows.push(Row::Raw(line.to_string()));
+    }
+
+    /// Push a blank separator line.
+    fn blank(&mut self) {
+        self.rows.push(Row::Blank);
+    }
+
+    fn render(&self) {
+        // Longest "label:" length per indentation level.
+        let mut widths: HashMap<usize, usize> = HashMap::new();
+        for row in &self.rows {
+            if let Row::Field { indent, label, .. } = row {
+                let len = label.chars().count() + 1; // +1 for the ':'
+                let entry = widths.entry(*indent).or_insert(0);
+                if len > *entry {
+                    *entry = len;
+                }
+            }
+        }
+
+        for row in &self.rows {
+            match row {
+                Row::Blank => println!(),
+                Row::Raw(line) => println!("{}", line),
+                Row::Field {
+                    indent,
+                    label,
+                    value,
+                } => {
+                    let width = widths[indent];
+                    // Pad BEFORE dimming: `.dimmed()` injects ANSI codes that
+                    // would corrupt the width count.
+                    let label_colon = format!("{}:", label);
+                    let padded = format!("{:<w$}", label_colon, w = width);
+                    println!("{}{}  {}", " ".repeat(*indent), padded.dimmed(), value);
+                }
+            }
         }
     }
 }
@@ -91,11 +177,14 @@ fn print_section_header(title: &str) {
 fn print_cpu_info(cpu: &CpuInfo) {
     print_section_header("CPU");
 
-    println!("  Model: {}", cpu.model);
-    println!("  Vendor: {}", cpu.vendor);
-    println!(
-        "  Cores: {} physical, {} logical",
-        cpu.physical_cores, cpu.logical_cores
+    let mut s = Section::new();
+
+    s.field(2, "Model", &cpu.model);
+    s.field(2, "Vendor", &cpu.vendor);
+    s.field(
+        2,
+        "Cores",
+        format!("{} physical, {} logical", cpu.physical_cores, cpu.logical_cores),
     );
 
     // Detect microarchitecture
@@ -105,19 +194,24 @@ fn print_cpu_info(cpu: &CpuInfo) {
     } else {
         cpu.architecture.clone()
     };
-    println!("  Architecture: {}", arch_str);
+    s.field(2, "Architecture", arch_str);
 
-    println!(
-        "  Base Frequency: {:.2} GHz",
-        cpu.frequency_mhz as f64 / 1000.0
+    s.field(
+        2,
+        "Base Frequency",
+        format!("{:.2} GHz", cpu.frequency_mhz as f64 / 1000.0),
     );
 
     if let Some(max_freq) = cpu.max_frequency_mhz {
-        println!("  Max Frequency: {:.2} GHz", max_freq as f64 / 1000.0);
+        s.field(2, "Max Frequency", format!("{:.2} GHz", max_freq as f64 / 1000.0));
     }
 
     if let Some(turbo_freq) = cpu.turbo_frequency_mhz {
-        println!("  Turbo Frequency: {:.2} GHz", turbo_freq as f64 / 1000.0);
+        s.field(
+            2,
+            "Turbo Frequency",
+            format!("{:.2} GHz", turbo_freq as f64 / 1000.0),
+        );
     }
 
     if let Some(turbo_enabled) = cpu.turbo_boost_enabled {
@@ -126,7 +220,7 @@ fn print_cpu_info(cpu: &CpuInfo) {
         } else {
             "Disabled".red()
         };
-        println!("  Turbo/Boost: {}", status);
+        s.field(2, "Turbo/Boost", status);
     }
 
     // Cache information
@@ -141,15 +235,15 @@ fn print_cpu_info(cpu: &CpuInfo) {
         cache_parts.push(format!("L3: {} KB", l3));
     }
     if !cache_parts.is_empty() {
-        println!("  Cache: {}", cache_parts.join(", "));
+        s.field(2, "Cache", cache_parts.join(", "));
     }
 
     // TDP information
     if let Some(tdp) = cpu.tdp_watts {
         if let Some(max_tdp) = cpu.max_tdp_watts {
-            println!("  TDP: {} W (Max: {} W)", tdp, max_tdp);
+            s.field(2, "TDP", format!("{} W (Max: {} W)", tdp, max_tdp));
         } else {
-            println!("  TDP: {} W", tdp);
+            s.field(2, "TDP", format!("{} W", tdp));
         }
     }
 
@@ -162,8 +256,20 @@ fn print_cpu_info(cpu: &CpuInfo) {
         } else {
             format!("{:.1}%", usage).green()
         };
-        println!("  Current Usage: {}", usage_str);
+        s.field(2, "Current Usage", usage_str);
     }
+
+    // Temperature (ACPI thermal zone — laptops run hotter than GPUs, so the
+    // thresholds sit higher than the GPU section's). Always shown so the user
+    // sees the field was probed; "-" marks the rare machine where no driver-less
+    // sensor is exposed at all.
+    let temp_str = match cpu.temperature_celsius {
+        Some(temp) if temp >= 90 => format!("{}°C", temp).red(),
+        Some(temp) if temp >= 75 => format!("{}°C", temp).yellow(),
+        Some(temp) => format!("{}°C", temp).green(),
+        None => "-".dimmed(),
+    };
+    s.field(2, "Temperature", temp_str);
 
     // Instruction set support
     let mut instruction_parts = Vec::new();
@@ -186,15 +292,29 @@ fn print_cpu_info(cpu: &CpuInfo) {
         instruction_parts.push("AES-NI");
     }
     if !instruction_parts.is_empty() {
-        println!(
-            "  Instruction Sets: {}",
-            instruction_parts.join(", ").green()
-        );
+        s.field(2, "Instruction Sets", instruction_parts.join(", ").green());
+    }
+
+    // Virtualization — two DISTINCT signals, never conflated:
+    if let Some(ref virt) = cpu.virtualization {
+        // 1) Firmware VT-x/AMD-V toggle: the actionable "can I run VMs" signal.
+        match virt.firmware_enabled {
+            Some(true) => s.field(2, "Virtualization", "Enabled (VT-x/AMD-V)".green()),
+            Some(false) => {
+                s.field(2, "Virtualization", "Disabled in firmware (VT-x/AMD-V)".yellow())
+            }
+            None => {} // WMI didn't expose it — omit, never guess.
+        }
+        // 2) Hypervisor-present bit. Honest: "active" ≠ "this is a VM" — Hyper-V,
+        // WSL2 and VBS/Memory Integrity set it on a normal Windows 11 host too.
+        if virt.hypervisor_present {
+            s.field(2, "Hypervisor", "Active (Hyper-V/VBS/WSL2 or VM)".cyan());
+        }
     }
 
     // Topology information
     if let Some(numa) = cpu.numa_nodes {
-        println!("  NUMA Nodes: {}", numa);
+        s.field(2, "NUMA Nodes", numa);
     }
 
     // AMD-specific topology
@@ -214,41 +334,52 @@ fn print_cpu_info(cpu: &CpuInfo) {
             topology_parts.push(format!("{} CCX{}", ccxs, if ccxs > 1 { "es" } else { "" }));
         }
         if !topology_parts.is_empty() {
-            println!("  AMD Topology: {}", topology_parts.join(", ").cyan());
+            s.field(2, "AMD Topology", topology_parts.join(", ").cyan());
         }
     }
+
+    s.render();
 }
 
 fn print_memory_info(mem: &MemoryInfo) {
     print_section_header("Memory (RAM)");
 
-    println!("  Total: {}", format_bytes(mem.total_bytes));
-    println!(
-        "  Available: {} ({:.1}%)",
-        format_bytes(mem.available_bytes),
-        (mem.available_bytes as f32 / mem.total_bytes as f32) * 100.0
+    let mut s = Section::new();
+
+    s.field(2, "Total", format_bytes(mem.total_bytes));
+    s.field(
+        2,
+        "Available",
+        format!(
+            "{} ({:.1}%)",
+            format_bytes(mem.available_bytes),
+            (mem.available_bytes as f32 / mem.total_bytes as f32) * 100.0
+        ),
     );
-    println!(
-        "  Used: {} ({:.1}%)",
-        format_bytes(mem.used_bytes),
-        mem.usage_percent
+    s.field(
+        2,
+        "Used",
+        format!("{} ({:.1}%)", format_bytes(mem.used_bytes), mem.usage_percent),
     );
 
     if let Some(ref ddr) = mem.ddr_type {
-        println!("  Type: {}", ddr);
+        s.field(2, "Type", ddr);
     }
 
     if let Some(speed) = mem.speed_mhz {
-        println!("  Speed: {} MHz", speed);
+        s.field(2, "Speed", format!("{} MHz", speed));
     }
 
     if !mem.modules.is_empty() {
-        let modules_str = format!(
-            "{} x {}",
-            mem.modules.len(),
-            format_bytes(mem.modules[0].capacity_bytes)
+        s.field(
+            2,
+            "Modules",
+            format!(
+                "{} x {}",
+                mem.modules.len(),
+                format_bytes(mem.modules[0].capacity_bytes)
+            ),
         );
-        println!("  Modules: {}", modules_str);
     }
 
     // Memory slots information
@@ -259,8 +390,10 @@ fn print_memory_info(mem: &MemoryInfo) {
         } else {
             format!("{} used of {} (all occupied)", used, total).red()
         };
-        println!("  Slots: {}", slots_str);
+        s.field(2, "Slots", slots_str);
     }
+
+    s.render();
 
     // Display memory prediction if available
     if let Some(ref prediction) = mem.prediction {
@@ -270,20 +403,24 @@ fn print_memory_info(mem: &MemoryInfo) {
 }
 
 fn print_memory_prediction(prediction: &MemoryPrediction) {
-    println!("  {}", "Capacity Analysis:".cyan().bold());
+    let mut s = Section::new();
+
+    s.raw(format!("  {}", "Capacity Analysis:".cyan().bold()));
 
     if prediction.minimum_guaranteed_bytes > 0 {
-        println!(
-            "    Minimum Guaranteed: {}",
-            format_bytes(prediction.minimum_guaranteed_bytes).green()
+        s.field(
+            4,
+            "Minimum Guaranteed",
+            format_bytes(prediction.minimum_guaranteed_bytes).green(),
         );
     }
 
-    println!(
-        "    Maximum Predicted: {}",
+    s.field(
+        4,
+        "Maximum Predicted",
         format_bytes(prediction.maximum_predicted_bytes)
             .bright_green()
-            .bold()
+            .bold(),
     );
 
     if let Some(smbios) = prediction.smbios_reported_bytes {
@@ -292,15 +429,15 @@ fn print_memory_prediction(prediction: &MemoryPrediction) {
         } else {
             "✗".red()
         };
-        println!(
-            "    SMBIOS Reported: {} {}",
-            format_bytes(smbios),
-            validation_mark
+        s.field(
+            4,
+            "SMBIOS Reported",
+            format!("{} {}", format_bytes(smbios), validation_mark),
         );
     }
 
     if let Some(cpu_limit) = prediction.cpu_limit_bytes {
-        println!("    CPU Limit: {}", format_bytes(cpu_limit));
+        s.field(4, "CPU Limit", format_bytes(cpu_limit));
     }
 
     let confidence_str = match prediction.confidence {
@@ -308,16 +445,18 @@ fn print_memory_prediction(prediction: &MemoryPrediction) {
         ConfidenceLevel::Medium => "Medium".to_string().yellow(),
         ConfidenceLevel::Low => "Low".to_string().red(),
     };
-    println!("    Confidence: {}", confidence_str);
+    s.field(4, "Confidence", confidence_str);
 
     // Warnings
     if !prediction.warnings.is_empty() {
-        println!();
-        println!("    {}", "Warnings:".yellow().bold());
+        s.blank();
+        s.raw(format!("    {}", "Warnings:".yellow().bold()));
         for warning in &prediction.warnings {
-            println!("      ! {}", warning.yellow());
+            s.raw(format!("      ! {}", warning.yellow()));
         }
     }
+
+    s.render();
 }
 
 fn print_gpu_info(gpus: &[GpuInfo]) {
@@ -328,9 +467,11 @@ fn print_gpu_info(gpus: &[GpuInfo]) {
         return;
     }
 
+    let mut s = Section::new();
+
     for (i, gpu) in gpus.iter().enumerate() {
         if i > 0 {
-            println!();
+            s.blank();
         }
 
         let gpu_type = if gpu.is_integrated {
@@ -338,20 +479,33 @@ fn print_gpu_info(gpus: &[GpuInfo]) {
         } else {
             ""
         };
-        println!("  Model: {}{}", gpu.name, gpu_type);
-        println!("  Vendor: {}", gpu.vendor);
+        s.field(2, "Model", format!("{}{}", gpu.name, gpu_type));
+        s.field(2, "Vendor", &gpu.vendor);
+
+        // Board assembler / laptop OEM (ASUS, MSI, Acer…), distinct from the
+        // chip vendor above. Only shown when we could parse it from the PNP ID.
+        if let Some(ref subsystem) = gpu.subsystem_vendor {
+            s.field(2, "Subsystem", subsystem);
+        }
 
         if let Some(vram) = gpu.vram_bytes {
-            let vram_str = if let Some(ref mem_type) = gpu.memory_type {
+            let mut vram_str = if let Some(ref mem_type) = gpu.memory_type {
                 format!("{} {}", format_bytes(vram), mem_type)
             } else {
                 format_bytes(vram)
             };
-            println!("  VRAM: {}", vram_str);
+            // Integrated GPUs report ONLY the fixed UMA frame buffer (the size
+            // the firmware carves out in BIOS) via AdapterRAM. They additionally
+            // borrow system RAM on demand, so this number is NOT a hard ceiling.
+            // Label it honestly without fabricating the dynamic-share figure.
+            if gpu.is_integrated {
+                vram_str = format!("{} dedicated {}", vram_str, "+ Dynamic Shared".dimmed());
+            }
+            s.field(2, "VRAM", vram_str);
         }
 
         if let Some(ref driver) = gpu.driver_version {
-            println!("  Driver Version: {}", driver);
+            s.field(2, "Driver Version", driver);
         }
 
         // Real-time metrics
@@ -363,150 +517,166 @@ fn print_gpu_info(gpus: &[GpuInfo]) {
             } else {
                 format!("{}°C", temp).green()
             };
-            println!("  Temperature: {}", temp_str);
+            s.field(2, "Temperature", temp_str);
         }
 
         if let Some(core_clock) = gpu.core_clock_mhz {
-            println!("  Core Clock: {} MHz", core_clock);
+            s.field(2, "Core Clock", format!("{} MHz", core_clock));
         }
 
         if let Some(mem_clock) = gpu.memory_clock_mhz {
-            println!("  Memory Clock: {} MHz", mem_clock);
+            s.field(2, "Memory Clock", format!("{} MHz", mem_clock));
         }
 
         if let Some(power) = gpu.power_draw_watts {
-            println!("  Power Draw: {:.1} W", power);
+            s.field(2, "Power Draw", format!("{:.1} W", power));
         }
 
         if let Some(fan_speed) = gpu.fan_speed_percent {
-            println!("  Fan Speed: {}%", fan_speed);
+            s.field(2, "Fan Speed", format!("{}%", fan_speed));
         }
 
         // NVIDIA-specific metrics
         if let Some(ref nvidia) = gpu.nvidia_metrics {
-            println!();
-            println!("  {}", "NVIDIA Metrics:".cyan().bold());
+            s.blank();
+            s.raw(format!("  {}", "NVIDIA Metrics:".cyan().bold()));
 
             if let Some(tdp) = nvidia.tdp_watts {
-                println!("    TDP: {} W", tdp);
+                s.field(4, "TDP", format!("{} W", tdp));
             }
 
             if let Some(process) = nvidia.process_nm {
-                println!("    Process: {} nm", process);
+                s.field(4, "Process", format!("{} nm", process));
             }
 
             if let Some(boost) = nvidia.clock_sm_mhz {
-                println!("    Boost Clock: {} MHz", boost);
+                s.field(4, "Boost Clock", format!("{} MHz", boost));
             }
 
             if let Some(cuda) = nvidia.cuda_cores {
-                println!("    CUDA Cores: {}", cuda);
+                s.field(4, "CUDA Cores", cuda);
             }
 
             if let Some(sm) = nvidia.sm_count {
-                println!("    SM Count: {}", sm);
+                s.field(4, "SM Count", sm);
             }
 
             if let Some(tensor) = nvidia.tensor_cores {
-                println!("    Tensor Cores: {}", tensor);
+                s.field(4, "Tensor Cores", tensor);
             }
 
             if let Some(rt) = nvidia.rt_cores {
-                println!("    RT Cores: {}", rt);
+                s.field(4, "RT Cores", rt);
             }
 
             if let (Some(gen), Some(lanes)) = (nvidia.max_pcie_generation, nvidia.max_pcie_lanes) {
-                println!("    PCIe: Gen {} x{}", gen, lanes);
+                s.field(4, "PCIe", format!("Gen {} x{}", gen, lanes));
             }
 
             if let Some(fan_rpm) = nvidia.fan_rpm {
-                println!("    Fan RPM: {}", fan_rpm);
+                s.field(4, "Fan RPM", fan_rpm);
             }
         }
 
         // AMD-specific metrics
         if let Some(ref amd) = gpu.amd_metrics {
-            println!();
-            println!("  {}", "AMD Metrics:".cyan().bold());
+            s.blank();
+            s.raw(format!("  {}", "AMD Metrics:".cyan().bold()));
 
             if let Some(shaders) = amd.shader_count {
-                println!("    Stream Processors: {}", shaders);
+                s.field(4, "Stream Processors", shaders);
             }
 
             if let Some(cus) = amd.compute_units {
-                println!("    Compute Units: {}", cus);
+                s.field(4, "Compute Units", cus);
             }
 
             if let Some(rops) = amd.rop_count {
-                println!("    ROPs: {}", rops);
+                s.field(4, "ROPs", rops);
             }
 
             if let Some(tmus) = amd.tmu_count {
-                println!("    TMUs: {}", tmus);
+                s.field(4, "TMUs", tmus);
             }
 
             if let Some(cache) = amd.infinity_cache_mb {
-                println!("    Infinity Cache: {} MB", cache);
+                s.field(4, "Infinity Cache", format!("{} MB", cache));
             }
 
             if let Some(process) = amd.process_nm {
-                println!("    Process: {} nm", process);
+                s.field(4, "Process", format!("{} nm", process));
             }
 
             if let Some(smartshift) = amd.smartshift_power_watts {
-                println!("    SmartShift Power: {:.1} W", smartshift);
+                s.field(4, "SmartShift Power", format!("{:.1} W", smartshift));
             }
         }
     }
+
+    s.render();
 }
 
 fn print_motherboard_info(mb: &MotherboardInfo) {
     print_section_header("Motherboard");
 
+    let mut s = Section::new();
     let mut has_data = false;
 
     if let Some(ref manufacturer) = mb.manufacturer {
-        println!("  Manufacturer: {}", manufacturer);
+        s.field(2, "Manufacturer", manufacturer);
         has_data = true;
     }
 
     if let Some(ref product) = mb.product {
-        println!("  Model: {}", product);
+        s.field(2, "Model", product);
         has_data = true;
     }
 
     if let Some(ref version) = mb.version {
-        println!("  Revision: {}", version);
+        s.field(2, "Revision", version);
         has_data = true;
     }
 
     if let Some(ref chipset) = mb.chipset {
-        println!("  Chipset: {}", chipset);
+        s.field(2, "Chipset", chipset);
         has_data = true;
     }
 
     if let Some(ref bios_vendor) = mb.bios_vendor {
-        println!("  BIOS Vendor: {}", bios_vendor);
+        s.field(2, "BIOS Vendor", bios_vendor);
         has_data = true;
     }
 
     if let Some(ref bios_version) = mb.bios_version {
-        println!("  BIOS Version: {}", bios_version);
+        s.field(2, "BIOS Version", bios_version);
         has_data = true;
     }
 
     if let Some(ref tpm) = mb.tpm_version {
-        println!("  TPM: {}", tpm);
+        s.field(2, "TPM", tpm);
+        has_data = true;
+    }
+
+    // Secure Boot. Enabled = green; Disabled = red (a real security downgrade);
+    // "Not supported" (legacy BIOS) is neutral/dimmed — it's a fact, not a fault.
+    if let Some(secure_boot) = mb.secure_boot {
+        use crate::core::system_info::types::SecureBootStatus;
+        let sb_str = match secure_boot {
+            SecureBootStatus::Enabled => secure_boot.to_string().green(),
+            SecureBootStatus::Disabled => secure_boot.to_string().red(),
+            SecureBootStatus::Unsupported => secure_boot.to_string().dimmed(),
+        };
+        s.field(2, "Secure Boot", sb_str);
         has_data = true;
     }
 
     if let Some(dimm_slots) = mb.dimm_slots {
-        println!("  DIMM Slots: {}", dimm_slots);
+        s.field(2, "DIMM Slots", dimm_slots);
         has_data = true;
     }
 
     if !has_data {
-        println!("  {}", "No motherboard information available".dimmed());
+        s.raw(format!("  {}", "No motherboard information available".dimmed()));
     }
 
     // PCIe slots information
@@ -516,15 +686,11 @@ fn print_motherboard_info(mb: &MotherboardInfo) {
         let available = total - occupied;
 
         let pcie_summary = if available > 0 {
-            format!(
-                "{} occupied of {} ({} available)",
-                occupied, total, available
-            )
-            .yellow()
+            format!("{} occupied of {} ({} available)", occupied, total, available).yellow()
         } else {
             format!("{} occupied of {} (all occupied)", occupied, total).red()
         };
-        println!("  PCIe Slots: {}", pcie_summary);
+        s.field(2, "PCIe Slots", pcie_summary);
     }
 
     // M.2 slots information
@@ -535,17 +701,27 @@ fn print_motherboard_info(mb: &MotherboardInfo) {
         } else {
             format!("{} used of {} (all occupied)", used, total).red()
         };
-        println!("  M.2 Slots: {}", m2_str);
+        s.field(2, "M.2 Slots", m2_str);
     }
+
+    s.render();
 }
 
 fn print_network_info(net: &NetworkInfo) {
     print_section_header("Network");
 
+    let mut s = Section::new();
+
     if !net.wifi_adapters.is_empty() {
         for wifi in &net.wifi_adapters {
-            println!("  WiFi Adapter: {}", wifi.name.bold());
-            println!("    Standard: {}", wifi.wifi_standard);
+            s.field(2, "WiFi Adapter", wifi.name.bold());
+
+            // SSID first — "which network am I on" is the most-scanned datum.
+            if let Some(ref ssid) = wifi.ssid {
+                s.field(4, "SSID", ssid.bright_cyan().bold());
+            }
+
+            s.field(4, "Standard", &wifi.wifi_standard);
 
             if !wifi.bands.is_empty() {
                 let bands_str = wifi
@@ -554,7 +730,7 @@ fn print_network_info(net: &NetworkInfo) {
                     .map(|b| b.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                println!("    Bands: {}", bands_str);
+                s.field(4, "Bands", bands_str);
             }
 
             // Current link speed
@@ -564,45 +740,38 @@ fn print_network_info(net: &NetworkInfo) {
                 } else {
                     format!("{} Mbps {}", speed, wifi.wifi_standard)
                 };
-                println!("    Link Speed: {}", speed_str.green());
+                s.field(4, "Link Speed", speed_str.green());
             }
 
             // Chipset manufacturer
             if let Some(ref manufacturer) = wifi.chipset_manufacturer {
-                println!("    Chipset: {}", manufacturer);
+                s.field(4, "Chipset", manufacturer);
             }
 
             // IPv4 address
             if let Some(ref ipv4) = wifi.ipv4_address {
-                println!("    IPv4: {}", ipv4.cyan());
+                s.field(4, "IPv4", ipv4.cyan());
             }
 
             // IPv6 address
             if let Some(ref ipv6) = wifi.ipv6_address {
-                println!("    IPv6: {}", ipv6.cyan());
+                s.field(4, "IPv6", ipv6.cyan());
             }
 
-            // Gateway latency
+            // Gateway latency (Wi-Fi tolerates more: warn ≥10, crit ≥50).
             if let Some(latency) = wifi.gateway_latency_ms {
-                let latency_str = if latency < 10 {
-                    format!("{} ms", latency).green()
-                } else if latency < 50 {
-                    format!("{} ms", latency).yellow()
-                } else {
-                    format!("{} ms", latency).red()
-                };
-                println!("    Gateway Latency: {}", latency_str);
+                s.field(4, "Gateway Latency (LAN)", format_latency(latency, 10, 50));
             }
         }
     }
 
     if !net.ethernet_adapters.is_empty() {
         if !net.wifi_adapters.is_empty() {
-            println!();
+            s.blank();
         }
 
         for eth in &net.ethernet_adapters {
-            println!("  Ethernet: {}", eth.name.bold());
+            s.field(2, "Ethernet", eth.name.bold());
 
             if let Some(speed) = eth.speed_mbps {
                 let speed_str = if speed >= 1000 {
@@ -610,29 +779,22 @@ fn print_network_info(net: &NetworkInfo) {
                 } else {
                     format!("{} Mbps", speed)
                 };
-                println!("    Speed: {}", speed_str.green());
+                s.field(4, "Speed", speed_str.green());
             }
 
             // IPv4 address
             if let Some(ref ipv4) = eth.ipv4_address {
-                println!("    IPv4: {}", ipv4.cyan());
+                s.field(4, "IPv4", ipv4.cyan());
             }
 
             // IPv6 address
             if let Some(ref ipv6) = eth.ipv6_address {
-                println!("    IPv6: {}", ipv6.cyan());
+                s.field(4, "IPv6", ipv6.cyan());
             }
 
-            // Gateway latency
+            // Gateway latency (Ethernet should be tighter: warn ≥5, crit ≥20).
             if let Some(latency) = eth.gateway_latency_ms {
-                let latency_str = if latency < 5 {
-                    format!("{} ms", latency).green()
-                } else if latency < 20 {
-                    format!("{} ms", latency).yellow()
-                } else {
-                    format!("{} ms", latency).red()
-                };
-                println!("    Gateway Latency: {}", latency_str);
+                s.field(4, "Gateway Latency (LAN)", format_latency(latency, 5, 20));
             }
         }
     }
@@ -640,7 +802,7 @@ fn print_network_info(net: &NetworkInfo) {
     // Bluetooth adapters
     if !net.bluetooth_adapters.is_empty() {
         if !net.wifi_adapters.is_empty() || !net.ethernet_adapters.is_empty() {
-            println!();
+            s.blank();
         }
 
         for bt in &net.bluetooth_adapters {
@@ -651,11 +813,11 @@ fn print_network_info(net: &NetworkInfo) {
                 status_icon.red()
             };
 
-            println!("  Bluetooth: {} {}", bt.name.bold(), status_color);
-            println!("    Version: {}", bt.version);
+            s.field(2, "Bluetooth", format!("{} {}", bt.name.bold(), status_color));
+            s.field(4, "Version", &bt.version);
 
             if let Some(ref manufacturer) = bt.manufacturer {
-                println!("    Manufacturer: {}", manufacturer);
+                s.field(4, "Manufacturer", manufacturer);
             }
         }
     }
@@ -664,18 +826,40 @@ fn print_network_info(net: &NetworkInfo) {
         && net.ethernet_adapters.is_empty()
         && net.bluetooth_adapters.is_empty()
     {
-        println!("  No network adapters detected");
+        s.raw("  No network adapters detected");
     }
+
+    // Global WAN diagnostics (best-effort external lookups; absent offline).
+    // Internet latency is the round trip to a public host (1.1.1.1) — what the
+    // online speed tests call "ping" — as opposed to the per-adapter Gateway
+    // Latency (LAN), which is just the first hop to your own router.
+    if net.internet_latency_ms.is_some() || net.public_ip.is_some() {
+        let has_adapters = !net.wifi_adapters.is_empty()
+            || !net.ethernet_adapters.is_empty()
+            || !net.bluetooth_adapters.is_empty();
+        if has_adapters {
+            s.blank();
+        }
+
+        if let Some(latency) = net.internet_latency_ms {
+            s.field(2, "Internet Latency (WAN)", format_latency(latency, 60, 150));
+        }
+        if let Some(ref ip) = net.public_ip {
+            s.field(2, "Public IP", ip.cyan());
+        }
+    }
+
+    s.render();
 }
 
 fn print_storage_info(storage: &[StorageInfo]) {
-    use colored::Colorize;
-
     print_section_header("Storage");
+
+    let mut s = Section::new();
 
     for (i, disk) in storage.iter().enumerate() {
         if i > 0 {
-            println!();
+            s.blank();
         }
 
         // Build disk title with manufacturer and model if available
@@ -688,41 +872,42 @@ fn print_storage_info(storage: &[StorageInfo]) {
             disk.name.clone()
         };
 
-        println!("  {} {}: {}", "Disk".cyan().bold(), i, disk_title.bold());
+        // Disk header keeps its own styling (cyan label + number), not a dim field.
+        s.raw(format!("  {} {}: {}", "Disk".cyan().bold(), i, disk_title.bold()));
 
         // Technology type (HDD/SSD/NVMe)
-        println!("    Type: {}", disk.disk_type.to_string().bold());
+        s.field(4, "Type", disk.disk_type.to_string().bold());
 
         // Interface (Bus type and speed)
         if let Some(ref bus_type) = disk.bus_type {
             if let Some(ref speed) = disk.interface_speed {
-                println!(
-                    "    Interface: {} - {}",
-                    bus_type,
-                    speed.to_string().green()
-                );
+                s.field(4, "Interface", format!("{} - {}", bus_type, speed.to_string().green()));
             } else {
-                println!("    Interface: {}", bus_type);
+                s.field(4, "Interface", bus_type);
             }
         } else if let Some(ref speed) = disk.interface_speed {
-            println!("    Interface: {}", speed.to_string().green());
+            s.field(4, "Interface", speed.to_string().green());
         }
 
         // File System
         if !disk.file_system.is_empty() {
-            println!("    File System: {}", disk.file_system);
+            s.field(4, "File System", &disk.file_system);
         }
 
         // Mount point and capacity
-        println!("    Mount Point: {}", disk.mount_point);
-        println!("    Capacity: {}", format_bytes(disk.total_bytes));
+        s.field(4, "Mount Point", &disk.mount_point);
+        s.field(4, "Capacity", format_bytes(disk.total_bytes));
 
         // Usage bar with percentage and free space
-        println!(
-            "    Usage: {} {:.1}% ({} free)",
-            create_usage_bar(disk.usage_percent, 20),
-            disk.usage_percent,
-            format_bytes(disk.available_bytes)
+        s.field(
+            4,
+            "Usage",
+            format!(
+                "{} {:.1}% ({} free)",
+                create_usage_bar(disk.usage_percent, 20),
+                disk.usage_percent,
+                format_bytes(disk.available_bytes)
+            ),
         );
 
         // Temperature (if available)
@@ -734,7 +919,7 @@ fn print_storage_info(storage: &[StorageInfo]) {
             } else {
                 temp.to_string().green()
             };
-            println!("    Temperature: {}°C", temp_color);
+            s.field(4, "Temperature", format!("{}°C", temp_color));
         }
 
         // Health status (if available)
@@ -745,41 +930,55 @@ fn print_storage_info(storage: &[StorageInfo]) {
                 crate::core::system_info::types::SmartStatus::Critical => "Critical".red(),
                 crate::core::system_info::types::SmartStatus::Unknown => "Unknown".normal(),
             };
-            println!("    Health: {}", status_str);
+            s.field(4, "Health", status_str);
+        }
+
+        // NVMe wear (PercentageUsed). Honest endurance estimate: 100 does NOT
+        // mean "dead" and the value may exceed 100, so we only color the trend —
+        // never imply failure.
+        if let Some(wear) = disk.wear_percent {
+            let wear_str = if wear >= 90 {
+                format!("{}%", wear).red()
+            } else if wear >= 70 {
+                format!("{}%", wear).yellow()
+            } else {
+                format!("{}%", wear).green()
+            };
+            s.field(4, "Wear", wear_str);
         }
 
         // Power-on hours (if available)
         if let Some(hours) = disk.power_on_hours {
-            println!(
-                "    Power-On Hours: {} hours ({:.1} days)",
-                hours,
-                hours as f64 / 24.0
+            s.field(
+                4,
+                "Power-On Hours",
+                format!("{} hours ({:.1} days)", hours, hours as f64 / 24.0),
             );
         }
 
         // Data written/read (if available)
         if let Some(written) = disk.total_bytes_written {
-            println!("    Data Written: {}", format_bytes(written));
+            s.field(4, "Data Written", format_bytes(written));
         }
         if let Some(read) = disk.total_bytes_read {
-            println!("    Data Read: {}", format_bytes(read));
+            s.field(4, "Data Read", format_bytes(read));
         }
 
         // Serial number and firmware (if available)
         if let Some(ref serial) = disk.serial_number {
-            println!("    Serial: {}", serial);
+            s.field(4, "Serial", serial);
         }
         if let Some(ref firmware) = disk.firmware_version {
-            println!("    Firmware: {}", firmware);
+            s.field(4, "Firmware", firmware);
         }
     }
 
     // Show expansion capacity
     #[cfg(windows)]
     {
-        println!();
         if let Ok(slots) = crate::platform::system_info_windows::get_available_storage_slots() {
-            println!("  {} ", "Expansion Capacity:".cyan().bold());
+            s.blank();
+            s.raw(format!("  {} ", "Expansion Capacity:".cyan().bold()));
 
             // SATA ports
             if let (Some(total), Some(available)) = (slots.sata_total, slots.sata_available) {
@@ -788,19 +987,20 @@ fn print_storage_info(storage: &[StorageInfo]) {
                 } else {
                     "full".yellow()
                 };
-                println!(
-                    "    SATA Ports: {} used / {} total ({})",
-                    slots.sata_used, total, status
+                s.field(
+                    4,
+                    "SATA Ports",
+                    format!("{} used / {} total ({})", slots.sata_used, total, status),
                 );
 
                 if slots.sata_hot_swap {
-                    println!("      Hot-Swap: Supported");
+                    s.field(6, "Hot-Swap", "Supported");
                 }
             }
 
             // M.2 slots with detailed information
             if !slots.m2_slots.is_empty() {
-                println!("    M.2 Slots:");
+                s.raw("    M.2 Slots:");
                 for slot in &slots.m2_slots {
                     let status = if slot.is_used {
                         "Used".yellow()
@@ -833,56 +1033,93 @@ fn print_storage_info(storage: &[StorageInfo]) {
                         String::new()
                     };
 
-                    println!(
+                    s.raw(format!(
                         "      Slot {}: {} {} {} - {}",
                         slot.slot_number, type_str, interface, form_factor, status
-                    );
+                    ));
                 }
             }
         }
     }
+
+    s.render();
 }
 
 fn print_os_info(os: &OsInfo) {
     print_section_header("Operating System");
 
-    println!("  Name: {}", os.name);
-    println!("  Version: {}", os.version);
+    let mut s = Section::new();
+
+    s.field(2, "Name", &os.name);
+    s.field(2, "Version", &os.version);
 
     if let Some(ref build) = os.build {
-        println!("  Build: {}", build);
+        s.field(2, "Build", build);
     }
 
-    println!("  Architecture: {}", os.architecture);
+    s.field(2, "Architecture", &os.architecture);
 
     if let Some(ref kernel) = os.kernel_version {
-        println!("  Kernel: {}", kernel);
+        s.field(2, "Kernel", kernel);
+    }
+
+    if let Some(uptime) = os.uptime_secs {
+        s.field(2, "Uptime", format_uptime(uptime));
+    }
+
+    s.render();
+}
+
+/// Human-readable uptime, e.g. `5d 3h 12m`, `3h 12m`, `12m 4s`.
+/// Drops trailing zero-units; falls back to seconds for very fresh boots.
+fn format_uptime(secs: u64) -> String {
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    let minutes = (secs % 3_600) / 60;
+    let seconds = secs % 60;
+
+    if days > 0 {
+        format!("{}d {}h {}m", days, hours, minutes)
+    } else if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
     }
 }
 
 fn print_npu_info(npu: &NpuInfo) {
     print_section_header("NPU (Neural Processing Unit)");
 
-    println!("  Name: {}", npu.name);
+    let mut s = Section::new();
+
+    s.field(2, "Name", &npu.name);
 
     if let Some(tops) = npu.tops {
-        println!("  Performance: {:.1} TOPS", tops);
+        s.field(
+            2,
+            "Performance",
+            format!("{:.1} TOPS {}", tops, "(Architecture Spec)".dimmed()),
+        );
     }
+
+    s.render();
 }
 
 fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPlanInfo>) {
-    use colored::Colorize;
-
     print_section_header("Energy");
+
+    let mut s = Section::new();
 
     // Determine power source
     if let Some(battery) = battery {
         if battery.is_present {
             // Laptop with battery - show detailed battery information
-            println!("  {} Battery", "Power Source:".bold());
+            s.field(2, "Power Source", "Battery");
 
-            println!();
-            println!("  {} ", "Battery Status".cyan().bold());
+            s.blank();
+            s.raw(format!("  {} ", "Battery Status".cyan().bold()));
 
             // Battery state with color and icon
             let (state_str, _state_icon) = match battery.state {
@@ -892,10 +1129,9 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
                 BatteryState::NotCharging => (battery.state.to_string().cyan(), "○"),
                 BatteryState::Unknown => (battery.state.to_string().normal(), "?"),
             };
-            print!("    Status: {}", state_str);
 
-            // Charge percentage
-            if let Some(percentage) = battery.percentage {
+            // Charge percentage appended to the status value
+            let status_value = if let Some(percentage) = battery.percentage {
                 let pct_str = if percentage >= 80 {
                     format!(" ({}%)", percentage).green()
                 } else if percentage >= 20 {
@@ -903,17 +1139,18 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
                 } else {
                     format!(" ({}%)", percentage).red()
                 };
-                println!("{}", pct_str);
+                format!("{}{}", state_str, pct_str)
             } else {
-                println!();
-            }
+                state_str.to_string()
+            };
+            s.field(4, "Status", status_value);
 
             // Time remaining or time to full
             if let Some(time_secs) = battery.time_remaining_secs {
                 if time_secs > 0 && battery.state == BatteryState::Discharging {
                     let hours = time_secs / 3600;
                     let minutes = (time_secs % 3600) / 60;
-                    println!("    Time Remaining: {}h {}m", hours, minutes);
+                    s.field(4, "Time Remaining", format!("{}h {}m", hours, minutes));
                 }
             }
 
@@ -921,7 +1158,7 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
                 if time_secs > 0 && battery.state == BatteryState::Charging {
                     let hours = time_secs / 3600;
                     let minutes = (time_secs % 3600) / 60;
-                    println!("    Time to Full Charge: {}h {}m", hours, minutes);
+                    s.field(4, "Time to Full Charge", format!("{}h {}m", hours, minutes));
                 }
             }
 
@@ -936,41 +1173,44 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
                     } else {
                         format!("{:.1} W", watts).green()
                     };
-                    println!("    Power Draw: {} (discharging)", power_str);
+                    s.field(4, "Power Draw", format!("{} (discharging)", power_str));
                 } else if rate < 0 {
                     let watts = (-rate) as f32 / 1000.0;
-                    println!("    Charging Power: {} W", format!("{:.1}", watts).green());
+                    s.field(4, "Charging Power", format!("{} W", format!("{:.1}", watts).green()));
                 }
             }
 
             // Voltage information
             if let Some(voltage) = battery.voltage_mv {
                 let volts = voltage as f32 / 1000.0;
-                print!("    Voltage: {:.2} V", volts);
-                if let Some(design_voltage) = battery.design_voltage_mv {
+                let voltage_value = if let Some(design_voltage) = battery.design_voltage_mv {
                     let design_volts = design_voltage as f32 / 1000.0;
-                    println!(" (nominal: {:.2} V)", design_volts);
+                    format!("{:.2} V (nominal: {:.2} V)", volts, design_volts)
                 } else {
-                    println!();
-                }
+                    format!("{:.2} V", volts)
+                };
+                s.field(4, "Voltage", voltage_value);
             }
 
-            println!();
-            println!("  {} ", "Battery Specifications".cyan().bold());
+            s.blank();
+            s.raw(format!("  {} ", "Battery Specifications".cyan().bold()));
 
             // Capacity in Wh (easier to understand than mWh)
-            if let (Some(design_mwh), Some(current_mwh)) = (
-                battery.design_capacity_mwh,
-                battery.full_charge_capacity_mwh,
-            ) {
+            if let (Some(design_mwh), Some(current_mwh)) =
+                (battery.design_capacity_mwh, battery.full_charge_capacity_mwh)
+            {
                 let design_wh = design_mwh as f32 / 1000.0;
                 let current_wh = current_mwh as f32 / 1000.0;
 
-                println!("    Design Capacity: {:.1} Wh", design_wh);
-                println!(
-                    "    Current Capacity: {:.1} Wh ({:.1}% of original)",
-                    current_wh,
-                    (current_wh / design_wh) * 100.0
+                s.field(4, "Design Capacity", format!("{:.1} Wh", design_wh));
+                s.field(
+                    4,
+                    "Current Capacity",
+                    format!(
+                        "{:.1} Wh ({:.1}% of original)",
+                        current_wh,
+                        (current_wh / design_wh) * 100.0
+                    ),
                 );
             }
 
@@ -995,7 +1235,7 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
                     format!("{}%", wear).red()
                 };
 
-                println!("    Battery Health: {} (wear: {})", health_str, wear_str);
+                s.field(4, "Battery Health", format!("{} (wear: {})", health_str, wear_str));
             }
 
             // Cycle count with lifecycle estimation
@@ -1009,38 +1249,38 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
                 } else {
                     (format!("{}", cycles).red(), "Consider replacement".red())
                 };
-                println!("    Cycle Count: {} cycles ({})", cycles_str, lifecycle_str);
+                s.field(4, "Cycle Count", format!("{} cycles ({})", cycles_str, lifecycle_str));
             }
 
             // Technology
             if let Some(ref tech) = battery.technology {
-                println!("    Technology: {}", tech);
+                s.field(4, "Technology", tech);
             }
 
             // Manufacturer info
             if let Some(ref mfg) = battery.manufacturer {
-                println!("    Manufacturer: {}", mfg);
+                s.field(4, "Manufacturer", mfg);
             }
 
             if let Some(ref serial) = battery.serial_number {
-                println!("    Serial Number: {}", serial);
+                s.field(4, "Serial Number", serial);
             }
 
             if let Some(ref date) = battery.manufacture_date {
-                println!("    Manufacture Date: {}", date);
+                s.field(4, "Manufacture Date", date);
             }
         } else {
             // Desktop PC
-            println!("  {} AC Power (Mains)", "Power Source:".bold());
+            s.field(2, "Power Source", "AC Power (Mains)");
         }
     } else {
         // Desktop PC (no battery info available)
-        println!("  {} AC Power (Mains)", "Power Source:".bold());
+        s.field(2, "Power Source", "AC Power (Mains)");
     }
 
     // Power plan (for both laptops and desktops)
     if let Some(power) = power_plan {
-        println!();
+        s.blank();
         let plan_str = match power.active_plan {
             PowerPlan::HighPerformance => power.active_plan.to_string().green(),
             PowerPlan::UltimatePerformance => power.active_plan.to_string().bright_green(),
@@ -1048,7 +1288,7 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
             PowerPlan::Balanced => power.active_plan.to_string().yellow(),
             PowerPlan::Custom(_) => power.active_plan.to_string().normal(),
         };
-        println!("  Power Plan: {}", plan_str);
+        s.field(2, "Power Plan", plan_str);
 
         if let Some(ref mode) = power.power_mode {
             let mode_str = match mode {
@@ -1057,18 +1297,18 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
                 PowerMode::BetterBattery => mode.to_string().yellow(),
                 PowerMode::BestPowerEfficiency => mode.to_string().cyan(),
             };
-            println!("  Power Mode: {}", mode_str);
+            s.field(2, "Power Mode", mode_str);
         }
 
         // CPU states
         if let (Some(min_state), Some(max_state)) =
             (power.processor_min_state, power.processor_max_state)
         {
-            println!("  CPU State: {}% min, {}% max", min_state, max_state);
+            s.field(2, "CPU State", format!("{}% min, {}% max", min_state, max_state));
         } else if let Some(min_state) = power.processor_min_state {
-            println!("  CPU Min State: {}%", min_state);
+            s.field(2, "CPU Min State", format!("{}%", min_state));
         } else if let Some(max_state) = power.processor_max_state {
-            println!("  CPU Max State: {}%", max_state);
+            s.field(2, "CPU Max State", format!("{}%", max_state));
         }
 
         // Display and sleep timeouts (show differently for laptop vs desktop)
@@ -1079,27 +1319,52 @@ fn print_energy_info(battery: Option<&BatteryInfo>, power_plan: Option<&PowerPla
             if let (Some(ac), Some(dc)) =
                 (power.display_timeout_ac_secs, power.display_timeout_dc_secs)
             {
-                let ac_str = format_timeout(ac);
-                let dc_str = format_timeout(dc);
-                println!("  Display Sleep: {} (AC), {} (Battery)", ac_str, dc_str);
+                s.field(
+                    2,
+                    "Display Sleep",
+                    format!("{} (AC), {} (Battery)", format_timeout(ac), format_timeout(dc)),
+                );
             }
 
             if let (Some(ac), Some(dc)) = (power.sleep_timeout_ac_secs, power.sleep_timeout_dc_secs)
             {
-                let ac_str = format_timeout(ac);
-                let dc_str = format_timeout(dc);
-                println!("  System Sleep: {} (AC), {} (Battery)", ac_str, dc_str);
+                s.field(
+                    2,
+                    "System Sleep",
+                    format!("{} (AC), {} (Battery)", format_timeout(ac), format_timeout(dc)),
+                );
             }
         } else {
             // Desktop: show only AC timeouts
             if let Some(timeout) = power.display_timeout_ac_secs {
-                println!("  Display Sleep: {}", format_timeout(timeout));
+                s.field(2, "Display Sleep", format_timeout(timeout));
             }
 
             if let Some(timeout) = power.sleep_timeout_ac_secs {
-                println!("  System Sleep: {}", format_timeout(timeout));
+                s.field(2, "System Sleep", format_timeout(timeout));
             }
         }
+    }
+
+    s.render();
+}
+
+/// Format a gateway latency with color thresholds. `0` means the OS reported a
+/// sub-millisecond reply (`time<1ms`), so we show `<1 ms` rather than a bare
+/// `0 ms`, which reads like "no data" instead of "blazing fast". `warn`/`crit`
+/// are the yellow/red cut-offs (Wi-Fi tolerates more latency than Ethernet).
+fn format_latency(ms: u32, warn: u32, crit: u32) -> ColoredString {
+    let label = if ms == 0 {
+        "<1 ms".to_string()
+    } else {
+        format!("{} ms", ms)
+    };
+    if ms >= crit {
+        label.red()
+    } else if ms >= warn {
+        label.yellow()
+    } else {
+        label.green()
     }
 }
 
@@ -1115,8 +1380,6 @@ fn format_timeout(secs: u32) -> String {
 
 /// Create a usage bar with ASCII characters
 fn create_usage_bar(usage_percent: f32, width: usize) -> String {
-    use colored::Colorize;
-
     let filled = ((usage_percent / 100.0) * width as f32) as usize;
     let empty = width.saturating_sub(filled);
 

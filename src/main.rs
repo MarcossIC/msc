@@ -949,6 +949,10 @@ fn build_cli() -> Command {
                             --energy    Show only Energy information (battery, power plan)\n\n\
                             Flags can be combined to show multiple components:\n\
                             --cpu --gpu    Show CPU and GPU information only\n\n\
+                            INTERNET PROBES (opt-in):\n\
+                            --wan       Also probe the internet: public IP + WAN latency.\n\
+                            Off by default — it adds a network round-trip (~370ms).\n\
+                            Skipped fields are omitted, never shown as failed.\n\n\
                             EXAMPLES:\n\
                             msc sys info              # Display all system information\n\
                             msc sys info --cpu        # Display only CPU information\n\
@@ -956,7 +960,8 @@ fn build_cli() -> Command {
                             msc sys info --cpu --gpu  # Display CPU and GPU only\n\
                             msc sys info --ram --mbo  # Display RAM and Motherboard only\n\
                             msc sys info --os         # Display only OS information\n\
-                            msc sys info --energy     # Display only Energy information"
+                            msc sys info --energy     # Display only Energy information\n\
+                            msc sys info --wan        # Include public IP + internet latency"
                         )
                         .arg(
                             Arg::new("cpu")
@@ -1030,6 +1035,12 @@ fn build_cli() -> Command {
                                 .help("With --json, emit a single-line JSON document (default is pretty-printed)")
                                 .action(clap::ArgAction::SetTrue)
                                 .requires("json"),
+                        )
+                        .arg(
+                            Arg::new("wan")
+                                .long("wan")
+                                .help("Probe the internet (public IP + WAN latency). Off by default — adds a network round-trip (~370ms)")
+                                .action(clap::ArgAction::SetTrue),
                         )
                 )
                 .subcommand(

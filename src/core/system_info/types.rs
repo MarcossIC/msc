@@ -40,8 +40,17 @@ pub struct CpuInfo {
     // Instruction set support
     pub instruction_sets: CpuInstructionSets,
 
+    // Hardware virtualization (VT-x/AMD-V firmware state + hypervisor presence).
+    // None on non-Windows / when not probed.
+    pub virtualization: Option<VirtualizationInfo>,
+
     // Usage and performance
     pub current_usage_percent: Option<f32>,
+
+    // Thermals — ACPI thermal zone (MSAcpi_ThermalZoneTemperature). Best
+    // driver-less CPU temperature available on Windows; on laptops the dominant
+    // zone tracks the SoC. None when firmware doesn't expose a usable reading.
+    pub temperature_celsius: Option<u32>,
 
     // Topology (AMD-specific)
     pub numa_nodes: Option<u32>,
@@ -59,6 +68,23 @@ pub struct CpuInstructionSets {
     pub sse4_2: bool,
     pub sha: bool,
     pub aes_ni: bool,
+}
+
+/// Hardware virtualization state. Two DISTINCT, deliberately separate signals —
+/// conflating them is the honesty trap this struct avoids.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VirtualizationInfo {
+    /// `Win32_Processor.VirtualizationFirmwareEnabled` — VT-x/AMD-V toggled ON in
+    /// the firmware (BIOS/UEFI). This is the "can I run VMs / WSL2 / Docker"
+    /// signal. Readable without admin. `None` when WMI doesn't expose it (the
+    /// property is occasionally NULL), never guessed.
+    pub firmware_enabled: Option<bool>,
+    /// CPUID leaf 1, ECX bit 31 — the "hypervisor present" bit. `true` when a
+    /// hypervisor is active on this machine. **Honesty caveat:** this is NOT a
+    /// reliable "I'm inside a VM" signal — a normal Windows 11 host with Hyper-V,
+    /// WSL2, or VBS/Memory Integrity enabled runs the OS itself atop the
+    /// hypervisor and sets this bit too. Label it as "active", not "is a VM".
+    pub hypervisor_present: bool,
 }
 
 /// Memory Information
@@ -114,6 +140,11 @@ impl std::fmt::Display for DdrType {
 pub struct GpuInfo {
     pub name: String,
     pub vendor: String,
+    /// PCI Subsystem Vendor — the board assembler / laptop OEM (ASUS, MSI,
+    /// Acer, Lenovo…), distinct from `vendor` which is the chip maker. Parsed
+    /// from the `SUBSYS_` field of the device's PNP ID. `None` when the ID has
+    /// no subsystem set or the vendor is unknown-but-unmapped is shown as raw hex.
+    pub subsystem_vendor: Option<String>,
     pub vram_bytes: Option<u64>,
     pub memory_type: Option<String>,
     pub is_integrated: bool,
@@ -195,6 +226,7 @@ pub struct MotherboardInfo {
     pub bios_version: Option<String>,
     pub chipset: Option<String>, // Chipset name (e.g., "Intel Z790", "AMD X670")
     pub tpm_version: Option<TpmVersion>, // TPM version (1.2, 2.0)
+    pub secure_boot: Option<SecureBootStatus>, // UEFI Secure Boot state (registry)
     pub dimm_slots: Option<u32>, // Total DIMM/RAM slots
     pub pcie_slots: Option<Vec<PcieSlot>>, // PCIe slot information
     pub m2_slots_total: Option<u32>, // Total M.2 slots
@@ -215,6 +247,26 @@ impl std::fmt::Display for TpmVersion {
             TpmVersion::V1_2 => write!(f, "TPM 1.2"),
             TpmVersion::V2_0 => write!(f, "TPM 2.0"),
             TpmVersion::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// UEFI Secure Boot state, read from the registry (`SecureBoot\State`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum SecureBootStatus {
+    Enabled,
+    Disabled,
+    /// No `SecureBoot\State` key — legacy BIOS / CSM boot, which simply has no
+    /// UEFI Secure Boot to report. Deliberately distinct from `Disabled`.
+    Unsupported,
+}
+
+impl std::fmt::Display for SecureBootStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SecureBootStatus::Enabled => write!(f, "Enabled"),
+            SecureBootStatus::Disabled => write!(f, "Disabled"),
+            SecureBootStatus::Unsupported => write!(f, "Not supported (legacy BIOS)"),
         }
     }
 }
@@ -254,11 +306,19 @@ pub struct NetworkInfo {
     pub wifi_adapters: Vec<WifiAdapter>,
     pub ethernet_adapters: Vec<EthernetAdapter>,
     pub bluetooth_adapters: Vec<BluetoothAdapter>,
+    /// Public/WAN IP resolved via an external echo service (best-effort, tight
+    /// timeout, `None` when offline or the lookup is skipped/fails).
+    pub public_ip: Option<String>,
+    /// Internet (WAN) round-trip latency in ms — min of a few pings to a public
+    /// anycast host. Distinct from per-adapter `gateway_latency_ms` (LAN, first
+    /// hop). `None` when offline.
+    pub internet_latency_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WifiAdapter {
     pub name: String,
+    pub ssid: Option<String>, // Connected network name; None when not associated
     pub wifi_standard: WifiStandard,
     pub bands: Vec<WifiBand>,
     pub max_speed_mbps: Option<u32>,
@@ -389,6 +449,9 @@ pub struct StorageInfo {
     pub power_on_hours: Option<u64>,
     pub total_bytes_read: Option<u64>,
     pub total_bytes_written: Option<u64>,
+    /// NVMe wear estimate (`PercentageUsed`, SMART log page 02h). `None` for
+    /// non-NVMe or when the SMART IOCTL isn't supported. May exceed 100.
+    pub wear_percent: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -517,6 +580,8 @@ pub struct OsInfo {
     pub build: Option<String>,
     pub architecture: String,
     pub kernel_version: Option<String>,
+    /// Seconds since last boot (sysinfo `System::uptime`, GetTickCount64 under the hood on Windows).
+    pub uptime_secs: Option<u64>,
 }
 
 /// NPU Information (Neural Processing Unit)

@@ -92,6 +92,10 @@ pub fn get_network_info_profiled() -> Result<(NetworkInfo, Vec<(String, Duration
         }
     }
 
+    // SSID of the connected WLAN interface (single native query, reused for any
+    // Wi-Fi adapter below — laptops virtually always have exactly one).
+    let connected_ssid = super::wifi::get_connected_ssid();
+
     let mut wifi_adapters = Vec::new();
     let mut ethernet_adapters = Vec::new();
 
@@ -152,6 +156,7 @@ pub fn get_network_info_profiled() -> Result<(NetworkInfo, Vec<(String, Duration
         if is_wifi {
             wifi_adapters.push(WifiAdapter {
                 name: description.clone(),
+                ssid: connected_ssid.clone(),
                 wifi_standard: detect_wifi_standard(&description),
                 bands: detect_wifi_bands(&detect_wifi_standard(&description)),
                 max_speed_mbps: None,
@@ -207,6 +212,10 @@ pub fn get_network_info_profiled() -> Result<(NetworkInfo, Vec<(String, Duration
             wifi_adapters,
             ethernet_adapters,
             bluetooth_adapters,
+            // Both populated by the collector via dedicated parallel threads so
+            // the external lookups stay off this section's critical path.
+            public_ip: None,
+            internet_latency_ms: None,
         },
         subs,
     ))
@@ -252,37 +261,95 @@ fn ping_ipv4(ip: &str) -> Option<u32> {
         return None;
     }
 
-    let start = Instant::now();
     let ping_output = Command::new("ping")
         .args(["-n", "1", "-w", "1000", ip])
         .output()
         .ok()?;
-    let elapsed = start.elapsed();
 
     if !ping_output.status.success() {
         return None;
     }
 
     let ping_str = String::from_utf8_lossy(&ping_output.stdout);
-    if let Some(time_line) = ping_str
-        .lines()
-        .find(|l| l.contains("time=") || l.contains("tiempo="))
-    {
-        if let Some(pos) = time_line
-            .find("time=")
-            .or_else(|| time_line.find("tiempo="))
-        {
-            let time_str = &time_line[pos..];
-            if let Some(ms_pos) = time_str.find("ms") {
-                let val = time_str[5..ms_pos].trim();
-                if let Ok(latency) = val.replace("<", "").parse::<u32>() {
-                    return Some(latency);
-                }
-            }
-        }
+    parse_ping_latency_ms(&ping_str)
+}
+
+/// Parse the latency (ms) from ONE `ping` reply line.
+///
+/// Handles both separators Windows emits after `time`/`tiempo`:
+///   * `time=11ms` -> `Some(11)`
+///   * `time<1ms`  -> `Some(0)`  (sub-millisecond; Windows prints `<`, not `=`)
+///
+/// Non-reply lines (the `...times in milli-seconds` header, the
+/// `Minimum = 0ms` footer, `Request timed out.`) carry no `time`/`tiempo` token
+/// next to an `ms`, so they yield `None` and are skipped by the callers.
+fn parse_ping_line_ms(line: &str) -> Option<u32> {
+    let idx = line.find("time").or_else(|| line.find("tiempo"))?;
+    let rest = &line[idx..];
+    let ms_pos = rest.find("ms")?;
+
+    let token = &rest[..ms_pos]; // e.g. "time<1" or "time=11"
+    if token.contains('<') {
+        return Some(0); // "<1ms" — honest sub-millisecond
+    }
+    let digits: String = token.chars().filter(|c| c.is_ascii_digit()).collect();
+    digits.parse::<u32>().ok()
+}
+
+/// Latency (ms) from a single-shot `ping`: the first parseable reply.
+///
+/// We deliberately do NOT fall back to wall-clock timing: the old code returned
+/// the `ping.exe` *process spawn* time (~15 ms) whenever parsing failed, which
+/// is exactly the `time<1ms` case — so a sub-millisecond wired gateway was
+/// reported as ~15 ms and looked SLOWER than a genuine ~11 ms Wi-Fi link. Spawn
+/// time is not network latency; when we can't read a real RTT we say so (`None`).
+fn parse_ping_latency_ms(output: &str) -> Option<u32> {
+    output.lines().find_map(parse_ping_line_ms)
+}
+
+/// Lowest successful RTT across several independent single-shot pings.
+///
+/// Taking the min strips single-sample jitter and the cold-start spike of the
+/// first packet after a Wi-Fi radio wakes, giving a stable "best case" RTT.
+/// `None` only when every ping failed/timed out — never a fabricated value.
+fn min_successful_latency(results: impl IntoIterator<Item = Option<u32>>) -> Option<u32> {
+    results.into_iter().flatten().min()
+}
+
+/// One single-shot `ping` to Cloudflare's `1.1.1.1`, returning its RTT in ms.
+fn ping_internet_once() -> Option<u32> {
+    use std::process::Command;
+
+    let out = Command::new("ping")
+        .args(["-n", "1", "-w", "1000", "1.1.1.1"])
+        .output()
+        .ok()?;
+
+    // Windows `ping` exits 0 only when the single echo replied.
+    if !out.status.success() {
+        return None;
     }
 
-    Some(elapsed.as_millis() as u32)
+    parse_ping_latency_ms(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Best-effort internet (WAN) latency: the min of 3 CONCURRENT pings to
+/// Cloudflare's `1.1.1.1` anycast resolver.
+///
+/// Concurrency is the whole point. Windows `ping` spaces successive packets
+/// ~1 second apart, so a single `ping -n 3` costs ~2s and — running on the
+/// collector's blocking thread scope — dominated the entire `sys info`
+/// wall-clock (a 738ms command ballooned to 2.10s). Three parallel `-n 1`
+/// pings cost ~one round-trip while still stripping first-packet jitter via the
+/// min. `1.1.1.1` needs no DNS (works even when resolution is broken) and is
+/// reachable from virtually everywhere. Returns `None` when offline / every
+/// echo times out — never a fabricated value.
+pub fn measure_internet_latency() -> Option<u32> {
+    let handles: Vec<_> = (0..3)
+        .map(|_| std::thread::spawn(ping_internet_once))
+        .collect();
+
+    min_successful_latency(handles.into_iter().map(|h| h.join().ok().flatten()))
 }
 
 /// Parse link speed string (e.g., "2.4 Gbps" -> 2400 Mbps) — kept for any callers
@@ -391,5 +458,69 @@ fn detect_wifi_bands(standard: &WifiStandard) -> Vec<WifiBand> {
             vec![WifiBand::Band2_4GHz, WifiBand::Band5GHz]
         }
         WifiStandard::Unknown => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ping_latency_ms;
+
+    #[test]
+    fn parses_explicit_millis() {
+        let out = "Reply from 192.168.1.1: bytes=32 time=11ms TTL=64";
+        assert_eq!(parse_ping_latency_ms(out), Some(11));
+    }
+
+    #[test]
+    fn sub_millisecond_is_zero_not_spawn_time() {
+        // The bug case: Windows prints `time<1ms` for a fast wired gateway.
+        let out = "Reply from 192.168.1.1: bytes=32 time<1ms TTL=64";
+        assert_eq!(parse_ping_latency_ms(out), Some(0));
+    }
+
+    #[test]
+    fn parses_spanish_locale() {
+        let out = "Respuesta desde 192.168.1.1: bytes=32 tiempo=7ms TTL=64";
+        assert_eq!(parse_ping_latency_ms(out), Some(7));
+        let out_sub = "Respuesta desde 192.168.1.1: bytes=32 tiempo<1ms TTL=64";
+        assert_eq!(parse_ping_latency_ms(out_sub), Some(0));
+    }
+
+    #[test]
+    fn ignores_stats_footer_and_picks_reply_line() {
+        // Full Windows output: the "Minimum = 0ms, ..." footer also contains
+        // "ms" but no time token; the reply line must be the one that wins.
+        let out = "\nPinging 192.168.1.1 with 32 bytes of data:\n\
+                   Reply from 192.168.1.1: bytes=32 time=3ms TTL=64\n\n\
+                   Ping statistics for 192.168.1.1:\n\
+                   Approximate round trip times in milli-seconds:\n\
+                   Minimum = 0ms, Maximum = 0ms, Average = 0ms";
+        assert_eq!(parse_ping_latency_ms(out), Some(3));
+    }
+
+    #[test]
+    fn no_reply_yields_none() {
+        let out = "Request timed out.";
+        assert_eq!(parse_ping_latency_ms(out), None);
+    }
+
+    #[test]
+    fn min_picks_lowest_across_concurrent_pings() {
+        // 3 concurrent single-shot pings with jitter — min strips the spike.
+        let results = [Some(46), Some(44), Some(45)];
+        assert_eq!(super::min_successful_latency(results), Some(44));
+    }
+
+    #[test]
+    fn min_ignores_failed_pings() {
+        // A timed-out ping yields None; the live replies still win.
+        let results = [None, Some(50), None];
+        assert_eq!(super::min_successful_latency(results), Some(50));
+    }
+
+    #[test]
+    fn min_of_all_failures_is_none() {
+        let results = [None, None, None];
+        assert_eq!(super::min_successful_latency(results), None);
     }
 }

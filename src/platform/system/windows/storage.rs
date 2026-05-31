@@ -20,6 +20,9 @@ pub struct DiskDetailsWindows {
     pub power_on_hours: Option<u64>,
     pub total_bytes_read: Option<u64>,
     pub total_bytes_written: Option<u64>,
+    /// NVMe wear estimate (`PercentageUsed`, log page 02h). `None` for non-NVMe
+    /// or when the SMART IOCTL isn't supported. May exceed 100 — 100 ≠ "dead".
+    pub wear_percent: Option<u8>,
 }
 
 /// Information about an M.2 slot
@@ -70,8 +73,6 @@ struct MsftStorageReliabilityCounter {
     device_id: Option<String>,
     health_status: Option<String>,
     temperature: Option<u32>,
-    read_errors_total: Option<u64>,
-    write_errors_total: Option<u64>,
     power_on_hours: Option<f64>,
 }
 
@@ -162,8 +163,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     // MSFT_StorageReliabilityCounter: filter by same DeviceId.
     let counters: Vec<MsftStorageReliabilityCounter> = wmi
         .raw_query(format!(
-            "SELECT DeviceId, HealthStatus, Temperature, ReadErrorsTotal, \
-             WriteErrorsTotal, PowerOnHours \
+            "SELECT DeviceId, HealthStatus, Temperature, PowerOnHours \
              FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{}'",
             target
         ))
@@ -201,13 +201,38 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
         None => None,
     };
 
-    let temperature = counter.as_ref().and_then(|c| c.temperature);
-    let power_on_hours = counter
+    // NVMe SMART/Health via native IOCTL (sub-ms, no admin) — the honest source
+    // for wear, host bytes, temperature and power-on hours. Falls back to the WMI
+    // counter per field when the IOCTL is unsupported (RAID/RST/vendor drivers).
+    let nvme_health = if bus_type == Some(BusType::NVMe) {
+        crate::platform::system::windows::nvme_smart::read_nvme_health(target)
+    } else {
+        None
+    };
+
+    // Temperature / power-on hours: prefer the IOCTL reading, fall back to WMI.
+    let temperature = nvme_health
         .as_ref()
-        .and_then(|c| c.power_on_hours)
-        .map(|h| h as u64);
-    let bytes_read = counter.as_ref().and_then(|c| c.read_errors_total);
-    let bytes_written = counter.as_ref().and_then(|c| c.write_errors_total);
+        .and_then(|h| h.composite_temp_c)
+        .or_else(|| counter.as_ref().and_then(|c| c.temperature));
+    let power_on_hours = nvme_health
+        .as_ref()
+        .map(|h| h.power_on_hours_u64())
+        .or_else(|| {
+            counter
+                .as_ref()
+                .and_then(|c| c.power_on_hours)
+                .map(|h| h as u64)
+        });
+
+    // Host bytes come ONLY from the IOCTL (DataUnitRead/Written). WMI exposes
+    // error COUNTS, not bytes — mapping ReadErrorsTotal/WriteErrorsTotal here was
+    // a bug (mislabeled errors as "Data Written"). None when no IOCTL data.
+    let bytes_read = nvme_health.as_ref().map(|h| h.bytes_read());
+    let bytes_written = nvme_health.as_ref().map(|h| h.bytes_written());
+
+    // NVMe wear estimate (PercentageUsed) — IOCTL only.
+    let wear_percent = nvme_health.as_ref().map(|h| h.percentage_used);
 
     // No real PCIe link data available here → compute_interface_speed returns
     // None for NVMe (generation unknown) instead of fabricating PCIe 3.0 x4.
@@ -239,6 +264,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
         power_on_hours,
         total_bytes_read: bytes_read,
         total_bytes_written: bytes_written,
+        wear_percent,
     })
 }
 
@@ -280,6 +306,7 @@ fn fallback_disk_details() -> DiskDetailsWindows {
         power_on_hours: None,
         total_bytes_read: None,
         total_bytes_written: None,
+        wear_percent: None,
     }
 }
 
@@ -398,37 +425,29 @@ pub fn get_disk_type(disk_name: &str) -> Result<DiskType> {
 /// * `Ok(StorageSlots)` - Information about available SATA and M.2 slots
 /// * `Err(MscError)` - If detection fails
 pub fn get_available_storage_slots() -> Result<StorageSlots> {
-    use std::process::Command;
-
-    // Count disks by bus type
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-PhysicalDisk | Select-Object BusType | ConvertTo-Json",
-        ])
-        .output()
-        .map_err(|e| MscError::other(format!("Failed to query storage devices: {}", e)))?;
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
+    // Count disks by bus type via direct WMI (Storage Management namespace),
+    // replacing a `Get-PhysicalDisk` PowerShell spawn. Here MSFT_PhysicalDisk
+    // exposes BusType as a number (17=NVMe, 11=SATA), so we reuse
+    // bus_type_from_num instead of matching PowerShell's string form.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct BusOnly {
+        bus_type: Option<u16>,
+    }
 
     let mut sata_used = 0u32;
     let mut m2_used = 0u32;
 
-    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&output_str) {
-        let disk_array = if json_value.is_array() {
-            json_value.as_array().unwrap()
-        } else {
-            &vec![json_value.clone()]
-        };
+    if let Ok(wmi) = WMIConnection::with_namespace_path("Root\\Microsoft\\Windows\\Storage") {
+        let disks: Vec<BusOnly> = wmi
+            .raw_query("SELECT BusType FROM MSFT_PhysicalDisk")
+            .unwrap_or_default();
 
-        for disk in disk_array {
-            if let Some(bus_type) = disk["BusType"].as_str() {
-                match bus_type {
-                    "SATA" | "ATA" | "ATAPI" => sata_used += 1,
-                    "NVMe" => m2_used += 1,
-                    _ => {}
-                }
+        for disk in disks {
+            match bus_type_from_num(disk.bus_type) {
+                Some(BusType::SATA) => sata_used += 1,
+                Some(BusType::NVMe) => m2_used += 1,
+                _ => {}
             }
         }
     }
@@ -488,36 +507,25 @@ fn generate_m2_slot_details(total_slots: u32, used_slots: u32) -> Vec<M2SlotInfo
 /// This is challenging because Windows doesn't directly expose this info.
 /// We use heuristics based on chipset and SATA controllers.
 fn detect_total_sata_ports() -> Option<u32> {
-    use std::process::Command;
+    // Query SATA/IDE controllers via direct WMI (root\CIMV2) instead of forking
+    // PowerShell for a `Get-CimInstance`.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32IdeController {
+        name: Option<String>,
+    }
 
-    // Query SATA controllers from WMI
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance -ClassName Win32_IDEController | Select-Object Name, Description | ConvertTo-Json"
-        ])
-        .output()
-        .ok()?;
+    let controllers: Vec<Win32IdeController> = WMIConnection::new()
+        .ok()
+        .and_then(|wmi| wmi.raw_query("SELECT Name FROM Win32_IDEController").ok())
+        .unwrap_or_default();
 
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&output_str) {
-        let controller_array = if json_value.is_array() {
-            json_value.as_array()?
-        } else {
-            &vec![json_value.clone()]
-        };
-
-        // Count SATA/AHCI controllers and estimate ports
-        // Most SATA controllers have 6 ports, some have 4 or 8
-        let controller_count = controller_array.len() as u32;
-
-        if controller_count > 0 {
-            // Conservative estimate: 4 ports per controller
-            // (Most modern boards have 1-2 controllers with 4-6 ports each)
-            return Some(controller_count * 4);
-        }
+    // Count SATA/AHCI controllers and estimate ports.
+    let controller_count = controllers.len() as u32;
+    if controller_count > 0 {
+        // Conservative estimate: 4 ports per controller
+        // (Most modern boards have 1-2 controllers with 4-6 ports each)
+        return Some(controller_count * 4);
     }
 
     // Fallback: typical consumer motherboard has 4-6 SATA ports
@@ -529,30 +537,33 @@ fn detect_total_sata_ports() -> Option<u32> {
 /// M.2 slots are harder to detect via software. We use educated guesses based
 /// on PCIe lane availability and common motherboard configurations.
 fn detect_total_m2_slots() -> Option<u32> {
-    use std::process::Command;
+    // Detect M.2 NVMe adapters via direct WMI (root\CIMV2). The old
+    // `Get-PnpDevice -Class 'SCSIAdapter'` maps to Win32_PnPEntity filtered by
+    // PNPClass; FriendlyName maps to Name. Pushing the filter into WQL avoids a
+    // full PnP scan and the PowerShell engine startup.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32PnpEntity {
+        name: Option<String>,
+    }
 
-    // Try to detect M.2 slots from PCI devices
-    // M.2 NVMe slots appear as PCIe devices
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-PnpDevice -Class 'SCSIAdapter' | Where-Object { $_.FriendlyName -like '*NVMe*' -or $_.FriendlyName -like '*M.2*' } | Measure-Object | Select-Object Count | ConvertTo-Json"
-        ])
-        .output()
-        .ok()?;
+    let devices: Vec<Win32PnpEntity> = WMIConnection::new()
+        .ok()
+        .and_then(|wmi| {
+            wmi.raw_query(
+                "SELECT Name FROM Win32_PnPEntity \
+                 WHERE PNPClass = 'SCSIAdapter' \
+                 AND (Name LIKE '%NVMe%' OR Name LIKE '%M.2%')",
+            )
+            .ok()
+        })
+        .unwrap_or_default();
 
-    let output_str = String::from_utf8_lossy(&output.stdout);
-
-    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&output_str) {
-        if let Some(count) = json_value["Count"].as_u64() {
-            // This gives us a hint, but slots might be empty
-            // Typical consumer boards: 1-3 M.2 slots
-            // High-end boards: 2-4 M.2 slots
-            if count > 0 {
-                return Some((count as u32).max(2)); // At least 2 if we detected any
-            }
-        }
+    // This gives us a hint, but slots might be empty.
+    // Typical consumer boards: 1-3 M.2 slots; high-end: 2-4.
+    let count = devices.len() as u32;
+    if count > 0 {
+        return Some(count.max(2)); // At least 2 if we detected any
     }
 
     // Fallback: assume 2 M.2 slots (common on modern motherboards)

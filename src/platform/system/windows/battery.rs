@@ -2,6 +2,7 @@ use crate::core::system_info::types::{
     BatteryInfo, BatteryState, BatteryTechnology, PowerMode, PowerPlan, PowerPlanInfo,
 };
 use crate::error::{MscError, Result};
+use crate::platform::system::windows::battery_ioctl;
 use serde::Deserialize;
 use wmi::WMIConnection;
 
@@ -84,7 +85,14 @@ pub fn get_battery_info() -> Result<BatteryInfo> {
         _ => Some(BatteryTechnology::Unknown),
     };
 
-    let (design_capacity, full_charge_capacity, cycle_count) = get_battery_capacity_wmi();
+    let (design_capacity, full_charge_capacity, wmi_cycle_count) = get_battery_capacity_wmi();
+
+    // Cycle count: native IOCTL_BATTERY_QUERY_INFORMATION is the documented
+    // primary (IMPROVEMENTS-V2 item 7). Fall back to the root\wmi
+    // BatteryCycleCount class when the IOCTL doesn't report it (driver/firmware
+    // that returns 0). Both paths are honest: 0/unsupported collapses to None,
+    // never a misleading "0 cycles". So the worst case stays None, not wrong.
+    let cycle_count = battery_ioctl::read_battery_cycle_count().or(wmi_cycle_count);
 
     let health = match (design_capacity, full_charge_capacity) {
         (Some(design), Some(full)) if design > 0 => {
@@ -119,78 +127,95 @@ pub fn get_battery_info() -> Result<BatteryInfo> {
     })
 }
 
-/// Get battery capacity using BatteryStaticData and BatteryFullChargedCapacity WMI classes
+/// Get battery capacity via direct WMI on the `root\wmi` namespace.
 ///
-/// These classes provide more accurate capacity information than Win32_Battery
+/// BatteryStaticData / BatteryFullChargedCapacity / BatteryCycleCount provide
+/// more accurate capacity info than Win32_Battery. Migrated off PowerShell:
+/// these live in `root\wmi` (not the default CIMV2), reached via
+/// `with_namespace_path`.
 fn get_battery_capacity_wmi() -> (Option<u32>, Option<u32>, Option<u32>) {
-    use std::process::Command;
-
-    // Try to get design capacity and full charge capacity
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "$battery = Get-WmiObject -Namespace root\\wmi -Class BatteryStaticData | Select-Object -First 1; \
-             $full = Get-WmiObject -Namespace root\\wmi -Class BatteryFullChargedCapacity | Select-Object -First 1; \
-             $cycle = Get-WmiObject -Namespace root\\wmi -Class BatteryCycleCount -ErrorAction SilentlyContinue | Select-Object -First 1; \
-             @{ \
-                 DesignedCapacity = $battery.DesignedCapacity; \
-                 FullChargedCapacity = $full.FullChargedCapacity; \
-                 CycleCount = $cycle.CycleCount \
-             } | ConvertTo-Json"
-        ])
-        .output()
-        .ok();
-
-    if let Some(output) = output {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&output_str) {
-            let design = json["DesignedCapacity"].as_u64().map(|c| c as u32);
-            let full = json["FullChargedCapacity"].as_u64().map(|c| c as u32);
-            let cycles = json["CycleCount"].as_u64().map(|c| c as u32);
-
-            return (design, full, cycles);
-        }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct BatteryStaticData {
+        designed_capacity: Option<u32>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct BatteryFullChargedCapacity {
+        full_charged_capacity: Option<u32>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct BatteryCycleCount {
+        cycle_count: Option<u32>,
     }
 
-    // Fallback: try older method
-    (None, None, None)
+    let wmi = match WMIConnection::with_namespace_path("root\\wmi") {
+        Ok(w) => w,
+        Err(_) => return (None, None, None),
+    };
+
+    let design = wmi
+        .raw_query::<BatteryStaticData>("SELECT DesignedCapacity FROM BatteryStaticData")
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .and_then(|b| b.designed_capacity);
+
+    let full = wmi
+        .raw_query::<BatteryFullChargedCapacity>(
+            "SELECT FullChargedCapacity FROM BatteryFullChargedCapacity",
+        )
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .and_then(|b| b.full_charged_capacity);
+
+    let cycles = wmi
+        .raw_query::<BatteryCycleCount>("SELECT CycleCount FROM BatteryCycleCount")
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .and_then(|b| b.cycle_count);
+
+    (design, full, cycles)
 }
 
-/// Get real-time battery power information (voltage and discharge rate)
+/// Get real-time battery power information (voltage and discharge rate) via
+/// direct WMI on `root\wmi` (BatteryStatus), replacing a PowerShell spawn.
 fn get_battery_power_info() -> (Option<u32>, Option<i32>) {
-    use std::process::Command;
-
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "$status = Get-WmiObject -Namespace root\\wmi -Class BatteryStatus | Select-Object -First 1; \
-             @{ \
-                 Voltage = $status.Voltage; \
-                 DischargeRate = $status.DischargeRate; \
-                 ChargeRate = $status.ChargeRate \
-             } | ConvertTo-Json"
-        ])
-        .output()
-        .ok();
-
-    if let Some(output) = output {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&output_str) {
-            let voltage = json["Voltage"].as_u64().map(|v| v as u32);
-
-            // DischargeRate is positive when discharging, ChargeRate when charging
-            let discharge = json["DischargeRate"].as_u64().map(|r| r as i32);
-            let charge = json["ChargeRate"].as_u64().map(|r| -(r as i32));
-
-            let rate = discharge.or(charge);
-
-            return (voltage, rate);
-        }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct BatteryStatus {
+        voltage: Option<u32>,
+        discharge_rate: Option<u32>,
+        charge_rate: Option<u32>,
     }
 
-    (None, None)
+    let wmi = match WMIConnection::with_namespace_path("root\\wmi") {
+        Ok(w) => w,
+        Err(_) => return (None, None),
+    };
+
+    let status = wmi
+        .raw_query::<BatteryStatus>(
+            "SELECT Voltage, DischargeRate, ChargeRate FROM BatteryStatus",
+        )
+        .unwrap_or_default()
+        .into_iter()
+        .next();
+
+    let status = match status {
+        Some(s) => s,
+        None => return (None, None),
+    };
+
+    // DischargeRate is positive when discharging, ChargeRate when charging.
+    let discharge = status.discharge_rate.map(|r| r as i32);
+    let charge = status.charge_rate.map(|r| -(r as i32));
+    let rate = discharge.or(charge);
+
+    (status.voltage, rate)
 }
 
 /// Get power plan information
@@ -225,20 +250,15 @@ pub fn get_power_plan_info() -> Result<PowerPlanInfo> {
         _ => PowerPlan::Custom(active_plan_name.clone()),
     };
 
-    // Try to get Windows 11 Power Mode (Best Performance, Better Performance, Better Battery, etc.)
-    let power_mode_output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Power\\User\\PowerSchemes' -Name ActiveOverlayAcPowerScheme -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ActiveOverlayAcPowerScheme"
-        ])
-        .output()
-        .ok();
-
-    let power_mode = if let Some(output) = power_mode_output {
-        let mode_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        match mode_str.to_lowercase().as_str() {
+    // Read the Windows 11 Power Mode (overlay GUID) straight from the registry
+    // via the winreg crate, instead of forking PowerShell for Get-ItemProperty.
+    // The value is a REG_SZ GUID; we lowercase + `contains` so optional braces
+    // don't matter.
+    let power_mode = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+        .open_subkey("SYSTEM\\CurrentControlSet\\Control\\Power\\User\\PowerSchemes")
+        .ok()
+        .and_then(|key| key.get_value::<String, _>("ActiveOverlayAcPowerScheme").ok())
+        .and_then(|mode_str| match mode_str.to_lowercase().as_str() {
             s if s.contains("54533251-82be-4824-96c1-47b60b740d00") => {
                 Some(PowerMode::BestPerformance)
             }
@@ -255,10 +275,7 @@ pub fn get_power_plan_info() -> Result<PowerPlanInfo> {
                 Some(PowerMode::BestPowerEfficiency)
             }
             _ => None,
-        }
-    } else {
-        None
-    };
+        });
 
     Ok(PowerPlanInfo {
         active_plan,

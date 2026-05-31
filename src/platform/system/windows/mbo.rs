@@ -78,6 +78,7 @@ pub fn get_motherboard_info() -> Result<MotherboardInfo> {
     let chipset = detect_chipset();
     let tpm_version = detect_tpm_version();
     let dimm_slots = get_dimm_slot_count();
+    let (m2_slots_total, m2_slots_used) = get_m2_slots();
 
     Ok(MotherboardInfo {
         manufacturer: bb.manufacturer,
@@ -87,11 +88,74 @@ pub fn get_motherboard_info() -> Result<MotherboardInfo> {
         bios_version: bb.bios_version,
         chipset,
         tpm_version,
+        secure_boot: detect_secure_boot(),
         dimm_slots,
         pcie_slots: None, // Would require Win32_SystemSlot query
-        m2_slots_total: None,
-        m2_slots_used: None,
+        m2_slots_total,
+        m2_slots_used,
     })
+}
+
+/// Detect M.2 slots via `Win32_SystemSlot` (direct WMI, root\CIMV2).
+///
+/// Returns `(total, used)`. Both are `None` when the firmware exposes no M.2
+/// slot — **never fabricated**. This is the honest gotcha worth knowing: the
+/// class is filled from **SMBIOS Type 9** ("System Slots"), and many laptop OEMs
+/// simply don't populate Type 9 for soldered/internal M.2 slots, so this query
+/// legitimately comes back empty on a lot of notebooks (desktops/server boards
+/// are far more reliable). When that happens we report nothing rather than guess.
+///
+/// `CurrentUsage` enum (per Microsoft docs — NOT 1/2 as folklore claims):
+///   0 Reserved · 1 Other · 2 Unknown · 3 Available · **4 In use**.
+fn get_m2_slots() -> (Option<u32>, Option<u32>) {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct Win32SystemSlot {
+        slot_designation: Option<String>,
+        current_usage: Option<u16>,
+    }
+
+    let wmi = match WMIConnection::new() {
+        Ok(w) => w,
+        Err(_) => return (None, None),
+    };
+
+    let slots: Vec<Win32SystemSlot> = match wmi
+        .raw_query("SELECT SlotDesignation, CurrentUsage FROM Win32_SystemSlot")
+    {
+        Ok(s) => s,
+        Err(_) => return (None, None),
+    };
+
+    // SMBIOS Type 9 has no dedicated "M.2" connector enum, so we match the OEM's
+    // free-form SlotDesignation string ("M.2", "M2", "NVMe").
+    let is_m2 = |d: &str| {
+        let u = d.to_ascii_uppercase();
+        u.contains("M.2") || u.contains("M2") || u.contains("NVME")
+    };
+
+    let mut total = 0u32;
+    let mut used = 0u32;
+    for slot in &slots {
+        let Some(desig) = slot.slot_designation.as_deref() else {
+            continue;
+        };
+        if !is_m2(desig) {
+            continue;
+        }
+        total += 1;
+        // Only CurrentUsage == 4 ("In use") counts as occupied. Available (3),
+        // Unknown (2) or unset don't — we'd rather undercount than overclaim.
+        if slot.current_usage == Some(4) {
+            used += 1;
+        }
+    }
+
+    if total == 0 {
+        return (None, None); // No M.2 slot exposed by firmware — don't invent one.
+    }
+
+    (Some(total), Some(used))
 }
 
 /// Detect motherboard chipset via direct WMI.
@@ -150,61 +214,211 @@ fn extract_chipset_name(device_name: &str) -> String {
     device_name.replace("(R)", "").trim().to_string()
 }
 
-/// Cache key for TPM version. TPM hardware does not change at runtime, so we
-/// cache for 30 days to avoid the ~5s WMI security-namespace cold start.
-const TPM_CACHE_KEY: &str = "tpm_version";
-const TPM_CACHE_TTL_DAYS: u64 = 30;
-
-/// Detect TPM version using PowerShell, with disk-cache (30-day TTL).
+/// Detect TPM version via the native **TBS (TPM Base Services)** API.
 ///
-/// First call queries `root\CIMV2\Security\MicrosoftTpm` (slow). Subsequent
-/// calls within TTL read from the cache (microseconds), even when the result
-/// is `None` (TPM unavailable / no admin / disabled). Use `--clear-cache` if
-/// the hardware state changed.
+/// `Tbsi_GetDeviceInfo` (tbs.dll) hands back a `TPM_DEVICE_INFO` directly — no
+/// admin, no WMI. This replaced the old `root\CIMV2\Security\MicrosoftTpm` WMI
+/// query, whose security-namespace cold start cost ~5s and dominated the
+/// uncached wall-clock. TBS answers in well under a millisecond, so the former
+/// 30-day disk cache was removed deliberately: it bought no speed and could
+/// report a stale version for up to 30 days after a BIOS/firmware change — a
+/// direct hit to the project's "never fabricate" rule for zero gain.
 pub fn detect_tpm_version() -> Option<crate::core::system_info::types::TpmVersion> {
-    use crate::core::system_info::cache;
-    use crate::core::system_info::types::TpmVersion;
-
-    // Cache stores the full Option so negatives are remembered too.
-    if let Some(cached) = cache::get::<Option<TpmVersion>>(TPM_CACHE_KEY) {
-        return cached;
-    }
-
-    let result = query_tpm_version_uncached();
-    cache::set(TPM_CACHE_KEY, &result, TPM_CACHE_TTL_DAYS);
-    result
+    let raw = query_tpm_device_info()?;
+    Some(map_tpm_version(raw))
 }
 
-fn query_tpm_version_uncached() -> Option<crate::core::system_info::types::TpmVersion> {
+/// Fetch the raw `tpmVersion` field from TBS, or `None` when no TPM is present
+/// or its device info can't be read (TBS returns a non-zero result code).
+///
+/// The `unsafe` is isolated here so the value mapping ([`map_tpm_version`])
+/// stays pure and unit-testable without touching hardware.
+fn query_tpm_device_info() -> Option<u32> {
+    use windows_sys::Win32::System::TpmBaseServices::{
+        Tbsi_GetDeviceInfo, TBS_SUCCESS, TPM_DEVICE_INFO,
+    };
+
+    let mut info = TPM_DEVICE_INFO::default();
+    let size = std::mem::size_of::<TPM_DEVICE_INFO>() as u32;
+
+    // SAFETY: `info` is a zero-initialized, correctly aligned #[repr(C)]
+    // TPM_DEVICE_INFO and `size` is exactly its byte length, which is what
+    // Tbsi_GetDeviceInfo requires. The call only writes into the buffer, and
+    // only on success; we read `info` solely on the TBS_SUCCESS path below, so
+    // it is never read while uninitialized.
+    let rc = unsafe {
+        Tbsi_GetDeviceInfo(
+            size,
+            &mut info as *mut TPM_DEVICE_INFO as *mut core::ffi::c_void,
+        )
+    };
+
+    if rc != TBS_SUCCESS {
+        return None; // No TPM / not readable — never fabricated.
+    }
+
+    Some(info.tpmVersion)
+}
+
+/// Pure mapping from the TBS `TPM_DEVICE_INFO.tpmVersion` field to our enum.
+///
+/// `1` (TPM_VERSION_12) and `2` (TPM_VERSION_20) map to the concrete versions;
+/// anything else — including `0` (TPM_VERSION_UNKNOWN) — degrades to `Unknown`,
+/// never a guessed version. No I/O, so it is covered by golden tests.
+fn map_tpm_version(raw: u32) -> crate::core::system_info::types::TpmVersion {
     use crate::core::system_info::types::TpmVersion;
-    use std::process::Command;
+    use windows_sys::Win32::System::TpmBaseServices::{TPM_VERSION_12, TPM_VERSION_20};
 
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Get-WmiObject -Namespace root\\CIMV2\\Security\\MicrosoftTpm -Class Win32_Tpm -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SpecVersion"
-        ])
-        .output()
-        .ok()?;
+    match raw {
+        TPM_VERSION_12 => TpmVersion::V1_2,
+        TPM_VERSION_20 => TpmVersion::V2_0,
+        _ => TpmVersion::Unknown,
+    }
+}
 
-    if !output.status.success() {
-        return None;
+/// Raw outcome of probing the Secure Boot registry state, kept SEPARATE from the
+/// classification so the mapping below stays pure and golden-testable without a
+/// real registry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SecureBootProbe {
+    /// `UEFISecureBootEnabled` read as a DWORD (1 = on, 0 = off per Microsoft).
+    Value(u32),
+    /// The `SecureBoot\State` key or its value is absent — legacy BIOS / CSM,
+    /// which has no UEFI Secure Boot at all.
+    NotPresent,
+    /// The registry couldn't be read (unexpected) — we refuse to guess.
+    Unreadable,
+}
+
+/// Pure mapping from a [`SecureBootProbe`] to the reported status.
+///
+/// `Value(1)` → Enabled; any other value → Disabled (the DWORD is 0/1 in
+/// practice, and anything non-1 is honestly "not enabled"). `NotPresent` means
+/// the machine booted legacy BIOS, so Secure Boot is `Unsupported`, **never** a
+/// misleading `Disabled`. `Unreadable` → `None`: undetermined, not fabricated.
+/// No I/O — covered by golden tests.
+pub fn classify_secure_boot(
+    probe: SecureBootProbe,
+) -> Option<crate::core::system_info::types::SecureBootStatus> {
+    use crate::core::system_info::types::SecureBootStatus;
+    match probe {
+        SecureBootProbe::Value(1) => Some(SecureBootStatus::Enabled),
+        SecureBootProbe::Value(_) => Some(SecureBootStatus::Disabled),
+        SecureBootProbe::NotPresent => Some(SecureBootStatus::Unsupported),
+        SecureBootProbe::Unreadable => None,
+    }
+}
+
+/// Read the UEFI Secure Boot state from the registry — no admin, no WMI.
+///
+/// `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State\UEFISecureBootEnabled`
+/// is a DWORD (1 = enabled). The `State` subkey only exists on UEFI systems, so
+/// its absence means the machine booted legacy BIOS/CSM — reported as
+/// `Unsupported`, never a misleading "Disabled". The registry I/O is isolated
+/// here so [`classify_secure_boot`] stays pure and unit-testable.
+#[cfg(windows)]
+pub fn detect_secure_boot() -> Option<crate::core::system_info::types::SecureBootStatus> {
+    use std::io::ErrorKind;
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let probe = match hklm.open_subkey(r"SYSTEM\CurrentControlSet\Control\SecureBoot\State") {
+        Ok(key) => match key.get_value::<u32, _>("UEFISecureBootEnabled") {
+            Ok(v) => SecureBootProbe::Value(v),
+            Err(e) if e.kind() == ErrorKind::NotFound => SecureBootProbe::NotPresent,
+            Err(_) => SecureBootProbe::Unreadable,
+        },
+        Err(e) if e.kind() == ErrorKind::NotFound => SecureBootProbe::NotPresent,
+        Err(_) => SecureBootProbe::Unreadable,
+    };
+    classify_secure_boot(probe)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_tpm_version;
+    use super::{classify_secure_boot, SecureBootProbe};
+    use crate::core::system_info::types::SecureBootStatus;
+    use crate::core::system_info::types::TpmVersion;
+    use windows_sys::Win32::System::TpmBaseServices::{
+        TPM_VERSION_12, TPM_VERSION_20, TPM_VERSION_UNKNOWN,
+    };
+
+    #[test]
+    fn maps_version_1_2() {
+        assert_eq!(map_tpm_version(TPM_VERSION_12), TpmVersion::V1_2);
     }
 
-    let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    if version_str.is_empty() {
-        return None;
+    #[test]
+    fn maps_version_2_0() {
+        assert_eq!(map_tpm_version(TPM_VERSION_20), TpmVersion::V2_0);
     }
 
-    // Parse version string (e.g., "1.2, 2", "2.0")
-    if version_str.starts_with("2.") || version_str.contains(", 2") || version_str == "2" {
-        Some(TpmVersion::V2_0)
-    } else if version_str.starts_with("1.2") || version_str.contains("1.2") {
-        Some(TpmVersion::V1_2)
-    } else {
-        Some(TpmVersion::Unknown)
+    #[test]
+    fn maps_tbs_unknown_constant_to_unknown() {
+        assert_eq!(map_tpm_version(TPM_VERSION_UNKNOWN), TpmVersion::Unknown);
+    }
+
+    #[test]
+    fn maps_out_of_spec_value_to_unknown() {
+        // Honesty: any value the ABI doesn't define must degrade to Unknown,
+        // never panic and never guess a version.
+        assert_eq!(map_tpm_version(7), TpmVersion::Unknown);
+    }
+
+    #[test]
+    fn secure_boot_value_1_is_enabled() {
+        assert_eq!(
+            classify_secure_boot(SecureBootProbe::Value(1)),
+            Some(SecureBootStatus::Enabled)
+        );
+    }
+
+    #[test]
+    fn secure_boot_value_0_is_disabled() {
+        assert_eq!(
+            classify_secure_boot(SecureBootProbe::Value(0)),
+            Some(SecureBootStatus::Disabled)
+        );
+    }
+
+    #[test]
+    fn secure_boot_non_1_value_is_disabled_not_enabled() {
+        // Anything that isn't exactly 1 is honestly "not enabled".
+        assert_eq!(
+            classify_secure_boot(SecureBootProbe::Value(2)),
+            Some(SecureBootStatus::Disabled)
+        );
+    }
+
+    #[test]
+    fn secure_boot_absent_key_is_unsupported_not_disabled() {
+        // The crux of the honesty rule: a legacy-BIOS machine has NO Secure Boot
+        // to disable. Reporting "Disabled" there would be a lie.
+        assert_eq!(
+            classify_secure_boot(SecureBootProbe::NotPresent),
+            Some(SecureBootStatus::Unsupported)
+        );
+    }
+
+    #[test]
+    fn secure_boot_unreadable_is_none_never_fabricated() {
+        // Couldn't read it → report nothing, never a plausible guess.
+        assert_eq!(classify_secure_boot(SecureBootProbe::Unreadable), None);
+    }
+
+    /// Hardware probe (parity with the NVMe/battery dumps): prints the real
+    /// Secure Boot status + CPUID hypervisor bit on THIS machine. Not an
+    /// assertion — values are machine-specific. Run with:
+    /// `cargo test --lib mbo::tests::dump_security_state -- --ignored --nocapture`
+    #[test]
+    #[ignore = "hardware probe, prints machine-specific security state"]
+    fn dump_security_state() {
+        use super::detect_secure_boot;
+        use crate::platform::system::windows::cpu::detect_hypervisor_present;
+        println!("Secure Boot       : {:?}", detect_secure_boot());
+        println!("Hypervisor present: {}", detect_hypervisor_present());
     }
 }
 

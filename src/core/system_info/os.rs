@@ -9,6 +9,7 @@ pub fn collect() -> Result<OsInfo> {
         build: None, // Could get from platform-specific code
         architecture: std::env::consts::ARCH.to_string(),
         kernel_version: System::kernel_version(),
+        uptime_secs: Some(System::uptime()),
     })
 }
 
@@ -19,5 +20,6 @@ pub fn get_fallback() -> OsInfo {
         build: None,
         architecture: std::env::consts::ARCH.to_string(),
         kernel_version: None,
+        uptime_secs: None,
     }
 }

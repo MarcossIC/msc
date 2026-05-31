@@ -1,14 +1,16 @@
 // Windows system information modules
 
 pub mod battery;
-pub mod core;
+pub mod battery_ioctl;
 pub mod cpu;
 pub mod gpu;
 pub mod mbo;
 pub mod network;
+pub mod nvme_smart;
 pub mod pcie_link;
 pub mod ram;
 pub mod storage;
+pub mod wifi;
 
 // Re-exports for backward compatibility
 pub use storage::{

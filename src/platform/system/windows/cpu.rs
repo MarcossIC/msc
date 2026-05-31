@@ -1,6 +1,10 @@
 use crate::error::{MscError, Result};
 use serde::Deserialize;
 #[cfg(windows)]
+use crate::core::system_info::types::{CpuInstructionSets, VirtualizationInfo};
+#[cfg(windows)]
+use std::time::{Duration, Instant};
+#[cfg(windows)]
 use wmi::WMIConnection;
 
 #[derive(Deserialize, Debug)]
@@ -12,6 +16,8 @@ struct Win32Processor {
     l3_cache_size: Option<u32>, // KB
     _number_of_cores: Option<u32>,
     _number_of_logical_processors: Option<u32>,
+    // VT-x/AMD-V enabled in firmware. NULL on some systems → Option.
+    virtualization_firmware_enabled: Option<bool>,
 }
 
 /// CPU Details returned from Windows-specific queries
@@ -21,14 +27,17 @@ pub struct CpuDetailsWindows {
     pub l2_cache_kb: Option<u32>,
     pub l3_cache_kb: Option<u32>,
     pub numa_nodes: Option<u32>,
+    /// `Win32_Processor.VirtualizationFirmwareEnabled` — VT-x/AMD-V on in BIOS.
+    pub virtualization_firmware_enabled: Option<bool>,
 }
 
-/// Get CPU additional details using WMI
+/// Get CPU additional details using a CALLER-OWNED WMI connection.
+///
+/// Takes `&WMIConnection` (instead of opening its own) so the processor query and
+/// the NUMA count reuse the same `root\cimv2` handle as the rest of the CPU
+/// collection — one COM/WMI handshake instead of several.
 #[cfg(windows)]
-pub fn get_cpu_details() -> Result<CpuDetailsWindows> {
-    let wmi_con = WMIConnection::new()
-        .map_err(|e| MscError::other(format!("Failed to connect to WMI: {}", e)))?;
-
+pub fn get_cpu_details(wmi_con: &WMIConnection) -> Result<CpuDetailsWindows> {
     let processors: Vec<Win32Processor> = wmi_con
         .query()
         .map_err(|e| MscError::other(format!("WMI query failed: {}", e)))?;
@@ -39,9 +48,10 @@ pub fn get_cpu_details() -> Result<CpuDetailsWindows> {
     let turbo_enabled = processor.and_then(|p| p.turbo_mode_enabled);
     let l2_cache_kb = processor.and_then(|p| p.l2_cache_size);
     let l3_cache_kb = processor.and_then(|p| p.l3_cache_size);
+    let virtualization_firmware_enabled = processor.and_then(|p| p.virtualization_firmware_enabled);
 
-    // Get NUMA node count
-    let numa_nodes = get_numa_node_count().ok();
+    // NUMA node count — reuses the same connection.
+    let numa_nodes = get_numa_node_count(wmi_con).ok();
 
     Ok(CpuDetailsWindows {
         max_frequency_mhz: max_frequency,
@@ -49,6 +59,7 @@ pub fn get_cpu_details() -> Result<CpuDetailsWindows> {
         l2_cache_kb,
         l3_cache_kb,
         numa_nodes,
+        virtualization_firmware_enabled,
     })
 }
 
@@ -59,8 +70,9 @@ pub fn get_cpu_details() -> Result<CpuDetailsWindows> {
     ))
 }
 
-/// Get NUMA node count via direct WMI (no PowerShell cold start).
-fn get_numa_node_count() -> Result<u32> {
+/// Get NUMA node count over a caller-owned WMI connection (no extra handshake).
+#[cfg(windows)]
+fn get_numa_node_count(wmi_con: &WMIConnection) -> Result<u32> {
     #[derive(Deserialize)]
     #[serde(rename_all = "PascalCase")]
     struct Win32NumaNode {
@@ -68,12 +80,87 @@ fn get_numa_node_count() -> Result<u32> {
         _name: Option<String>,
     }
 
-    let wmi_con =
-        WMIConnection::new().map_err(|e| MscError::other(format!("WMI connect failed: {}", e)))?;
     let nodes: Vec<Win32NumaNode> = wmi_con
         .query()
         .map_err(|e| MscError::other(format!("WMI query failed: {}", e)))?;
     Ok(nodes.len().max(1) as u32)
+}
+
+/// Collect all Windows-specific CPU enrichment over ONE shared WMI connection,
+/// with per-phase sub-timings for the profiler.
+///
+/// Before this, the processor query, the NUMA count, and the thermal perf counter
+/// each opened their OWN `WMIConnection` — 3 separate COM/WMI handshakes for data
+/// that all lives in `root\cimv2`. Now we open it once and reuse it.
+///
+/// The returned subs (`cpu.wmi_details`, `cpu.temp`) make each phase visible in
+/// the profile. This matters: the thermal perf-counter class
+/// (`Win32_PerfFormattedData_*`) triggers a multi-second cold-start the FIRST time
+/// any process queries a performance counter in a Windows session — `cpu.temp` is
+/// the row that exposes that instead of letting it inflate `cpu` invisibly.
+#[cfg(windows)]
+pub fn collect_details_profiled(
+    cpu_brand: &str,
+    physical_cores: usize,
+) -> (
+    Option<CpuDetailsWindows>,
+    Option<u32>,
+    CpuInstructionSets,
+    AmdTopology,
+    Option<VirtualizationInfo>,
+    Vec<(String, Duration)>,
+) {
+    let mut subs = Vec::with_capacity(2);
+
+    // Pure CPUID / pattern match — microseconds, no WMI, not worth a sub-row.
+    let instruction_sets = detect_cpu_instruction_sets();
+    let amd_topology = detect_amd_topology(cpu_brand, physical_cores);
+    // CPUID hypervisor-present bit — pure, sub-microsecond.
+    let hypervisor_present = detect_hypervisor_present();
+
+    // One `root\cimv2` connection shared by every query below.
+    let con = WMIConnection::new().ok();
+
+    let t = Instant::now();
+    let details = con.as_ref().and_then(|c| get_cpu_details(c).ok());
+    subs.push(("cpu.wmi_details".to_string(), t.elapsed()));
+
+    let t = Instant::now();
+    let temperature = con.as_ref().and_then(get_cpu_temperature);
+    subs.push(("cpu.temp".to_string(), t.elapsed()));
+
+    // Combine the firmware flag (WMI) with the hypervisor bit (CPUID). Always
+    // Some on Windows: the CPUID bit is always readable even when WMI omits the
+    // firmware flag.
+    let virtualization = Some(VirtualizationInfo {
+        firmware_enabled: details.as_ref().and_then(|d| d.virtualization_firmware_enabled),
+        hypervisor_present,
+    });
+
+    (
+        details,
+        temperature,
+        instruction_sets,
+        amd_topology,
+        virtualization,
+        subs,
+    )
+}
+
+/// Read the CPUID "hypervisor present" bit (leaf 1, ECX bit 31).
+///
+/// `true` means a hypervisor is active on this machine — but NOT necessarily a
+/// VM: a Windows 11 host with Hyper-V, WSL2, or VBS/Memory Integrity enabled runs
+/// the OS itself atop the hypervisor and sets the bit too. The caller labels it
+/// honestly as "active", never "is a VM". Pure CPUID, no WMI, no admin.
+#[cfg(windows)]
+pub fn detect_hypervisor_present() -> bool {
+    use raw_cpuid::CpuId;
+
+    CpuId::new()
+        .get_feature_info()
+        .map(|f| f.has_hypervisor())
+        .unwrap_or(false)
 }
 
 /// Detect CPU instruction set support using CPUID
@@ -103,6 +190,99 @@ pub fn detect_cpu_instruction_sets() -> crate::core::system_info::types::CpuInst
     }
 
     instruction_sets
+}
+
+/// Convert a `MSAcpi_ThermalZoneTemperature.CurrentTemperature` reading (tenths
+/// of a Kelvin) to whole degrees Celsius, rejecting implausible values.
+///
+/// Firmware that doesn't truly support the sensor commonly reports the absolute
+/// placeholder `2732` (≈0 °C / 273.2 K) or wild values, so we keep only readings
+/// inside a sane CPU range (1–120 °C) and discard everything else as "no data".
+fn tenths_kelvin_to_celsius(tenths_kelvin: u32) -> Option<u32> {
+    // °C = K - 273.15; here K = tenths_kelvin / 10.
+    let celsius = (tenths_kelvin as f64 / 10.0) - 273.15;
+    if (1.0..=120.0).contains(&celsius) {
+        Some(celsius.round() as u32)
+    } else {
+        None
+    }
+}
+
+/// Read the CPU/SoC temperature from the ACPI thermal zone, driver-less.
+///
+/// There is no driver-less way to read the exact AMD Tctl / Intel DTS sensor, so
+/// we use the ACPI thermal zone, which on laptops tracks the SoC closely. When
+/// several zones exist we take the **hottest** plausible reading (the active
+/// thermal concern).
+///
+/// Two providers expose the same zones, tried in order:
+///   1. `Win32_PerfFormattedData_Counters_ThermalZoneInformation` (`root\cimv2`)
+///      — readable by a NORMAL user. `HighPrecisionTemperature` is tenths of a
+///      Kelvin, `Temperature` is whole Kelvin. This is the one that actually
+///      returns data on locked-down machines.
+///   2. `MSAcpi_ThermalZoneTemperature` (`root\wmi`) — same data, but the class
+///      returns ACCESS DENIED unless `sys info` runs elevated. Only useful as a
+///      fallback when the perf counter is empty AND we happen to be elevated.
+///
+/// Returns `None` only when neither provider yields a usable reading.
+#[cfg(windows)]
+pub fn get_cpu_temperature(wmi: &WMIConnection) -> Option<u32> {
+    // Primary: thermal-zone perf counter (no elevation required), on the shared
+    // `root\cimv2` connection passed in by the caller.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct ThermalZonePerf {
+        temperature: Option<u32>,                // whole Kelvin
+        high_precision_temperature: Option<u32>, // tenths of a Kelvin
+    }
+
+    let zones: Vec<ThermalZonePerf> = wmi
+        .raw_query(
+            "SELECT Temperature, HighPrecisionTemperature \
+             FROM Win32_PerfFormattedData_Counters_ThermalZoneInformation",
+        )
+        .unwrap_or_default();
+
+    let hottest = zones
+        .into_iter()
+        .filter_map(|z| {
+            // Prefer the tenths-of-Kelvin field; fall back to whole Kelvin
+            // (scaled to tenths) so the same converter/range check applies.
+            z.high_precision_temperature
+                .filter(|&v| v > 0)
+                .or_else(|| z.temperature.map(|k| k.saturating_mul(10)))
+                .and_then(tenths_kelvin_to_celsius)
+        })
+        .max();
+
+    if hottest.is_some() {
+        return hottest;
+    }
+
+    // Fallback: MSAcpi_ThermalZoneTemperature on root\wmi (elevated only). This is
+    // a DIFFERENT namespace, so it gets its own connection — but only when the
+    // perf counter above came back empty.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    struct MSAcpiThermalZoneTemperature {
+        current_temperature: Option<u32>, // tenths of a Kelvin
+    }
+
+    let wmi_acpi = WMIConnection::with_namespace_path("root\\wmi").ok()?;
+    let zones: Vec<MSAcpiThermalZoneTemperature> = wmi_acpi
+        .raw_query("SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature")
+        .unwrap_or_default();
+
+    zones
+        .into_iter()
+        .filter_map(|z| z.current_temperature)
+        .filter_map(tenths_kelvin_to_celsius)
+        .max()
+}
+
+#[cfg(not(windows))]
+pub fn get_cpu_temperature() -> Option<u32> {
+    None
 }
 
 /// AMD CPU Topology Information
@@ -179,5 +359,32 @@ pub fn detect_amd_topology(cpu_model: &str, physical_cores: usize) -> AmdTopolog
         chiplet_count,
         ccd_count,
         ccx_count,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tenths_kelvin_to_celsius;
+
+    #[test]
+    fn converts_plausible_readings() {
+        // 3132 tenths-K = 313.2 K = 40.05 °C -> 40
+        assert_eq!(tenths_kelvin_to_celsius(3132), Some(40));
+        // 3431 tenths-K = 343.1 K = 69.95 °C -> 70
+        assert_eq!(tenths_kelvin_to_celsius(3431), Some(70));
+        // 2982 tenths-K = 298.2 K = 25.05 °C -> 25
+        assert_eq!(tenths_kelvin_to_celsius(2982), Some(25));
+    }
+
+    #[test]
+    fn rejects_zero_celsius_placeholder() {
+        // 2732 tenths-K ≈ 0.05 °C — the classic "unsupported" sentinel.
+        assert_eq!(tenths_kelvin_to_celsius(2732), None);
+    }
+
+    #[test]
+    fn rejects_out_of_range_values() {
+        assert_eq!(tenths_kelvin_to_celsius(0), None); // absurd low
+        assert_eq!(tenths_kelvin_to_celsius(5000), None); // 226.85 °C — absurd high
     }
 }

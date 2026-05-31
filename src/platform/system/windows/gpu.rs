@@ -1,7 +1,7 @@
-use super::core::run_powershell_json;
 use crate::core::system_info::types::{AmdGpuMetrics, GpuInfo, NvidiaGpuMetrics};
 use crate::error::{MscError, Result};
 use serde::Deserialize;
+use wmi::WMIConnection;
 
 #[derive(Debug, Default)]
 struct GpuTelemetry {
@@ -25,11 +25,13 @@ enum GpuVendor {
 }
 
 #[derive(Debug, Deserialize)]
-struct VideoControllerPs {
-    #[serde(rename = "Name")]
-    name: String,
+#[serde(rename_all = "PascalCase")]
+struct Win32VideoController {
+    name: Option<String>,
     #[serde(rename = "AdapterRAM")]
     adapter_ram: Option<u64>,
+    #[serde(rename = "PNPDeviceID")]
+    pnp_device_id: Option<String>,
 }
 
 fn is_integrated_gpu(name: &str, vendor: &GpuVendor) -> bool {
@@ -51,6 +53,60 @@ fn detect_vendor(name: &str) -> GpuVendor {
         GpuVendor::Intel
     } else {
         GpuVendor::Unknown
+    }
+}
+
+/// Extract the PCI **Subsystem Vendor** from a Windows PNP device ID and map it
+/// to a board-partner / OEM name.
+///
+/// The PNP ID looks like `PCI\VEN_10DE&DEV_28E0&SUBSYS_12345678&REV_A1`, where
+/// `SUBSYS_` is followed by 8 hex digits: the high 4 are the subsystem *device*
+/// id and the **low 4 are the subsystem VENDOR id** — the assembler we want.
+/// Returns `None` when there's no `SUBSYS_` token or the subsystem vendor is
+/// unset (`0000`). Unknown-but-present ids are surfaced as raw hex rather than a
+/// fabricated name (brutal honesty: never invent a brand we can't prove).
+fn parse_subsystem_vendor(pnp_id: &str) -> Option<String> {
+    let upper = pnp_id.to_ascii_uppercase();
+    let after = upper.split("SUBSYS_").nth(1)?;
+    let subsys: String = after.chars().take(8).collect();
+    if subsys.len() < 8 {
+        return None;
+    }
+    let vendor_id = u16::from_str_radix(&subsys[4..8], 16).ok()?;
+    if vendor_id == 0x0000 {
+        return None; // No subsystem vendor programmed.
+    }
+    Some(subsystem_vendor_name(vendor_id))
+}
+
+/// Map a PCI subsystem vendor id to a known assembler/OEM. Unknown ids fall back
+/// to their raw hex form so we never claim a brand we can't verify.
+fn subsystem_vendor_name(id: u16) -> String {
+    match id {
+        0x1025 => "Acer".to_string(),
+        0x1028 => "Dell".to_string(),
+        0x1043 => "ASUS".to_string(),
+        0x103C => "HP".to_string(),
+        0x1414 => "Microsoft".to_string(),
+        0x144D => "Samsung".to_string(),
+        0x1458 => "Gigabyte".to_string(),
+        0x1462 => "MSI".to_string(),
+        0x1558 => "Clevo".to_string(),
+        0x1849 => "ASRock".to_string(),
+        0x17AA => "Lenovo".to_string(),
+        0x1A58 => "Razer".to_string(),
+        0x1B4C => "Galax / KFA2".to_string(),
+        0x1569 => "Palit".to_string(),
+        0x196E => "PNY".to_string(),
+        0x19DA => "Zotac".to_string(),
+        0x3842 => "EVGA".to_string(),
+        0x148C => "PowerColor".to_string(),
+        0x1DA2 => "Sapphire".to_string(),
+        // Reference / Founders designs carry the chip vendor as the subsystem.
+        0x10DE => "NVIDIA (reference)".to_string(),
+        0x1002 => "AMD (reference)".to_string(),
+        0x8086 => "Intel (reference)".to_string(),
+        other => format!("0x{other:04X}"),
     }
 }
 
@@ -123,39 +179,53 @@ fn collect_amd_metrics(gpu_name: &str, adapter_ram: Option<u64>) -> GpuTelemetry
     }
 }
 
-/// Get GPU information using PowerShell
+/// Get GPU information via direct WMI (Win32_VideoController, root\CIMV2).
+///
+/// Migrated off PowerShell: spawning `powershell.exe` only to run a
+/// `Get-CimInstance` cost 300ms-1s of engine startup on every `sys info`.
+/// The `wmi` crate hits the exact same class in microseconds.
 pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
-    let raw: serde_json::Value = run_powershell_json(
-        "Get-CimInstance Win32_VideoController \
-         | Select Name, AdapterRAM \
-         | ConvertTo-Json",
-    )?;
+    let wmi =
+        WMIConnection::new().map_err(|e| MscError::other(format!("WMI connect failed: {e}")))?;
 
-    let controllers: Vec<VideoControllerPs> = match raw {
-        serde_json::Value::Array(arr) => serde_json::from_value(serde_json::Value::Array(arr))?,
-        value => vec![serde_json::from_value(value)?],
-    };
+    let controllers: Vec<Win32VideoController> = wmi
+        .raw_query("SELECT Name, AdapterRAM, PNPDeviceID FROM Win32_VideoController")
+        .map_err(|e| MscError::other(format!("WMI query failed: {e}")))?;
 
     let mut gpus = Vec::new();
     let mut nvidia_index = 0u32;
 
     for gpu in controllers {
-        if gpu.name.contains("Basic Display") || gpu.name.contains("Microsoft Basic") {
+        // A row with no name is unusable; skip rather than fail the whole query.
+        let name = match gpu.name {
+            Some(n) if !n.is_empty() => n,
+            _ => continue,
+        };
+
+        if name.contains("Basic Display") || name.contains("Microsoft Basic") {
             continue;
         }
 
-        let vendor = detect_vendor(&gpu.name);
-        let is_integrated = is_integrated_gpu(&gpu.name, &vendor);
+        let vendor = detect_vendor(&name);
+        let is_integrated = is_integrated_gpu(&name, &vendor);
+
+        // The chip vendor is in `vendor`; the *board assembler* (ASUS, MSI,
+        // laptop OEM…) lives in the PCI subsystem vendor inside the PNP ID.
+        let subsystem_vendor = gpu
+            .pnp_device_id
+            .as_deref()
+            .and_then(parse_subsystem_vendor);
 
         let telemetry = match vendor {
             GpuVendor::Nvidia => collect_nvidia_metrics(&mut nvidia_index, gpu.adapter_ram),
-            GpuVendor::Amd => collect_amd_metrics(&gpu.name, gpu.adapter_ram),
+            GpuVendor::Amd => collect_amd_metrics(&name, gpu.adapter_ram),
             _ => GpuTelemetry::default(),
         };
 
         gpus.push(GpuInfo {
-            name: gpu.name,
+            name,
             vendor: format!("{vendor:?}"),
+            subsystem_vendor,
             vram_bytes: telemetry.vram_bytes,
             memory_type: telemetry.memory_type,
             is_integrated,

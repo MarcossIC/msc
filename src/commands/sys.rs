@@ -26,6 +26,9 @@ fn execute_info(matches: &ArgMatches) -> Result<()> {
     let clear_cache = matches.get_flag("clear-cache");
     let json = matches.get_flag("json");
     let compact = matches.get_flag("compact");
+    // WAN probes (public IP + internet latency) are opt-in: they add an external
+    // network round-trip (~370ms) the normal path shouldn't pay for.
+    let wan = matches.get_flag("wan");
 
     if clear_cache {
         cache::clear_all();
@@ -36,11 +39,11 @@ fn execute_info(matches: &ArgMatches) -> Result<()> {
 
     // JSON mode: stdout must stay parseable, so no spinner and no banner.
     let (system_info, timings) = if json {
-        collect_system_info_with_profile_progress(None)?
+        collect_system_info_with_profile_progress(None, wan)?
     } else {
         let spinner = Spinner::start("Collecting system information", TOTAL_SECTIONS);
         let progress = spinner.progress_handle();
-        let result = collect_system_info_with_profile_progress(Some(progress))?;
+        let result = collect_system_info_with_profile_progress(Some(progress), wan)?;
         spinner.finish();
         result
     };

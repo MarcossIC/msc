@@ -19,3 +19,4 @@ Thumbs.db
 *.so
 *.dylib
 *-cwd
+docs/ignore/**

@@ -1,38 +1,53 @@
 use crate::core::system_info::types::{CpuInfo, CpuInstructionSets};
 use crate::error::Result;
+use std::time::{Duration, Instant};
 use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 #[cfg(windows)]
-use crate::platform::system::windows::cpu::{
-    detect_amd_topology, detect_cpu_instruction_sets, get_cpu_details,
-};
+use crate::platform::system::windows::cpu::collect_details_profiled;
+
+/// sysinfo needs at least this much elapsed time between the two CPU samples for
+/// the usage delta to mean anything.
+const USAGE_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
 pub fn collect() -> Result<CpuInfo> {
+    collect_with_subs().map(|(info, _)| info)
+}
+
+/// Collect CPU info with per-phase sub-timings for the profiler.
+///
+/// Key timing trick: sysinfo wants ~100ms between its two usage samples. Instead
+/// of a DEAD `sleep(100ms)` (paid on every run, on the heaviest collector thread),
+/// we take the first sample, run the WMI work in that window, and only top up the
+/// leftover — which is usually 0 because the WMI queries already exceed 100ms.
+/// That reclaims ~100ms off the hot path while keeping the usage reading.
+pub fn collect_with_subs() -> Result<(CpuInfo, Vec<(String, Duration)>)> {
+    let mut subs: Vec<(String, Duration)> = Vec::new();
+
     let refresh = RefreshKind::nothing().with_cpu(CpuRefreshKind::everything());
     let mut sys = System::new_with_specifics(refresh);
 
-    // Need to refresh twice to get accurate frequency and usage
+    // First usage sample, then start the clock for the inter-sample interval.
     sys.refresh_cpu_all();
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    sys.refresh_cpu_all();
+    let sample_start = Instant::now();
 
-    let cpus = sys.cpus();
-    if cpus.is_empty() {
-        return Ok(get_fallback());
-    }
-
-    let first_cpu = &cpus[0];
     let physical_cores = sysinfo::System::physical_core_count().unwrap_or(0);
 
-    // Calculate current CPU usage
-    let total_usage: f32 = cpus.iter().map(|cpu| cpu.cpu_usage()).sum();
-    let current_usage_percent = if !cpus.is_empty() {
-        Some(total_usage / cpus.len() as f32)
-    } else {
-        None
+    let (model, vendor, logical_cores, frequency_mhz) = {
+        let cpus = sys.cpus();
+        if cpus.is_empty() {
+            return Ok((get_fallback(), subs));
+        }
+        let first = &cpus[0];
+        (
+            first.brand().to_string(),
+            first.vendor_id().to_string(),
+            cpus.len(),
+            first.frequency(),
+        )
     };
 
-    // Get platform-specific details
+    // Platform-specific details run DURING the inter-sample interval.
     #[cfg(windows)]
     let (
         max_frequency_mhz,
@@ -42,19 +57,22 @@ pub fn collect() -> Result<CpuInfo> {
         numa_nodes,
         instruction_sets,
         amd_topology,
+        virtualization,
+        temperature_celsius,
     ) = {
-        let details = get_cpu_details().ok();
-        let instruction_sets = detect_cpu_instruction_sets();
-        let amd_topology = detect_amd_topology(first_cpu.brand(), physical_cores);
-
+        let (details, temp, isets, amd, virt, mut wsubs) =
+            collect_details_profiled(&model, physical_cores);
+        subs.append(&mut wsubs);
         (
             details.as_ref().and_then(|d| d.max_frequency_mhz),
             details.as_ref().and_then(|d| d.turbo_enabled),
             details.as_ref().and_then(|d| d.l2_cache_kb),
             details.as_ref().and_then(|d| d.l3_cache_kb),
             details.as_ref().and_then(|d| d.numa_nodes),
-            instruction_sets,
-            amd_topology,
+            isets,
+            amd,
+            virt,
+            temp,
         )
     };
 
@@ -66,15 +84,44 @@ pub fn collect() -> Result<CpuInfo> {
         l3_cache_kb,
         numa_nodes,
         instruction_sets,
-    ) = (None, None, None, None, None, CpuInstructionSets::default());
+        virtualization,
+        temperature_celsius,
+    ) = (
+        None,
+        None,
+        None,
+        None,
+        None,
+        CpuInstructionSets::default(),
+        None,
+        None,
+    );
 
-    Ok(CpuInfo {
-        model: first_cpu.brand().to_string(),
-        vendor: first_cpu.vendor_id().to_string(),
+    // Top up to the sample interval ONLY if the WMI work didn't already cover it.
+    // The sub-row makes the leftover visible — it should read ~0 in practice.
+    let topup = USAGE_SAMPLE_INTERVAL.saturating_sub(sample_start.elapsed());
+    if !topup.is_zero() {
+        std::thread::sleep(topup);
+    }
+    subs.push(("cpu.usage_topup_sleep".to_string(), topup));
+
+    // Second sample → usage delta.
+    sys.refresh_cpu_all();
+    let cpus = sys.cpus();
+    let current_usage_percent = if cpus.is_empty() {
+        None
+    } else {
+        let total: f32 = cpus.iter().map(|c| c.cpu_usage()).sum();
+        Some(total / cpus.len() as f32)
+    };
+
+    let info = CpuInfo {
+        model,
+        vendor,
         physical_cores,
-        logical_cores: cpus.len(),
+        logical_cores,
         architecture: std::env::consts::ARCH.to_string(),
-        frequency_mhz: first_cpu.frequency(),
+        frequency_mhz,
         max_frequency_mhz,
         turbo_boost_enabled,
 
@@ -91,8 +138,14 @@ pub fn collect() -> Result<CpuInfo> {
         // Instruction sets
         instruction_sets,
 
+        // Virtualization (VT-x/AMD-V firmware + hypervisor presence)
+        virtualization,
+
         // Usage
         current_usage_percent,
+
+        // Thermals
+        temperature_celsius,
 
         // Topology
         numa_nodes,
@@ -108,7 +161,9 @@ pub fn collect() -> Result<CpuInfo> {
         ccd_count: None,
         #[cfg(not(windows))]
         ccx_count: None,
-    })
+    };
+
+    Ok((info, subs))
 }
 
 pub fn get_fallback() -> CpuInfo {
@@ -128,7 +183,9 @@ pub fn get_fallback() -> CpuInfo {
         max_tdp_watts: None,
         turbo_frequency_mhz: None,
         instruction_sets: CpuInstructionSets::default(),
+        virtualization: None,
         current_usage_percent: None,
+        temperature_celsius: None,
         numa_nodes: None,
         chiplet_count: None,
         ccd_count: None,
