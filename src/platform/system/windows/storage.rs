@@ -1,5 +1,5 @@
 use crate::core::system_info::types::{BusType, DiskType};
-use crate::error::{MscError, Result};
+use crate::error::Result;
 use serde::Deserialize;
 use wmi::WMIConnection;
 
@@ -51,13 +51,11 @@ pub struct StorageSlots {
 #[serde(rename_all = "PascalCase")]
 struct MsftPartition {
     disk_number: Option<u32>,
-    drive_letter: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 struct MsftPhysicalDisk {
-    device_id: Option<String>,
     friendly_name: Option<String>,
     model: Option<String>,
     media_type: Option<u16>,
@@ -70,7 +68,6 @@ struct MsftPhysicalDisk {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 struct MsftStorageReliabilityCounter {
-    device_id: Option<String>,
     health_status: Option<String>,
     temperature: Option<u32>,
     power_on_hours: Option<f64>,
@@ -132,7 +129,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
         if let Some(dl) = drive_letter {
             let partitions: Vec<MsftPartition> = wmi
                 .raw_query(format!(
-                    "SELECT DiskNumber, DriveLetter FROM MSFT_Partition WHERE DriveLetter = '{}'",
+                    "SELECT DiskNumber FROM MSFT_Partition WHERE DriveLetter = '{}'",
                     dl
                 ))
                 .unwrap_or_default();
@@ -148,7 +145,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     // MSFT_PhysicalDisk: DeviceId is a string here (numeric digits) — match by string.
     let disks: Vec<MsftPhysicalDisk> = wmi
         .raw_query(format!(
-            "SELECT DeviceId, FriendlyName, Model, MediaType, BusType, \
+            "SELECT FriendlyName, Model, MediaType, BusType, \
              SerialNumber, FirmwareVersion, Manufacturer \
              FROM MSFT_PhysicalDisk WHERE DeviceId = '{}'",
             target
@@ -163,7 +160,7 @@ pub fn get_disk_details(disk_name: &str) -> Result<DiskDetailsWindows> {
     // MSFT_StorageReliabilityCounter: filter by same DeviceId.
     let counters: Vec<MsftStorageReliabilityCounter> = wmi
         .raw_query(format!(
-            "SELECT DeviceId, HealthStatus, Temperature, PowerOnHours \
+            "SELECT HealthStatus, Temperature, PowerOnHours \
              FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{}'",
             target
         ))
@@ -512,6 +509,9 @@ fn detect_total_sata_ports() -> Option<u32> {
     #[derive(Deserialize)]
     #[serde(rename_all = "PascalCase")]
     struct Win32IdeController {
+        // Solo se cuentan las filas (controllers.len()); el nombre se proyecta
+        // para que la query devuelva filas pero no se lee.
+        #[allow(dead_code)]
         name: Option<String>,
     }
 
@@ -544,6 +544,9 @@ fn detect_total_m2_slots() -> Option<u32> {
     #[derive(Deserialize)]
     #[serde(rename_all = "PascalCase")]
     struct Win32PnpEntity {
+        // Solo se cuentan las filas (devices.len()); el nombre se proyecta
+        // para que la query devuelva filas pero no se lee.
+        #[allow(dead_code)]
         name: Option<String>,
     }
 

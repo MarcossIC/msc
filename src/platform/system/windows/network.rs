@@ -13,8 +13,6 @@ use wmi::WMIConnection;
 struct Win32NetworkAdapter {
     index: Option<u32>,
     name: Option<String>,
-    #[serde(rename = "NetConnectionID")]
-    net_connection_id: Option<String>,
     #[serde(rename = "NetConnectionStatus")]
     net_connection_status: Option<u16>,
     #[serde(rename = "PhysicalAdapter")]
@@ -71,7 +69,7 @@ pub fn get_network_info_profiled() -> Result<(NetworkInfo, Vec<(String, Duration
 
     let adapters: Vec<Win32NetworkAdapter> = wmi
         .raw_query(
-            "SELECT Index, Name, NetConnectionID, NetConnectionStatus, PhysicalAdapter, Speed \
+            "SELECT Index, Name, NetConnectionStatus, PhysicalAdapter, Speed \
              FROM Win32_NetworkAdapter",
         )
         .unwrap_or_default();

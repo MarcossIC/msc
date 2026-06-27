@@ -1,6 +1,8 @@
 use crate::core::system_info::types::MotherboardInfo;
 use crate::error::Result;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
 #[cfg(windows)]
 use crate::platform::system::windows::mbo::{

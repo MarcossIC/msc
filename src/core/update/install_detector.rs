@@ -1,5 +1,8 @@
 use anyhow::Result;
 
+#[cfg(target_os = "macos")]
+use std::path::Path;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstallMethod {
     Manual,     // GitHub release o build local
