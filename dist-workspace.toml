@@ -15,5 +15,6 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 include = ["README.md", "LICENSE"]
 # Checksum algorithm
 checksum = "sha256"
-# Allow custom workflow modifications and MSI/WiX manifest changes
-allow-dirty = ["ci", "msi"]
+# Allow custom workflow modifications (CI is hand-tuned). MSI/WiX is dist-managed:
+# wix/main.wxs is generated via `dist generate --mode msi` and validated on every build.
+allow-dirty = ["ci"]
