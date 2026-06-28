@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
   <metadata>
     <id>msc</id>
-    <version>0.1.13</version>
+    <version>0.1.14</version>
     <packageSourceUrl>https://github.com/MarcossIC/msc/tree/main/packaging/chocolatey</packageSourceUrl>
     <owners>MarcossIC</owners>
     <title>MSC CLI</title>
@@ -52,7 +52,7 @@ msc clean start
 
 For more information, see the [README](https://github.com/MarcossIC/msc/blob/main/README.md).
 ]]></description>
-    <releaseNotes>https://github.com/MarcossIC/msc/releases/tag/v0.1.13</releaseNotes>
+    <releaseNotes>https://github.com/MarcossIC/msc/releases/tag/v0.1.14</releaseNotes>
   </metadata>
   <files>
     <file src="tools\**" target="tools" />
