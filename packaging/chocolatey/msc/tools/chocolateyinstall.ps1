@@ -5,7 +5,7 @@ $version = $env:ChocolateyPackageVersion
 $url64 = "https://github.com/MarcossIC/msc/releases/download/v$version/msc-x86_64-pc-windows-msvc.msi"
 
 # Checksum will be automatically updated by the release workflow
-$checksum64 = 'CHECKSUM_PLACEHOLDER'
+$checksum64 = '286777cf7e3e445c2196b6dfbf1063075ae45edc342399d257676631bf7ad471'
 
 $packageArgs = @{
   packageName    = $packageName
