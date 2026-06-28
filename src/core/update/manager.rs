@@ -4,8 +4,8 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
 
+use super::install_detector::UpdateTarget;
 use super::platform_installer;
 use super::release_info::{fetch_latest_release, get_platform_assets, ReleaseInfo};
 
@@ -26,8 +26,8 @@ impl UpdateManager {
         env!("CARGO_PKG_VERSION")
     }
 
-    /// Verifica si hay actualizaciones disponibles
-    /// Retorna Some(ReleaseInfo) si hay una nueva versión, None si ya está actualizado
+    /// Verifica si hay actualizaciones disponibles.
+    /// Retorna Some(ReleaseInfo) si hay una nueva versión, None si ya está actualizado.
     pub fn check_for_updates(&self) -> Result<Option<ReleaseInfo>> {
         let current_version = Self::get_current_version();
 
@@ -46,10 +46,21 @@ impl UpdateManager {
         }
     }
 
-    /// Descarga la actualización
-    /// Retorna (ruta del archivo descargado, hash SHA256 esperado, nombre original del asset)
-    pub fn download_update(&self, release: &ReleaseInfo) -> Result<(PathBuf, String, String)> {
-        let (binary_asset, checksum_asset) = get_platform_assets(release)?;
+    /// Descarga la actualización.
+    ///
+    /// El `target` determina qué asset descargar (MSI o ZIP) y dónde guardar
+    /// el archivo temporal:
+    /// - `Msi`        → temp en `std::env::temp_dir()` con sufijo `.msi`
+    /// - `PortableZip`→ temp en el directorio del ejecutable con sufijo `.zip`
+    ///                  (mismo volumen requerido para el rename atómico via self_replace)
+    ///
+    /// Retorna `(ruta del archivo descargado, hash SHA256 esperado, nombre original del asset)`
+    pub fn download_update(
+        &self,
+        release: &ReleaseInfo,
+        target: UpdateTarget,
+    ) -> Result<(PathBuf, String, String)> {
+        let (binary_asset, checksum_asset) = get_platform_assets(release, target)?;
 
         println!("{} {}", "Downloading:".cyan(), binary_asset.name.yellow());
 
@@ -79,9 +90,32 @@ impl UpdateManager {
             .ok_or_else(|| anyhow!("Invalid checksum format"))?
             .to_string();
 
-        // Crear archivo temporal con nombre único y seguro
-        let mut temp_file = NamedTempFile::new_in(std::env::temp_dir())
-            .context("Failed to create temporary file")?;
+        // Crear archivo temporal con sufijo correcto y en el directorio adecuado.
+        // Para PortableZip se usa el directorio del ejecutable actual (mismo volumen)
+        // para que self_replace pueda hacer un rename atómico.
+        let mut temp_file = match target {
+            UpdateTarget::Msi => tempfile::Builder::new()
+                .suffix(".msi")
+                .tempfile_in(std::env::temp_dir())
+                .context("Failed to create temporary MSI file")?,
+
+            UpdateTarget::PortableZip => {
+                let exe_path = std::env::current_exe()
+                    .context("Failed to determine current executable path")?;
+                let exe_dir = exe_path
+                    .parent()
+                    .ok_or_else(|| anyhow!("Executable has no parent directory"))?
+                    .to_path_buf();
+
+                tempfile::Builder::new()
+                    .suffix(".zip")
+                    .tempfile_in(&exe_dir)
+                    .context(
+                        "Failed to create temporary ZIP in executable directory. \
+                        Make sure the install directory is writable.",
+                    )?
+            }
+        };
 
         // Escribir datos al archivo temporal
         temp_file
@@ -137,16 +171,16 @@ impl UpdateManager {
     }
 
     /// Ejecuta el proceso completo de actualización
-    pub fn perform_update(&self, release: &ReleaseInfo) -> Result<()> {
+    pub fn perform_update(&self, release: &ReleaseInfo, target: UpdateTarget) -> Result<()> {
         // 1. Descargar actualización y checksum
-        let (update_file, expected_hash, asset_name) = self.download_update(release)?;
+        let (update_file, expected_hash, asset_name) = self.download_update(release, target)?;
 
         // 2. Verificar checksum
         self.verify_checksum(&update_file, &expected_hash)?;
 
-        // 3. Instalar actualización (específico por plataforma)
+        // 3. Instalar actualización (específico por plataforma y target)
         println!("\n{}", "Installing update...".cyan());
-        platform_installer::install_update(&update_file, &asset_name)?;
+        platform_installer::install_update(&update_file, &asset_name, target)?;
 
         println!("\n{}", "━".repeat(40).green());
         println!(
@@ -159,8 +193,8 @@ impl UpdateManager {
         Ok(())
     }
 
-    /// Compara dos versiones semánticas
-    /// Retorna true si la nueva versión es más reciente
+    /// Compara dos versiones semánticas.
+    /// Retorna true si la nueva versión es más reciente.
     fn is_newer_version(new: &str, current: &str) -> bool {
         let parse_version =
             |v: &str| -> Vec<u32> { v.split('.').filter_map(|s| s.parse::<u32>().ok()).collect() };

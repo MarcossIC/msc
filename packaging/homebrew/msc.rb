@@ -1,26 +1,26 @@
 class Msc < Formula
   desc "Multi-purpose CLI tool for system monitoring, media management, and productivity"
   homepage "https://github.com/MarcossIC/msc"
-  version "0.1.13"
+  version "0.1.14"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/MarcossIC/msc/releases/download/v#{version}/msc-aarch64-apple-darwin.tar.xz"
-      sha256 "baf45f212fae2df23e2e6d74f414e94664989e0668d82dd1255e1f9bc5d6182a"
+      sha256 "be7ac261a90cfe3f398cd9cbb96e5c2dabf023b3aa073ebc2d19feb2177ca4bb"
     else
       url "https://github.com/MarcossIC/msc/releases/download/v#{version}/msc-x86_64-apple-darwin.tar.xz"
-      sha256 "20b6c245cd01878f09c3f5da4764ec72537f95eb46a8cfb1b5498f00437e4f90"
+      sha256 "f7b34bc98f8f82e4151186c47ef0fa7ea8bc82f7a99808c2a16bb21afe3f6beb"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
       url "https://github.com/MarcossIC/msc/releases/download/v#{version}/msc-aarch64-unknown-linux-gnu.tar.xz"
-      sha256 "ed1eb7dc1bb40ab830885279d43d36e9add64a7c9537fd0d757966a0ef17aaf2"
+      sha256 "8fe044ffa2bdd67aed1cc3e3ed5b127410101f12a39c15dc76f2b8da63e0d1e4"
     else
       url "https://github.com/MarcossIC/msc/releases/download/v#{version}/msc-x86_64-unknown-linux-gnu.tar.xz"
-      sha256 "443809ab0eb1ee776aab869b42b5b8e8169b32d124e07eed9c17e5e655f09ddb"
+      sha256 "56a395cc5951afdd38fa4a761667d92ec5d63dc04b3247f5c3a4457da2b7ec3b"
     end
   end
 

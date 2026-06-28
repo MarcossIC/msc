@@ -5,6 +5,7 @@ pub mod battery_ioctl;
 pub mod cpu;
 pub mod gpu;
 pub mod mbo;
+pub mod monitor;
 pub mod network;
 pub mod nvme_smart;
 pub mod os;

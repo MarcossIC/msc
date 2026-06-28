@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 
+use super::install_detector::UpdateTarget;
+
 #[derive(Debug, Deserialize)]
 pub struct ReleaseInfo {
     pub tag_name: String,
@@ -52,10 +54,23 @@ pub fn fetch_latest_release(repo: &str) -> Result<ReleaseInfo> {
     Ok(release)
 }
 
-/// Determina el nombre del archivo binario según la plataforma actual
-pub fn get_platform_binary_name() -> &'static str {
+/// Determina el nombre del archivo de actualización según la plataforma y el target.
+///
+/// En Windows x86_64 el nombre varía según el tipo de instalación:
+///   - `UpdateTarget::Msi`        → `msc-x86_64-pc-windows-msvc.msi`
+///   - `UpdateTarget::PortableZip`→ `msc-x86_64-pc-windows-msvc.zip`
+///
+/// En plataformas no-Windows, el target se ignora y siempre se usa el tarball.
+pub fn get_platform_binary_name_for(target: UpdateTarget) -> &'static str {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    return "msc-x86_64-pc-windows-msvc.msi";
+    return match target {
+        UpdateTarget::Msi => "msc-x86_64-pc-windows-msvc.msi",
+        UpdateTarget::PortableZip => "msc-x86_64-pc-windows-msvc.zip",
+    };
+
+    // En plataformas no-Windows, el target no aplica; suprimimos el aviso de variable no usada
+    #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
+    let _ = target;
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return "msc-x86_64-unknown-linux-gnu.tar.xz";
@@ -70,9 +85,12 @@ pub fn get_platform_binary_name() -> &'static str {
     return "msc-aarch64-apple-darwin.tar.xz";
 }
 
-/// Obtiene los assets del binario y checksum para la plataforma actual
-pub fn get_platform_assets(release: &ReleaseInfo) -> Result<(&ReleaseAsset, &ReleaseAsset)> {
-    let binary_name = get_platform_binary_name();
+/// Obtiene los assets del binario y checksum para la plataforma y target actuales
+pub fn get_platform_assets(
+    release: &ReleaseInfo,
+    target: UpdateTarget,
+) -> Result<(&ReleaseAsset, &ReleaseAsset)> {
+    let binary_name = get_platform_binary_name_for(target);
     let checksum_name = format!("{}.sha256", binary_name);
 
     // Buscar el asset del binario
@@ -108,13 +126,26 @@ mod tests {
         assert_eq!(release.version(), "0.1.10");
     }
 
+    /// Verifica el nombre del binario MSI (comportamiento de la función original)
     #[test]
-    fn test_platform_binary_name() {
-        let name = get_platform_binary_name();
+    fn test_platform_binary_name_msi() {
+        let name = get_platform_binary_name_for(UpdateTarget::Msi);
         assert!(!name.is_empty());
         #[cfg(windows)]
         assert!(name.ends_with(".msi"));
         #[cfg(unix)]
         assert!(name.ends_with(".tar.xz"));
+    }
+
+    /// En Windows, PortableZip debe retornar el ZIP con la misma arquitectura
+    #[cfg(all(test, target_os = "windows"))]
+    #[test]
+    fn test_platform_binary_name_portable_zip() {
+        let name = get_platform_binary_name_for(UpdateTarget::PortableZip);
+        assert!(name.ends_with(".zip"), "se esperaba extensión .zip, fue: {}", name);
+        assert!(
+            name.contains("x86_64-pc-windows-msvc"),
+            "se esperaba target x86_64-pc-windows-msvc en el nombre"
+        );
     }
 }

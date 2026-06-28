@@ -1,7 +1,7 @@
 use crate::core::system_info::profiler::CollectorTimings;
 use crate::core::system_info::types::*;
 use crate::core::system_info::{
-    battery, cpu, gpu, memory, motherboard, network, os, power, storage,
+    battery, cpu, gpu, memory, monitor, motherboard, network, os, power, storage,
 };
 use crate::error::Result;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Number of sections the collector reports — used to size progress bars / spinners.
-/// Counts: cpu, motherboard, gpu, network, storage, os, battery, power_plan, memory, npu.
-pub const TOTAL_SECTIONS: usize = 10;
+/// Counts: cpu, motherboard, gpu, network, storage, os, battery, power_plan, monitor, memory, npu.
+pub const TOTAL_SECTIONS: usize = 11;
 
 /// Collect all system information (no profiling — convenience wrapper).
 pub fn collect_system_info() -> Result<SystemInfo> {
@@ -140,6 +140,11 @@ pub fn collect_system_info_with_profile_progress(
             tick(progress_ref);
             r
         });
+        let mon_h = s.spawn(|| {
+            let r = timed(|| monitor::collect().unwrap_or_else(|_| monitor::get_fallback()));
+            tick(progress_ref);
+            r
+        });
         // PCIe link reader: its OWN Stage 1 thread, parallel to storage, so its
         // ~1-4ms stays off the storage critical path. No `tick` (not a
         // user-visible section) but DOES go through `timed` so its cost shows up
@@ -180,6 +185,7 @@ pub fn collect_system_info_with_profile_progress(
             }),
             recover(pubip_h.join(), "public_ip", || (None, Duration::ZERO)),
             recover(inet_h.join(), "internet_latency", || (None, Duration::ZERO)),
+            recover(mon_h.join(), "monitor", || (Vec::new(), Duration::ZERO)),
         )
     });
 
@@ -194,6 +200,7 @@ pub fn collect_system_info_with_profile_progress(
     let (disk_link_map, link_dur) = s1.8;
     let (public_ip, pubip_dur) = s1.9;
     let (internet_latency, inet_dur) = s1.10;
+    let (monitor_info, mon_dur) = s1.11;
 
     // Merge the parallel external lookups into the network section.
     network_info.public_ip = public_ip;
@@ -260,6 +267,7 @@ pub fn collect_system_info_with_profile_progress(
     t.sections.extend(stor_subs);
     t.sections.push(("storage.pcie_link".to_string(), link_dur));
     t.sections.push(("os".to_string(), os_dur));
+    t.sections.push(("monitor".to_string(), mon_dur));
     t.sections.push(("npu".to_string(), npu_dur));
     t.sections.push(("battery".to_string(), bat_dur));
     t.sections.push(("power_plan".to_string(), pwr_dur));
@@ -276,6 +284,7 @@ pub fn collect_system_info_with_profile_progress(
         npu: npu_info,
         battery: battery_info,
         power_plan: power_plan_info,
+        monitors: monitor_info,
     };
 
     Ok((info, t))

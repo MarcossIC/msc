@@ -13,6 +13,10 @@ pub struct SystemInfo {
     pub npu: Option<NpuInfo>,
     pub battery: Option<BatteryInfo>,      // Only on laptops
     pub power_plan: Option<PowerPlanInfo>, // Windows power settings
+    /// Connected displays (EDID-parsed). `#[serde(default)]` so an older cached
+    /// `SystemInfo` without this field still deserializes (to an empty list).
+    #[serde(default)]
+    pub monitors: Vec<MonitorInfo>,
 }
 
 /// CPU Information
@@ -637,6 +641,80 @@ impl std::fmt::Display for HvciStatus {
             HvciStatus::Running => write!(f, "Enabled (running)"),
             HvciStatus::ConfiguredNotRunning => write!(f, "Configured (not running)"),
             HvciStatus::Off => write!(f, "Off"),
+        }
+    }
+}
+
+/// Display / Monitor information, parsed from the monitor's EDID block.
+///
+/// Every field comes from the 128-byte EDID base block read driver-less from the
+/// registry (no admin). Fields are `Option`/empty when the EDID doesn't carry
+/// them — we never fabricate a value the monitor didn't report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorInfo {
+    /// 3-letter PNP manufacturer id (EDID bytes 8-9), e.g. "BOE".
+    pub manufacturer_id: String,
+    /// Product code (EDID bytes 10-11) as the vendor's hex tag, e.g. "0C80".
+    pub product_code: String,
+    /// Display product name from the `0xFC` descriptor, e.g. "NE160QDM-NYJ".
+    pub model_name: Option<String>,
+    /// Display product serial from the `0xFF` descriptor.
+    pub serial_number: Option<String>,
+    /// Manufacture week (1-54) from EDID byte 16. `None` when unspecified.
+    pub manufacture_week: Option<u8>,
+    /// Manufacture year (EDID byte 17 + 1990). `None` when unspecified.
+    pub manufacture_year: Option<u16>,
+    /// EDID structure version, e.g. "1.4".
+    pub edid_version: Option<String>,
+    /// Digital video interface (DisplayPort/HDMI/DVI). `None` for analog inputs.
+    pub digital_interface: Option<DigitalInterface>,
+    /// Bits per primary color (digital input only). `None` when not stated.
+    pub color_bit_depth: Option<u8>,
+    /// Display gamma, e.g. 2.20. `None` when deferred to an extension (byte 23 = 0xFF).
+    pub gamma: Option<f32>,
+    /// sRGB is the default color space (EDID byte 24 feature flag).
+    pub srgb_default: bool,
+    /// The preferred timing (first DTD) is the native resolution (byte 24 flag).
+    pub preferred_timing_is_native: bool,
+    /// Continuous-frequency display / default GTF supported (byte 24 flag).
+    pub continuous_frequency: bool,
+    /// Horizontal sync range (kHz) from the `0xFD` range-limits descriptor: (min, max).
+    pub h_freq_khz: Option<(u16, u16)>,
+    /// Vertical refresh range (Hz) from the `0xFD` descriptor: (min, max).
+    pub v_freq_hz: Option<(u16, u16)>,
+    /// Maximum pixel clock (MHz) from the `0xFD` descriptor.
+    pub max_pixel_clock_mhz: Option<u16>,
+    /// Native/preferred resolution (width, height) from the first detailed timing.
+    pub native_resolution: Option<(u16, u16)>,
+    /// Refresh rate (Hz) computed from the first detailed timing descriptor.
+    pub native_refresh_hz: Option<f32>,
+    /// Physical image size in cm (horizontal, vertical) from EDID bytes 21-22.
+    pub physical_size_cm: Option<(u8, u8)>,
+    /// Screen diagonal in inches, derived from the physical size.
+    pub diagonal_inches: Option<f32>,
+}
+
+/// Digital video interface standard advertised in the EDID video-input byte (20).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum DigitalInterface {
+    Dvi,
+    HdmiA,
+    HdmiB,
+    Mddi,
+    DisplayPort,
+    /// Digital input, but the interface field is undefined (common on EDID 1.3).
+    Undefined,
+}
+
+impl std::fmt::Display for DigitalInterface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DigitalInterface::Dvi => write!(f, "DVI"),
+            DigitalInterface::HdmiA => write!(f, "HDMI-a"),
+            DigitalInterface::HdmiB => write!(f, "HDMI-b"),
+            DigitalInterface::Mddi => write!(f, "MDDI"),
+            DigitalInterface::DisplayPort => write!(f, "DisplayPort"),
+            DigitalInterface::Undefined => write!(f, "Digital (unspecified)"),
         }
     }
 }

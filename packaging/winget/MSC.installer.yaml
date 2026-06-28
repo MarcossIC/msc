@@ -1,5 +1,5 @@
 PackageIdentifier: MSC
-PackageVersion: 0.1.13
+PackageVersion: 0.1.14
 Platform:
   - Windows.Desktop
 MinimumOSVersion: 10.0.0.0
@@ -12,8 +12,8 @@ InstallModes:
 UpgradeBehavior: install
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/MarcossIC/msc/releases/download/v0.1.13/msc-x86_64-pc-windows-msvc.msi
-    InstallerSha256: 286777cf7e3e445c2196b6dfbf1063075ae45edc342399d257676631bf7ad471
-    ProductCode: '{750354EC-F8A7-45F2-879C-0297E09B6E5F}'
+    InstallerUrl: https://github.com/MarcossIC/msc/releases/download/v0.1.14/msc-x86_64-pc-windows-msvc.msi
+    InstallerSha256: dc32c5618e32f45b02e6bc06004a6491999c26fae5692d65fccebc87f69866c3
+    ProductCode: '{19D18F3F-2B67-4449-87E2-511E482D0050}'
 ManifestType: installer
 ManifestVersion: 1.6.0

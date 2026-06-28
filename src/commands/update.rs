@@ -2,7 +2,7 @@ use anyhow::Result;
 use colored::Colorize;
 use dialoguer::Confirm;
 
-use crate::core::update::{detect_install_method, InstallMethod, UpdateManager};
+use crate::core::update::{detect_install_method, update_target, InstallMethod, UpdateManager};
 
 pub fn execute(_matches: &clap::ArgMatches) -> Result<()> {
     // Banner de bienvenida
@@ -26,7 +26,7 @@ pub fn execute(_matches: &clap::ArgMatches) -> Result<()> {
 
     let install_method = detect_install_method()?;
 
-    // 3. Si fue instalado por package manager, rechazar actualización
+    // 3. Si fue instalado por package manager, redirigir al gestor correspondiente
     match install_method {
         InstallMethod::Winget => {
             println!(
@@ -67,6 +67,18 @@ pub fn execute(_matches: &clap::ArgMatches) -> Result<()> {
             );
             return Ok(());
         }
+        InstallMethod::Scoop => {
+            println!("{}", "✗ Installed via Scoop".red());
+            println!();
+            println!("{}", "To update MSC, please use:".yellow());
+            println!("  {}", "scoop update msc".green().bold());
+            println!();
+            println!(
+                "{}",
+                "This ensures proper integration with your system's package manager.".dimmed()
+            );
+            return Ok(());
+        }
         InstallMethod::Cargo => {
             println!("{} {:?}", "✓ Installation method:".green(), install_method);
             println!();
@@ -76,9 +88,21 @@ pub fn execute(_matches: &clap::ArgMatches) -> Result<()> {
         InstallMethod::Manual => {
             println!("{} {:?}", "✓ Installation method:".green(), install_method);
         }
+        InstallMethod::PortableExe => {
+            println!("{}", "✓ Installation method: Portable executable".green());
+            println!();
+            println!(
+                "{}",
+                "Update will replace the running binary in place — no admin rights required."
+                    .dimmed()
+            );
+        }
     }
 
-    // 4. Buscar actualizaciones
+    // 4. Determinar qué asset descargar según el método de instalación
+    let target = update_target(&install_method);
+
+    // 5. Buscar actualizaciones
     println!();
     println!("{}", "Checking for updates...".cyan());
 
@@ -106,7 +130,7 @@ pub fn execute(_matches: &clap::ArgMatches) -> Result<()> {
         latest_version.yellow().bold()
     );
 
-    // 5. Mostrar changelog si está disponible
+    // 6. Mostrar changelog si está disponible
     let changelog = release.changelog();
     if !changelog.is_empty() {
         println!();
@@ -126,7 +150,7 @@ pub fn execute(_matches: &clap::ArgMatches) -> Result<()> {
         println!("{}", "─".repeat(50).dimmed());
     }
 
-    // 6. Calcular tamaño aproximado (basado en plataforma)
+    // 7. Calcular tamaño aproximado (basado en plataforma)
     #[cfg(windows)]
     let estimated_size = "~8.5 MB";
     #[cfg(not(windows))]
@@ -135,7 +159,7 @@ pub fn execute(_matches: &clap::ArgMatches) -> Result<()> {
     println!();
     println!("{} {}", "Download size:".dimmed(), estimated_size);
 
-    // 7. Confirmar con el usuario
+    // 8. Confirmar con el usuario
     println!();
     let proceed = Confirm::new()
         .with_prompt("Proceed with update?")
@@ -148,11 +172,11 @@ pub fn execute(_matches: &clap::ArgMatches) -> Result<()> {
         return Ok(());
     }
 
-    // 8. Ejecutar actualización
+    // 9. Ejecutar actualización con el target correcto
     println!();
-    manager.perform_update(&release)?;
+    manager.perform_update(&release, target)?;
 
-    // 9. Mensaje final
+    // 10. Mensaje final
     println!();
     println!(
         "{}",

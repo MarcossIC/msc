@@ -108,6 +108,7 @@ fn parse_filter(matches: &ArgMatches) -> DisplayFilter {
             os: show_os,
             npu: false,
             energy: show_energy,
+            monitor: false,
         }
     }
 }

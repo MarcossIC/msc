@@ -14,6 +14,7 @@ pub struct DisplayFilter {
     pub os: bool,
     pub npu: bool,
     pub energy: bool,
+    pub monitor: bool,
 }
 
 impl DisplayFilter {
@@ -29,6 +30,7 @@ impl DisplayFilter {
             os: true,
             npu: true,
             energy: true,
+            monitor: true,
         }
     }
 }
@@ -132,6 +134,10 @@ pub fn format_system_info(info: &SystemInfo, filter: &DisplayFilter) {
 
     if filter.gpu {
         print_gpu_info(&info.gpu);
+    }
+
+    if filter.monitor && !info.monitors.is_empty() {
+        print_monitor_info(&info.monitors);
     }
 
     if filter.motherboard {
@@ -643,6 +649,106 @@ fn print_gpu_info(gpus: &[GpuInfo]) {
             if let Some(smartshift) = amd.smartshift_power_watts {
                 s.field(4, "SmartShift Power", format!("{:.1} W", smartshift));
             }
+        }
+    }
+
+    s.render();
+}
+
+fn print_monitor_info(monitors: &[MonitorInfo]) {
+    print_section_header("Monitor");
+
+    let mut s = Section::new();
+
+    for (i, m) in monitors.iter().enumerate() {
+        if i > 0 {
+            s.blank();
+        }
+
+        // Header: prefer the EDID product name; fall back to the PNP id + code.
+        let title = match &m.model_name {
+            Some(name) => name.clone(),
+            None => format!("{} {}", m.manufacturer_id, m.product_code),
+        };
+        s.raw(format!("  {} {}: {}", "Display".cyan().bold(), i, title.bold()));
+
+        s.field(
+            4,
+            "Manufacturer",
+            format!("{} (PNP {})", m.manufacturer_id, m.product_code),
+        );
+
+        // Native/preferred resolution + refresh from the first detailed timing.
+        if let Some((w, h)) = m.native_resolution {
+            let res = match m.native_refresh_hz {
+                Some(hz) => format!("{}x{} @ {:.0} Hz", w, h, hz),
+                None => format!("{}x{}", w, h),
+            };
+            s.field(4, "Native Resolution", res.green());
+        }
+
+        // Refresh range is the headline spec for high-Hz panels.
+        if let Some((min, max)) = m.v_freq_hz {
+            s.field(4, "Refresh Rate", format!("{} - {} Hz", min, max).green());
+        }
+
+        if let Some((min, max)) = m.h_freq_khz {
+            s.field(4, "Horizontal Freq", format!("{} - {} kHz", min, max));
+        }
+
+        if let Some(mhz) = m.max_pixel_clock_mhz {
+            s.field(4, "Max Pixel Clock", format!("{} MHz", mhz));
+        }
+
+        if let Some(iface) = m.digital_interface {
+            s.field(4, "Interface", iface);
+        }
+
+        if let Some(depth) = m.color_bit_depth {
+            s.field(4, "Color Depth", format!("{} bits per primary color", depth));
+        }
+
+        if let Some(gamma) = m.gamma {
+            s.field(4, "Gamma", format!("{:.2}", gamma));
+        }
+
+        // Physical size: diagonal in inches + the raw cm dimensions.
+        if let (Some(diag), Some((hc, vc))) = (m.diagonal_inches, m.physical_size_cm) {
+            s.field(
+                4,
+                "Screen Size",
+                format!("{:.1}\" ({} x {} cm)", diag, hc, vc),
+            );
+        }
+
+        // Manufacture date (only when the EDID specified it).
+        match (m.manufacture_week, m.manufacture_year) {
+            (Some(w), Some(y)) => s.field(4, "Manufactured", format!("Week {}, {}", w, y)),
+            (None, Some(y)) => s.field(4, "Manufactured", y.to_string()),
+            _ => {}
+        }
+
+        if let Some(ref ver) = m.edid_version {
+            s.field(4, "EDID Version", ver);
+        }
+
+        // Capability flags, only the ones the EDID marks as supported.
+        let mut feats = Vec::new();
+        if m.srgb_default {
+            feats.push("sRGB default");
+        }
+        if m.preferred_timing_is_native {
+            feats.push("Native = preferred timing");
+        }
+        if m.continuous_frequency {
+            feats.push("Continuous frequency (GTF)");
+        }
+        if !feats.is_empty() {
+            s.field(4, "Features", feats.join(", ").green());
+        }
+
+        if let Some(ref serial) = m.serial_number {
+            s.field(4, "Serial", serial);
         }
     }
 

@@ -5,6 +5,7 @@ pub mod cpu;
 pub mod gpu;
 pub mod memory;
 pub mod memory_prediction;
+pub mod monitor;
 pub mod motherboard;
 pub mod network;
 pub mod os;
