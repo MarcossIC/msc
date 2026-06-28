@@ -59,8 +59,10 @@ pub fn collect_with_subs() -> Result<(CpuInfo, Vec<(String, Duration)>)> {
         amd_topology,
         virtualization,
         temperature_celsius,
+        cpu_signature,
+        cpu_microcode,
     ) = {
-        let (details, temp, isets, amd, virt, mut wsubs) =
+        let (details, temp, isets, amd, virt, sig, mcu, mut wsubs) =
             collect_details_profiled(&model, physical_cores);
         subs.append(&mut wsubs);
         (
@@ -73,6 +75,8 @@ pub fn collect_with_subs() -> Result<(CpuInfo, Vec<(String, Duration)>)> {
             amd,
             virt,
             temp,
+            sig,
+            mcu,
         )
     };
 
@@ -121,6 +125,26 @@ pub fn collect_with_subs() -> Result<(CpuInfo, Vec<(String, Duration)>)> {
         physical_cores,
         logical_cores,
         architecture: std::env::consts::ARCH.to_string(),
+
+        // CPUID processor signature (family/model/stepping). Windows reads it via
+        // collect_details_profiled; other platforms don't probe CPUID here.
+        #[cfg(windows)]
+        cpu_family: cpu_signature.family,
+        #[cfg(windows)]
+        cpu_model: cpu_signature.model,
+        #[cfg(windows)]
+        cpu_stepping: cpu_signature.stepping,
+        #[cfg(windows)]
+        cpu_microcode,
+        #[cfg(not(windows))]
+        cpu_family: None,
+        #[cfg(not(windows))]
+        cpu_model: None,
+        #[cfg(not(windows))]
+        cpu_stepping: None,
+        #[cfg(not(windows))]
+        cpu_microcode: None,
+
         frequency_mhz,
         max_frequency_mhz,
         turbo_boost_enabled,
@@ -173,6 +197,10 @@ pub fn get_fallback() -> CpuInfo {
         physical_cores: 0,
         logical_cores: 0,
         architecture: std::env::consts::ARCH.to_string(),
+        cpu_family: None,
+        cpu_model: None,
+        cpu_stepping: None,
+        cpu_microcode: None,
         frequency_mhz: 0,
         max_frequency_mhz: None,
         turbo_boost_enabled: None,

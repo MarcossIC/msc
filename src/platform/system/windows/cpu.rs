@@ -63,6 +63,29 @@ pub fn get_cpu_details(wmi_con: &WMIConnection) -> Result<CpuDetailsWindows> {
     })
 }
 
+/// Read the loaded microcode (patch) revision from the Windows registry —
+/// driver-less and without admin.
+///
+/// Windows publishes the active microcode under
+/// `HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0` as the DWORD
+/// `Current Record Version` (e.g. `0xB600032`). This is the same value tools like
+/// HWiNFO show as "MCU" — but they read it via a ring-0 driver (MSR `0x8B`); the
+/// registry exposes it to a normal user. Returns `None` if the key/value is absent.
+#[cfg(windows)]
+fn read_microcode_revision() -> Option<u32> {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    let value: u32 = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        .ok()?
+        .get_value("Current Record Version")
+        .ok()?;
+
+    // 0 means "no microcode update loaded" — report absence rather than a bogus 0x0.
+    (value != 0).then_some(value)
+}
+
 #[cfg(not(windows))]
 pub fn get_cpu_details() -> Result<CpuDetailsWindows> {
     Err(MscError::other(
@@ -108,6 +131,8 @@ pub fn collect_details_profiled(
     CpuInstructionSets,
     AmdTopology,
     Option<VirtualizationInfo>,
+    CpuSignature,
+    Option<u32>,
     Vec<(String, Duration)>,
 ) {
     let mut subs = Vec::with_capacity(2);
@@ -117,6 +142,12 @@ pub fn collect_details_profiled(
     let amd_topology = detect_amd_topology(cpu_brand, physical_cores);
     // CPUID hypervisor-present bit — pure, sub-microsecond.
     let hypervisor_present = detect_hypervisor_present();
+    // CPUID processor signature (family/model/stepping) — pure, sub-microsecond.
+    let signature = detect_cpu_signature();
+    // Microcode revision — REGISTRY read, deliberately INDEPENDENT of the WMI
+    // `Win32_Processor` query below: that query errors on some OEM laptops, and we
+    // must not let a flaky WMI call drag down a driver-less registry value.
+    let microcode = read_microcode_revision();
 
     // One `root\cimv2` connection shared by every query below.
     let con = WMIConnection::new().ok();
@@ -143,6 +174,8 @@ pub fn collect_details_profiled(
         instruction_sets,
         amd_topology,
         virtualization,
+        signature,
+        microcode,
         subs,
     )
 }
@@ -153,7 +186,11 @@ pub fn collect_details_profiled(
 /// VM: a Windows 11 host with Hyper-V, WSL2, or VBS/Memory Integrity enabled runs
 /// the OS itself atop the hypervisor and sets the bit too. The caller labels it
 /// honestly as "active", never "is a VM". Pure CPUID, no WMI, no admin.
-#[cfg(windows)]
+///
+/// Gated by **architecture, not OS**: CPUID is an x86-only instruction, so on
+/// Windows-on-ARM (Snapdragon) this whole module still compiles but there is no
+/// `cpuid` to call — the non-x86 stub below answers instead.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn detect_hypervisor_present() -> bool {
     use raw_cpuid::CpuId;
 
@@ -163,7 +200,54 @@ pub fn detect_hypervisor_present() -> bool {
         .unwrap_or(false)
 }
 
-/// Detect CPU instruction set support using CPUID
+/// Non-x86 stub (e.g. Windows-on-ARM): no CPUID, so no hypervisor bit to read.
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+pub fn detect_hypervisor_present() -> bool {
+    false
+}
+
+/// Raw CPUID processor signature (leaf 1): the COMPUTED family, model and stepping.
+///
+/// `raw_cpuid` already folds the base + extended fields the way AMD/Intel define
+/// them, so an AMD Zen 5 part reports family `0x1A`, model `0x60` — exactly the hex
+/// values tools like MSI Afterburner print. Pure CPUID: sub-microsecond, no WMI, no
+/// admin. All-`None` only if CPUID leaf 1 is unavailable.
+///
+/// x86-only by architecture (see [`detect_hypervisor_present`]); the non-x86 stub
+/// returns all-`None`.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub fn detect_cpu_signature() -> CpuSignature {
+    use raw_cpuid::CpuId;
+
+    CpuId::new()
+        .get_feature_info()
+        .map(|f| CpuSignature {
+            family: Some(f.family_id()),
+            model: Some(f.model_id()),
+            stepping: Some(f.stepping_id()),
+        })
+        .unwrap_or(CpuSignature {
+            family: None,
+            model: None,
+            stepping: None,
+        })
+}
+
+/// Non-x86 stub (e.g. Windows-on-ARM): no CPUID → no family/model/stepping.
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+pub fn detect_cpu_signature() -> CpuSignature {
+    CpuSignature {
+        family: None,
+        model: None,
+        stepping: None,
+    }
+}
+
+/// Detect CPU instruction set support using CPUID.
+///
+/// x86-only by architecture (see [`detect_hypervisor_present`]); the x86 SIMD flags
+/// (AVX, SSE, AES-NI…) don't exist on ARM, so the non-x86 stub returns an empty set.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn detect_cpu_instruction_sets() -> crate::core::system_info::types::CpuInstructionSets {
     use raw_cpuid::CpuId;
 
@@ -190,6 +274,12 @@ pub fn detect_cpu_instruction_sets() -> crate::core::system_info::types::CpuInst
     }
 
     instruction_sets
+}
+
+/// Non-x86 stub (e.g. Windows-on-ARM): the x86 instruction-set flags don't apply.
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+pub fn detect_cpu_instruction_sets() -> crate::core::system_info::types::CpuInstructionSets {
+    crate::core::system_info::types::CpuInstructionSets::default()
 }
 
 /// Convert a `MSAcpi_ThermalZoneTemperature.CurrentTemperature` reading (tenths
@@ -283,6 +373,14 @@ pub fn get_cpu_temperature(wmi: &WMIConnection) -> Option<u32> {
 #[cfg(not(windows))]
 pub fn get_cpu_temperature() -> Option<u32> {
     None
+}
+
+/// Raw CPUID processor signature (computed family/model/stepping). See
+/// [`detect_cpu_signature`].
+pub struct CpuSignature {
+    pub family: Option<u8>,
+    pub model: Option<u8>,
+    pub stepping: Option<u8>,
 }
 
 /// AMD CPU Topology Information

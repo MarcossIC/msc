@@ -23,6 +23,21 @@ pub struct CpuInfo {
     pub physical_cores: usize,
     pub logical_cores: usize,
     pub architecture: String,
+
+    // Raw CPUID processor signature (leaf 1), COMPUTED family/model/stepping
+    // (base + extended folded the way AMD/Intel define them). e.g. AMD Zen 5 =
+    // family 0x1A, model 0x60 — the same hex values MSI Afterburner shows. For AMD
+    // the family is the ground truth behind the microarchitecture label. None when
+    // CPUID wasn't read (non-Windows collection path).
+    pub cpu_family: Option<u8>,
+    pub cpu_model: Option<u8>,
+    pub cpu_stepping: Option<u8>,
+
+    /// Loaded microcode (patch) revision, e.g. `0xB600032`. Read driver-less from
+    /// the Windows registry (`CentralProcessor\0\Current Record Version`), the same
+    /// value tools like HWiNFO label "MCU". None on non-Windows / when absent.
+    pub cpu_microcode: Option<u32>,
+
     pub frequency_mhz: u64,
     pub max_frequency_mhz: Option<u64>,
     pub turbo_boost_enabled: Option<bool>, // Intel Turbo Boost / AMD Precision Boost
@@ -224,9 +239,11 @@ pub struct MotherboardInfo {
     pub version: Option<String>, // Board revision (e.g., "Rev 1.0")
     pub bios_vendor: Option<String>,
     pub bios_version: Option<String>,
+    pub bios_date: Option<String>, // BIOS release date, SMBIOS MM/DD/YYYY (registry)
     pub chipset: Option<String>, // Chipset name (e.g., "Intel Z790", "AMD X670")
     pub tpm_version: Option<TpmVersion>, // TPM version (1.2, 2.0)
     pub secure_boot: Option<SecureBootStatus>, // UEFI Secure Boot state (registry)
+    pub firmware_mode: Option<String>, // Boot firmware: "UEFI" / "Legacy (BIOS)" (GetFirmwareType)
     pub dimm_slots: Option<u32>, // Total DIMM/RAM slots
     pub pcie_slots: Option<Vec<PcieSlot>>, // PCIe slot information
     pub m2_slots_total: Option<u32>, // Total M.2 slots
@@ -575,13 +592,53 @@ impl std::fmt::Display for SmartStatus {
 /// Operating System Information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsInfo {
+    /// Honest product name, e.g. "Windows 11 Home". On Windows this is DERIVED
+    /// from the build number (registry `ProductName`/`CurrentMajorVersionNumber`
+    /// still say "Windows 10"/10 on 11 — never updated for the 10→11 jump), not
+    /// copied from the lying registry string.
     pub name: String,
     pub version: String,
+    /// Friendly edition + raw `EditionID`, e.g. "Home (Core)". Windows-only.
+    pub edition: Option<String>,
+    /// Feature-update display version, e.g. "25H2" (registry `DisplayVersion`).
+    pub display_version: Option<String>,
+    /// Full build with update revision, e.g. "26200.8655" (`CurrentBuild`.`UBR`).
     pub build: Option<String>,
     pub architecture: String,
     pub kernel_version: Option<String>,
+    /// Hypervisor-protected Code Integrity (HVCI / memory integrity) state.
+    pub hvci: Option<HvciStatus>,
+    /// Interactive user the tool runs as, e.g. "MARCOS\\marco".
+    pub current_user: Option<String>,
     /// Seconds since last boot (sysinfo `System::uptime`, GetTickCount64 under the hood on Windows).
     pub uptime_secs: Option<u64>,
+}
+
+/// Hypervisor-protected Code Integrity (a.k.a. "memory integrity") state.
+///
+/// Sourced from `Win32_DeviceGuard` (DeviceGuard WMI namespace): the
+/// `SecurityServicesConfigured`/`SecurityServicesRunning` arrays carry service
+/// id `2` for HVCI. We deliberately separate *configured by policy* from
+/// *actually running now* — reporting "Enabled" when it's only configured but
+/// not running would be a lie.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum HvciStatus {
+    /// HVCI is actively running (service id 2 in `SecurityServicesRunning`).
+    Running,
+    /// Configured by policy but NOT currently running (e.g. VBS off, pending reboot).
+    ConfiguredNotRunning,
+    /// Neither configured nor running.
+    Off,
+}
+
+impl std::fmt::Display for HvciStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HvciStatus::Running => write!(f, "Enabled (running)"),
+            HvciStatus::ConfiguredNotRunning => write!(f, "Configured (not running)"),
+            HvciStatus::Off => write!(f, "Off"),
+        }
+    }
 }
 
 /// NPU Information (Neural Processing Unit)

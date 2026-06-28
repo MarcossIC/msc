@@ -7,6 +7,7 @@ pub mod gpu;
 pub mod mbo;
 pub mod network;
 pub mod nvme_smart;
+pub mod os;
 pub mod pcie_link;
 pub mod ram;
 pub mod storage;

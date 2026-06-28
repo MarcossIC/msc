@@ -1,6 +1,6 @@
 [package]
 name = "msc"
-version = "0.1.13"
+version = "0.1.14"
 edition = "2021"
 authors = ["MSC Contributors"]
 description = "Multi-purpose CLI tool for system monitoring, media management, and productivity"
@@ -71,7 +71,6 @@ flate2 = "1.1.9"
 xz2 = "0.1.7"
 # System information
 sysinfo = "0.38.4"
-raw-cpuid = "11.6.0"
 once_cell = "1.21.4"
 parking_lot = "0.12.5"
 battery = "0.7.8"
@@ -79,6 +78,12 @@ tempfile = "3.27.0"
 
 # NVIDIA Management Library (works on Windows and Linux)
 nvml-wrapper = { version = "0.12.1", optional = true }
+
+# CPUID is an x86-only instruction; raw-cpuid is unusable on ARM (Snapdragon /
+# Apple silicon), so only pull it for x86/x86_64 targets. The CPUID readers in
+# platform/system/windows/cpu.rs have non-x86 stubs gated the same way.
+[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
+raw-cpuid = "11.6.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser", "consoleapi", "processthreadsapi", "winnt", "securitybaseapi", "handleapi"] }

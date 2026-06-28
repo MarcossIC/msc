@@ -12,7 +12,7 @@ pub fn get_motherboard_info() -> Result<MotherboardInfo> {
     ))
 }
 
-/// Baseboard + BIOS query result (5 fields).
+/// Baseboard + BIOS query result.
 #[cfg(windows)]
 pub struct BaseboardBiosInfo {
     pub manufacturer: Option<String>,
@@ -20,11 +20,84 @@ pub struct BaseboardBiosInfo {
     pub version: Option<String>,
     pub bios_vendor: Option<String>,
     pub bios_version: Option<String>,
+    pub bios_date: Option<String>,
 }
 
-/// Query baseboard + BIOS via direct WMI (2 small queries on the same connection).
+/// Get baseboard + BIOS data, **registry first** with a WMI fallback.
+///
+/// Windows publishes baseboard/BIOS strings under
+/// `HKLM\HARDWARE\DESCRIPTION\System\BIOS` — the kernel fills it from SMBIOS at
+/// boot. It's driver-less, faster than WMI (no COM handshake) and, in practice,
+/// MORE reliable: some OEM laptops return empty `Win32_BaseBoard`/`Win32_BIOS`
+/// rows over WMI even though the registry has the data. We read the registry
+/// first and only fall back to WMI to fill any gap (and the registry is also the
+/// only one of the two that carries the BIOS release date here).
 #[cfg(windows)]
 pub fn get_baseboard_bios() -> BaseboardBiosInfo {
+    let reg = read_baseboard_bios_registry();
+
+    // Fast path: the registry had the essentials — skip WMI/COM entirely.
+    if reg.product.is_some() && reg.bios_version.is_some() {
+        return reg;
+    }
+
+    // Fallback: fill whatever the registry was missing from WMI (per-field `.or`).
+    let wmi = read_baseboard_bios_wmi();
+    BaseboardBiosInfo {
+        manufacturer: reg.manufacturer.or(wmi.manufacturer),
+        product: reg.product.or(wmi.product),
+        version: reg.version.or(wmi.version),
+        bios_vendor: reg.bios_vendor.or(wmi.bios_vendor),
+        bios_version: reg.bios_version.or(wmi.bios_version),
+        bios_date: reg.bios_date.or(wmi.bios_date),
+    }
+}
+
+/// Read baseboard + BIOS strings from the registry (driver-less, no admin).
+#[cfg(windows)]
+fn read_baseboard_bios_registry() -> BaseboardBiosInfo {
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    let empty = || BaseboardBiosInfo {
+        manufacturer: None,
+        product: None,
+        version: None,
+        bios_vendor: None,
+        bios_version: None,
+        bios_date: None,
+    };
+
+    let key = match RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"HARDWARE\DESCRIPTION\System\BIOS")
+    {
+        Ok(k) => k,
+        Err(_) => return empty(),
+    };
+
+    // Trim and drop empty strings so a present-but-blank value reads as absent.
+    let get = |name: &str| -> Option<String> {
+        key.get_value::<String, _>(name)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    BaseboardBiosInfo {
+        manufacturer: get("BaseBoardManufacturer"),
+        product: get("BaseBoardProduct"),
+        version: get("BaseBoardVersion"),
+        bios_vendor: get("BIOSVendor"),
+        bios_version: get("BIOSVersion"),
+        bios_date: get("BIOSReleaseDate"),
+    }
+}
+
+/// Fallback: baseboard + BIOS via direct WMI (2 small queries on one connection).
+/// No BIOS date here — `Win32_BIOS.ReleaseDate` is a CIM datetime; the registry
+/// already gives a clean `MM/DD/YYYY`, so we only source the date from there.
+#[cfg(windows)]
+fn read_baseboard_bios_wmi() -> BaseboardBiosInfo {
     #[derive(Deserialize)]
     #[serde(rename_all = "PascalCase")]
     struct Win32BaseBoard {
@@ -47,6 +120,7 @@ pub fn get_baseboard_bios() -> BaseboardBiosInfo {
         version: None,
         bios_vendor: None,
         bios_version: None,
+        bios_date: None,
     };
 
     let wmi = match WMIConnection::new() {
@@ -68,6 +142,35 @@ pub fn get_baseboard_bios() -> BaseboardBiosInfo {
         version: nz(bb.as_ref().and_then(|b| b.version.clone())),
         bios_vendor: nz(bi.as_ref().and_then(|b| b.manufacturer.clone())),
         bios_version: nz(bi.as_ref().and_then(|b| b.smbios_bios_version.clone())),
+        bios_date: None,
+    }
+}
+
+/// Detect the boot firmware mode (UEFI vs legacy BIOS) via `GetFirmwareType`
+/// (kernel32) — driver-less, no admin. Returns `None` when the call fails or the
+/// firmware type is unknown, so the caller simply omits the field.
+#[cfg(windows)]
+pub fn detect_firmware_mode() -> Option<String> {
+    use windows_sys::Win32::System::SystemInformation::{GetFirmwareType, FIRMWARE_TYPE};
+
+    let mut firmware_type: FIRMWARE_TYPE = 0;
+    // SAFETY: GetFirmwareType writes a single FIRMWARE_TYPE through the out-pointer;
+    // `firmware_type` is a valid, initialized stack slot for the whole call.
+    let ok = unsafe { GetFirmwareType(&mut firmware_type) };
+    if ok == 0 {
+        return None;
+    }
+    firmware_type_label(firmware_type)
+}
+
+/// Map a `FIRMWARE_TYPE` to a display label. Pure (no FFI) so it's unit-testable;
+/// the `unsafe` `GetFirmwareType` call stays isolated in [`detect_firmware_mode`].
+/// Values per the Win32 `FIRMWARE_TYPE` enum: 1 = BIOS, 2 = UEFI.
+fn firmware_type_label(firmware_type: i32) -> Option<String> {
+    match firmware_type {
+        1 => Some("Legacy (BIOS)".to_string()),
+        2 => Some("UEFI".to_string()),
+        _ => None, // 0 Unknown / 3 Max — don't guess.
     }
 }
 
@@ -86,9 +189,11 @@ pub fn get_motherboard_info() -> Result<MotherboardInfo> {
         version: bb.version,
         bios_vendor: bb.bios_vendor,
         bios_version: bb.bios_version,
+        bios_date: bb.bios_date,
         chipset,
         tpm_version,
         secure_boot: detect_secure_boot(),
+        firmware_mode: detect_firmware_mode(),
         dimm_slots,
         pcie_slots: None, // Would require Win32_SystemSlot query
         m2_slots_total,
@@ -337,6 +442,7 @@ pub fn detect_secure_boot() -> Option<crate::core::system_info::types::SecureBoo
 
 #[cfg(test)]
 mod tests {
+    use super::firmware_type_label;
     use super::map_tpm_version;
     use super::{classify_secure_boot, SecureBootProbe};
     use crate::core::system_info::types::SecureBootStatus;
@@ -358,6 +464,20 @@ mod tests {
     #[test]
     fn maps_tbs_unknown_constant_to_unknown() {
         assert_eq!(map_tpm_version(TPM_VERSION_UNKNOWN), TpmVersion::Unknown);
+    }
+
+    #[test]
+    fn firmware_uefi_and_bios_labels() {
+        assert_eq!(firmware_type_label(2), Some("UEFI".to_string()));
+        assert_eq!(firmware_type_label(1), Some("Legacy (BIOS)".to_string()));
+    }
+
+    #[test]
+    fn firmware_unknown_values_are_none() {
+        // 0 = FirmwareTypeUnknown, 3 = FirmwareTypeMax, anything else → don't guess.
+        assert_eq!(firmware_type_label(0), None);
+        assert_eq!(firmware_type_label(3), None);
+        assert_eq!(firmware_type_label(99), None);
     }
 
     #[test]

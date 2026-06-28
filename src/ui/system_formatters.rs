@@ -187,14 +187,47 @@ fn print_cpu_info(cpu: &CpuInfo) {
         format!("{} physical, {} logical", cpu.physical_cores, cpu.logical_cores),
     );
 
-    // Detect microarchitecture
-    let microarch = detect_cpu_microarchitecture(&cpu.model);
-    let arch_str = if let Some(ref ma) = microarch {
-        format!("{} ({})", cpu.architecture, ma)
-    } else {
+    // Microarchitecture. For AMD the CPUID family is GROUND TRUTH (family 0x1A ≡
+    // Zen 5, by AMD's definition) — used as the primary source, with the marketing
+    // string heuristic as fallback. Intel reports every Core generation as family
+    // 6, so the family is useless there and we keep the string heuristic. We then
+    // append the raw CPUID family/model in hex (matching tools like MSI Afterburner,
+    // e.g. "Family 1Ah Model 60h") to pin the exact silicon.
+    let is_amd = cpu.vendor.eq_ignore_ascii_case("AuthenticAMD");
+    let microarch = cpu
+        .cpu_family
+        .filter(|_| is_amd)
+        .and_then(amd_microarch_from_family)
+        .or_else(|| detect_cpu_microarchitecture(&cpu.model));
+
+    let mut arch_parts: Vec<String> = Vec::new();
+    if let Some(ma) = microarch {
+        arch_parts.push(ma);
+    }
+    if let Some(family) = cpu.cpu_family {
+        arch_parts.push(format!("Family {:X}h", family));
+    }
+    if let Some(model) = cpu.cpu_model {
+        arch_parts.push(format!("Model {:X}h", model));
+    }
+    let arch_str = if arch_parts.is_empty() {
         cpu.architecture.clone()
+    } else {
+        format!("{} ({})", cpu.architecture, arch_parts.join(" · "))
     };
     s.field(2, "Architecture", arch_str);
+
+    // Silicon stepping. Only shown when NON-zero: a stepping of 0 (the A0 revision)
+    // carries no signal on its own, so we treat it as "nothing" and omit the line.
+    if let Some(stepping) = cpu.cpu_stepping.filter(|&s| s != 0) {
+        s.field(2, "Stepping", stepping.to_string());
+    }
+
+    // Loaded microcode revision — the value HWiNFO labels "MCU", read driver-less
+    // from the registry. Hex to match how every tool prints it (e.g. 0xB600032).
+    if let Some(microcode) = cpu.cpu_microcode {
+        s.field(2, "Microcode", format!("0x{:X}", microcode));
+    }
 
     s.field(
         2,
@@ -652,6 +685,17 @@ fn print_motherboard_info(mb: &MotherboardInfo) {
         has_data = true;
     }
 
+    if let Some(ref bios_date) = mb.bios_date {
+        s.field(2, "BIOS Date", bios_date);
+        has_data = true;
+    }
+
+    // Boot firmware mode (UEFI vs legacy BIOS) — driver-less via GetFirmwareType.
+    if let Some(ref firmware_mode) = mb.firmware_mode {
+        s.field(2, "Firmware", firmware_mode);
+        has_data = true;
+    }
+
     if let Some(ref tpm) = mb.tpm_version {
         s.field(2, "TPM", tpm);
         has_data = true;
@@ -1051,7 +1095,15 @@ fn print_os_info(os: &OsInfo) {
     let mut s = Section::new();
 
     s.field(2, "Name", &os.name);
-    s.field(2, "Version", &os.version);
+
+    if let Some(ref edition) = os.edition {
+        s.field(2, "Edition", edition);
+    }
+
+    // Prefer the Windows feature-update version (e.g. "25H2"); fall back to the
+    // generic sysinfo version string on other platforms.
+    let version_line = os.display_version.as_deref().unwrap_or(os.version.as_str());
+    s.field(2, "Version", version_line);
 
     if let Some(ref build) = os.build {
         s.field(2, "Build", build);
@@ -1061,6 +1113,21 @@ fn print_os_info(os: &OsInfo) {
 
     if let Some(ref kernel) = os.kernel_version {
         s.field(2, "Kernel", kernel);
+    }
+
+    // HVCI (memory integrity). Running = green; configured-but-not-running =
+    // yellow (a gap worth noticing); Off = neutral/dimmed (a fact, not a fault).
+    if let Some(hvci) = os.hvci {
+        let hvci_str = match hvci {
+            HvciStatus::Running => hvci.to_string().green(),
+            HvciStatus::ConfiguredNotRunning => hvci.to_string().yellow(),
+            HvciStatus::Off => hvci.to_string().dimmed(),
+        };
+        s.field(2, "HVCI", hvci_str);
+    }
+
+    if let Some(ref user) = os.current_user {
+        s.field(2, "User", user);
     }
 
     if let Some(uptime) = os.uptime_secs {
@@ -1521,4 +1588,57 @@ fn detect_cpu_microarchitecture(model: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Map an AMD CPUID family id to its Zen microarchitecture — the GROUND TRUTH.
+///
+/// AMD defines the microarchitecture by CPUID family, so this is far more reliable
+/// than pattern-matching the marketing name (`detect_cpu_microarchitecture`): a
+/// "Ryzen AI 7 350" gives no numeric hint that it's Zen 5, but its family `0x1A`
+/// does, by definition.
+///
+/// Family alone cannot always pin the exact generation, and we DON'T pretend it
+/// can — `0x19` is shared by Zen 3 AND Zen 4 (reported honestly as `Zen 3/4`), and
+/// `0x17` covers Zen / Zen+ / Zen 2 (reported as `Zen`). Disambiguating those would
+/// need per-model ranges — the same maintenance burden as the string heuristic — so
+/// we stop at what the family proves. `None` for any family we don't map, letting
+/// the caller fall back to the marketing-string heuristic.
+fn amd_microarch_from_family(family: u8) -> Option<String> {
+    match family {
+        0x1A => Some("Zen 5".to_string()),
+        0x19 => Some("Zen 3/4".to_string()),
+        0x17 => Some("Zen".to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::amd_microarch_from_family;
+
+    #[test]
+    fn maps_zen5_from_family_1a() {
+        // AMD Zen 5 (Ryzen 9000 / Ryzen AI 300) reports CPUID family 0x1A.
+        assert_eq!(amd_microarch_from_family(0x1A), Some("Zen 5".to_string()));
+    }
+
+    #[test]
+    fn maps_shared_family_19_honestly() {
+        // 0x19 is BOTH Zen 3 and Zen 4 — family alone can't separate them.
+        assert_eq!(amd_microarch_from_family(0x19), Some("Zen 3/4".to_string()));
+    }
+
+    #[test]
+    fn maps_family_17_to_generic_zen() {
+        // 0x17 spans Zen / Zen+ / Zen 2.
+        assert_eq!(amd_microarch_from_family(0x17), Some("Zen".to_string()));
+    }
+
+    #[test]
+    fn unknown_family_falls_through_to_none() {
+        // Older (0x15 Bulldozer) or future families aren't mapped — caller falls
+        // back to the marketing-string heuristic instead of guessing.
+        assert_eq!(amd_microarch_from_family(0x15), None);
+        assert_eq!(amd_microarch_from_family(0x00), None);
+    }
 }
