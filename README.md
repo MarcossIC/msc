@@ -1,235 +1,231 @@
 # MSC CLI
 
-[![Release](https://img.shields.io/github/v/release/marco/msc?style=flat-square)](https://github.com/MarcossIC/msc/releases)
-[![Downloads](https://img.shields.io/github/downloads/marco/msc/total?style=flat-square)](https://github.com/MarcossIC/msc/releases)
+[![Release](https://img.shields.io/github/v/release/MarcossIC/msc?style=flat-square)](https://github.com/MarcossIC/msc/releases)
+[![Downloads](https://img.shields.io/github/downloads/MarcossIC/msc/total?style=flat-square)](https://github.com/MarcossIC/msc/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![CI](https://img.shields.io/github/actions/workflow/status/marco/msc/release.yml?style=flat-square&label=CI)](https://github.com/MarcossIC/msc/actions)
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange?style=flat-square)](https://www.rust-lang.org)
+[![CI](https://img.shields.io/github/actions/workflow/status/MarcossIC/msc/release.yml?style=flat-square&label=CI)](https://github.com/MarcossIC/msc/actions)
+[![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square)](https://www.rust-lang.org)
 
 Multi-purpose command-line interface tool for system monitoring, media management, and productivity.
 
-[Installation](#installation) | [Features](#features) | [Documentation](docs/) | [Contributing](#contributing)
+[Installation](#installation) | [Features](#features) | [Commands](#all-commands) | [Documentation](docs/) | [Contributing](#contributing)
 
 ## Features
 
-- 🖥️ **System Monitoring** - Real-time TUI dashboard with CPU, GPU, memory, network, and disk metrics
-- 📊 **Hardware Information** - Detailed system specifications (CPU, GPU, RAM, motherboard, storage, battery)
-- 📹 **Video Downloading** - Download videos from 1000+ platforms (YouTube, Vimeo, TikTok, Twitch, etc.)
-- ✂️ **Video Editing** - Compress and convert videos with FFmpeg integration
-- 🌐 **Website Archiving** - Mirror websites for offline viewing with link conversion
-- 🧹 **System Cleanup** - Safe temporary file removal with age-based filtering and safety validations
-- ⚡ **Global Aliases** - Create command shortcuts accessible anywhere (~369KB per alias)
-- 📁 **Workspace Management** - Configure and manage project directories
-- 🎨 **Git Integration** - Color-coded file status and gitignore support
+- 🖥️ **Hardware Information** — Deep system report: CPU (microarch from CPUID, microcode, stepping, temperature), GPU, RAM, motherboard + BIOS/UEFI, storage, monitors (EDID), network, OS, battery
+- 💽 **Drive Health** — NVMe SMART via native IOCTL: wear level, TBW, power-on hours, temperature — no admin required
+- 🔐 **Security Posture** — TPM version (TBS), Secure Boot state, HVCI, virtualization support
+- 📊 **JSON Output** — `sys info --json` for scripting and dashboards
+- 📈 **Real-Time Monitoring** — TUI dashboard with CPU, GPU, memory, network, disk, and top processes
+- 📹 **Video Downloading** — 1000+ platforms via yt-dlp (YouTube, Vimeo, TikTok, Twitch…), with browser cookie import
+- ✂️ **Video Compression** — FFmpeg presets with before/after stats
+- 🌐 **Website Archiving** — Mirror sites for offline viewing with regex URL filtering and link rewriting
+- 🧹 **System Cleanup** — Age-based temp removal with dry-run, path validation, and work-cache mode
+- ⚡ **Global Aliases** — Command shortcuts available anywhere in your shell *(Windows)*
+- 📁 **Workspace Management** — Register and map project directories
+
+### Platform support
+
+| Area | Windows | Linux / macOS |
+| ---- | ------- | ------------- |
+| `sys info` | Full detail (WMI, registry, IOCTL, TBS, EDID) | Reduced — core CPU/RAM/OS/disk only |
+| `sys monitor` | ✅ | ✅ |
+| `vget` / `vedit` / `wget` | ✅ | ✅ |
+| `clean` / `work` / `set` / `get` / `list` | ✅ | ✅ |
+| `alias` | ✅ | ❌ (shim is a Windows executable) |
 
 ## Installation
 
 ### Windows
 
-#### Via winget (Recommended - Coming Soon)
-```powershell
-winget install MSC
-```
+**MSI Installer** — download the latest `.msi` from [releases](https://github.com/MarcossIC/msc/releases) and run it. It adds `msc` to your PATH automatically.
 
-#### Via MSI Installer
-Download the latest `.msi` installer from [releases](https://github.com/MarcossIC/msc/releases) and run it. The installer will automatically add `msc` to your PATH.
-
-#### Via PowerShell Script
+**PowerShell**
 ```powershell
 irm https://github.com/MarcossIC/msc/releases/latest/download/msc-installer.ps1 | iex
 ```
 
-### macOS
+### macOS / Linux
 
-#### Via Homebrew (Coming Soon)
-```bash
-brew tap marco/msc
-brew install msc
-```
-
-#### Via Install Script
 ```bash
 curl -sSL https://github.com/MarcossIC/msc/releases/latest/download/msc-installer.sh | sh
 ```
 
-### Linux
-
-#### Arch Linux (AUR - Coming Soon)
+**Manual (Linux)**
 ```bash
-yay -S msc-bin
-# or
-paru -S msc-bin
-```
-
-#### Via Install Script (Universal)
-```bash
-curl -sSL https://github.com/MarcossIC/msc/releases/latest/download/msc-installer.sh | sh
-```
-
-#### Manual Installation
-```bash
-# Download the appropriate tarball for your architecture
-# x86_64:
 wget https://github.com/MarcossIC/msc/releases/latest/download/msc-x86_64-unknown-linux-gnu.tar.xz
-
-# Extract and install
 tar -xf msc-x86_64-unknown-linux-gnu.tar.xz
 sudo mv msc /usr/local/bin/
 ```
 
 ### From Source
 
-Requires Rust toolchain (install from [rustup.rs](https://rustup.rs))
+Requires a recent stable Rust toolchain ([rustup.rs](https://rustup.rs)).
 
 ```bash
 git clone https://github.com/MarcossIC/msc.git
 cd msc
 cargo build --release
-
-# Binary will be at: target/release/msc (or msc.exe on Windows)
+# Binary at: target/release/msc (msc.exe on Windows)
 ```
 
 ### Updating
-
-MSC includes a built-in self-update feature:
 
 ```bash
 msc update
 ```
 
-**Note:** On Windows, you may need to run your terminal as Administrator to update if MSC was installed to `Program Files`.
+Downloads, verifies, and installs the latest GitHub release in place. On Windows, run the terminal as Administrator if MSC lives in `Program Files`.
 
 ### System Requirements
 
-- **Windows**: Windows 10/11 (x64)
-- **macOS**: macOS 11+ (Intel and Apple Silicon)
-- **Linux**: Any modern distribution (x64 or ARM64)
-- **Disk Space**: ~20-30 MB
-- **Optional Dependencies**:
-  - FFmpeg - For video editing features
-  - yt-dlp - For video downloading features (auto-downloaded by MSC if needed)
-  - wget - For website archiving features (auto-downloaded by MSC if needed)
+- **Windows** 10/11 (x64) · **macOS** 11+ (Intel & Apple Silicon) · **Linux** (x64 / ARM64)
+- **Disk**: ~20–30 MB
+- **Optional**: FFmpeg (`vedit`), yt-dlp (`vget`), wget (`wget`) — yt-dlp and FFmpeg are auto-installed on first use
 
 ## Quick Start
 
-### System Monitoring
+### System Information
 
 ```bash
-# Show detailed hardware information
-msc sys info
+msc sys info                    # Full hardware report
+msc sys info --cpu --gpu        # Filter: combine flags freely
+msc sys info --ram --mbo
+msc sys info --os --energy --network
 
-# Filter specific components
-msc sys info --cpu
-msc sys info --gpu
-msc sys info --ram
-msc sys info --energy
+msc sys info --json             # Machine-readable output
+msc sys info --json --compact   # Single-line JSON
 
-# Real-time monitoring dashboard (TUI)
-msc sys monitor
+msc sys info --wan              # Opt-in: public IP + internet latency (~370ms)
+msc sys info --profile          # Per-section timing breakdown
+msc sys info --no-cache         # Bypass the disk cache
+msc sys info --clear-cache      # Wipe the cache, then run fresh
+```
+
+`--wan` is off by default because it costs a network round-trip. Skipped fields are omitted, never reported as failures.
+
+### Real-Time Monitor
+
+```bash
+msc sys monitor                     # Full TUI dashboard
+msc sys monitor -i 500              # 500ms refresh interval
+msc sys monitor --cpu-only          # Or --gpu-only / --memory-only
+msc sys monitor --network --disks   # Force these panels on
+msc sys monitor -p 20               # Top 20 processes
+msc sys monitor --json              # Non-interactive JSON stream
 ```
 
 ### Video Downloading
 
 ```bash
-# Download a video
-msc vget "https://www.youtube.com/watch?v=..."
+msc vget "https://youtube.com/watch?v=..."
+msc vget "URL" -q 1080p                  # 2160p|1080p|720p|480p|360p|best
+msc vget "URL" -f mkv                    # mp4|mkv|webm|avi
+msc vget "URL" -o my_video               # Custom filename
+msc vget "URL" --audio-only
+msc vget "URL" --playlist                # Or --no-playlist to force single
+msc vget "URL" --clean-parts             # Remove orphaned .part files first
+msc vget "URL" --no-continue             # Restart from scratch
 
-# Download with quality selection
-msc vget "URL" --quality 1080p
-
-# Download playlist
-msc vget "playlist-url" --playlist
-
-# Download with browser cookies (for private content)
-msc vget "URL" --cookies chrome
+# Authenticated content
+msc vget "URL" --cb                      # Chrome cookies (default)
+msc vget "URL" --cb firefox              # firefox|chrome:Default|edge|safari|brave
+msc vget "URL" --cookies cookies.txt     # Netscape-format cookie file
 ```
+
+`--cb` reads cookies from an installed browser. `--cookies` loads them from a file — they are not interchangeable.
 
 ### Website Archiving
 
 ```bash
-# Download a website for offline viewing
-msc wget "https://example.com"
+msc wget "https://example.com"                    # Single page + resources
+msc wget "https://example.com" my-site            # Into a named folder
+msc wget "https://example.com" --all              # Mirror the whole site
 
-# Download recursively (mirror entire site)
-msc wget "https://example.com" -r
+# Filtering the crawl
+msc wget "https://blog.com" --all --pattern '/posts/.*'
+msc wget "https://blog.com" --all --exclude '/feed/'
+msc wget "https://blog.com" --all --pattern '/posts/.*' --exclude '#comment'
+msc wget "https://blog.com" --all --limit 150     # Cap total pages
 
-# Download with custom depth
-msc wget "https://example.com" -r --depth 3
+# Cookies
+msc wget "URL" --cookies 'session=abc123; age_verified=1'
+msc wget cookies https://example.com --browser chrome --format json
+msc wget cookies https://instagram.com --cdp      # Chrome 127+ App-Bound Encryption
+
+# Re-run link rewriting without re-downloading
+msc wget postprocessing ./my-site -u https://example.com
 ```
 
 ### System Cleanup
 
 ```bash
-# Preview what would be cleaned (dry run)
-msc clean start --dry-run
+msc clean start --dry-run          # Always preview first
+msc clean start                    # Delete temp files older than 24h
+msc clean start --min-age 48       # Custom age threshold
+msc clean start --include-recycle  # Or --IR
+msc clean start --work-cache       # Or -WC: node_modules, target, dist in workspaces
+msc clean start --include-recent   # ⚠️ Ignores age filter entirely
 
-# Clean temporary files (default: 24 hours old)
-msc clean start
+msc clean list                     # Show every configured path
+msc clean add C:\MyTempFolder      # Add a custom path (validated)
+msc clean remove                   # Interactive removal
+msc clean reset                    # Back to defaults
 
-# Clean with specific age threshold (48 hours)
-msc clean start --min-age 48
-
-# Clean work cache (node_modules, target, dist)
-msc clean start --work-cache
-
-# List all paths that will be cleaned
-msc clean list
+msc clean ignore list              # Folders skipped by --work-cache
+msc clean ignore add my-project
+msc clean ignore remove my-project
 ```
 
-### Global Alias System
+### Global Aliases *(Windows)*
 
 ```bash
-# Initialize the alias system
-msc alias init
-
-# Create a new alias
+msc alias init                                  # Register the alias dir in PATH
 msc alias add gs "git status"
-msc alias add cb "cargo build --release"
-msc alias add pyh "python -m http.server 5000"
-
-# List all aliases
+msc alias add cb "cargo build --release" -d "Release build"
 msc alias list
-
-# Remove an alias
 msc alias remove gs
+msc alias nuke                                  # ⚠️ Remove the entire alias system
 
-# After creating aliases, use them directly:
-gs      # Runs: git status
-cb      # Runs: cargo build --release
-pyh     # Runs: python -m http.server 5000
+# Then use them directly:
+gs
+cb
 ```
 
-## Updating
+Each alias is a standalone shim executable, so it works from any shell — cmd, PowerShell, or Git Bash.
 
-MSC includes a built-in self-update feature (coming soon):
+### Files & Workspaces
 
 ```bash
-msc update
+msc list                    # List current directory (git-aware colors)
+msc list -a                 # Include hidden files
+msc list -l                 # Long/table format
+msc list -d --depth 3       # Recursive, max depth 3
+
+msc work map                # Register project folders as workspaces
+msc work list
 ```
-
-This will check for the latest version and update automatically.
-
-**Windows Note:** You may need to run your terminal as Administrator to update if MSC is installed in Program Files.
-
-Alternatively, download the latest installer from [releases](https://github.com/MarcossIC/msc/releases).
 
 ## Configuration
 
-MSC stores configuration in:
-- **Windows**: `%APPDATA%\msc\`
-- **Aliases**: `%APPDATA%\msc\aliases\`
+Config lives at `<config-dir>/msc/`:
 
-### Setting Directories
+| OS | Path |
+| -- | ---- |
+| Windows | `%APPDATA%\msc\` |
+| Linux | `~/.config/msc/` |
+| macOS | `~/Library/Application Support/msc/` |
+
+Aliases go in the `aliases/` subdirectory.
 
 ```bash
-# Set workspace directory
-msc set work C:\Users\YourName\Projects
+msc set work   C:\Users\You\Projects    # Workspace root
+msc set video  C:\Users\You\Videos      # vget destination
+msc set web    C:\Users\You\Web         # wget destination
 
-# Set video downloads directory
-msc set video C:\Users\YourName\Videos
-
-# Set web downloads directory
-msc set web C:\Users\YourName\Downloads\Web
+msc get work
+msc get video
+msc get web
 ```
 
 ## All Commands
@@ -238,176 +234,147 @@ msc set web C:\Users\YourName\Downloads\Web
 msc <COMMAND>
 
 Commands:
-  hello       Say hello
-  version     Show version information
-  list        List files and directories
-  set         Set configuration values
-  get         Get configuration values
-  work        Workspace management
-  alias       Global alias management
-  clean       Cleanup temporary files
-  vget        Download videos from online platforms
-  vedit       Edit and compress videos
-  wget        Download websites for offline viewing
-  sys         System information and monitoring
-  help        Print this message or the help of the given subcommand(s)
+  sys       System information and monitoring (info, monitor)
+  vget      Download videos from 1000+ platforms
+  vedit     Compress and convert videos
+  wget      Download websites for offline viewing
+  clean     Cleanup temporary files and caches
+  alias     Global alias management (Windows)
+  work      Workspace management
+  list      List files and directories
+  set       Set configuration values
+  get       Get configuration values
+  update    Update MSC to the latest version
+  version   Show version information
+  hello     Say hello
+  help      Print help for any command
 ```
 
-## Advanced Usage
-
-### Video Editing
+Shell completions are also available (hidden from help):
 
 ```bash
-# Compress video with quality preset
-msc vedit comp high video.mp4
-msc vedit comp medium video.mp4
-msc vedit comp low video.mp4
-
-# Supported formats: mp4, mkv, webm, avi, mov, wmv, flv, m4v
+msc completions bash        # bash|zsh|fish|powershell|elvish
 ```
 
-### Workspace Management
+## Video Compression
 
 ```bash
-# Map workspace structure
-msc work map
-
-# List workspace contents
-msc work list
+msc vedit comp low    video.mp4    # CRF 28, fast preset, 96k audio
+msc vedit comp medium video.mp4    # CRF 23, medium preset, 128k audio
+msc vedit comp high   video.mp4    # CRF 18, slow preset, 192k audio
 ```
 
-### Browser Cookie Extraction
-
-```bash
-# Extract cookies for wget/vget (for authenticated downloads)
-# Supports: Chrome, Edge, Firefox, Brave, LibreWolf
-msc wget cookies --browser chrome
-```
+Output is written alongside the source with `_compress` appended. Supported: mp4, mkv, webm, avi, mov, wmv, flv, m4v.
 
 ## Architecture
-
-The project follows a modular architecture:
 
 ```
 msc/
 ├── src/
-│   ├── commands/        # CLI command handlers
-│   ├── core/           # Business logic
-│   │   ├── system_info/      # Hardware information collection
-│   │   ├── system_monitor/   # Real-time monitoring
-│   │   ├── wget/             # Website downloading
-│   │   ├── alias.rs          # Alias management
-│   │   ├── cleaner.rs        # Cleanup engine
-│   │   └── ...
-│   ├── ui/             # User interface components
-│   ├── platform/       # OS-specific code
-│   └── ...
-└── msc-shim/          # Lightweight alias executables
+│   ├── commands/            # CLI handlers (one per subcommand)
+│   ├── core/                # Business logic
+│   │   ├── system_info/     # Hardware collection (parallel, cached, profiled)
+│   │   ├── system_monitor/  # Real-time metrics
+│   │   ├── wget/            # Crawler + link post-processing
+│   │   ├── update/          # Self-update
+│   │   ├── alias.rs         # Alias management
+│   │   └── cleaner.rs       # Cleanup engine
+│   ├── platform/            # OS-specific code
+│   │   ├── system/windows/  # WMI, registry, IOCTL, TBS, EDID readers
+│   │   └── gpu/             # NVIDIA (NVML) and AMD backends
+│   ├── ui/                  # Rendering and TUI components
+│   └── git/                 # Git status integration
+└── msc-shim/                # Lightweight alias executable
 ```
+
+Design rule in `system_info`: **pure parsers are unit-tested against golden bytes; `unsafe` FFI fetchers are isolated and thin.** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Development
 
-### Building from Source
-
 ```bash
-# Clone repository
-git clone https://github.com/MarcossIC/msc.git
-cd msc
+cargo build                                  # Debug
+cargo build --release                        # Optimized
+cargo test                                   # Test suite
+cargo test -- --ignored                      # Hardware dumps (real device required)
+cargo run -- sys info                        # Run locally
 
-# Build debug version
-cargo build
-
-# Build optimized release version
-cargo build --release
-
-# Run tests
-cargo test
-
-# Run locally
-cargo run -- --help
+cargo clippy --all-targets --all-features    # Lint
+cargo fmt --all                              # Format
+cargo doc --open                             # Docs
 ```
 
-### Code Quality
+### Feature flags
 
-```bash
-# Run linter
-cargo clippy --all-targets --all-features
-
-# Format code
-cargo fmt --all
-
-# Generate documentation
-cargo doc --open
-```
+| Flag | Default | Purpose |
+| ---- | ------- | ------- |
+| `nvml` | ✅ | NVIDIA GPU metrics via NVML |
+| `rocm` | ❌ | AMD GPU metrics via ROCm SMI (Linux) |
 
 ## Troubleshooting
 
-### Windows Issues
-
-**"msc is not recognized as an internal or external command"**
-- MSC is not in your PATH. Reinstall using the MSI installer, or add manually:
-  1. Press Win + X → System → Advanced system settings
-  2. Environment Variables → Path → Edit
-  3. Add the directory containing msc.exe
+**`msc` is not recognized (Windows)**
+MSC isn't in your PATH. Reinstall via the MSI, or add the directory containing `msc.exe` manually: Win + X → System → Advanced system settings → Environment Variables → Path.
 
 **"Access Denied" during cleanup**
-- Some system directories require Administrator privileges
-- Run terminal as Administrator for system-wide cleanup
+Some system directories need elevation. MSC runs user directories first, then prompts for admin. Run the terminal as Administrator for a full system pass.
 
 **Video download fails**
-- Ensure yt-dlp is installed: `winget install yt-dlp` or download from https://github.com/yt-dlp/yt-dlp
+MSC auto-installs yt-dlp, but you can install it yourself: `winget install yt-dlp`.
 
 **FFmpeg not found**
-- Install FFmpeg: `winget install ffmpeg` or download from https://ffmpeg.org/download.html
+`winget install ffmpeg`, or grab it from [ffmpeg.org](https://ffmpeg.org/download.html).
+
+**`sys info` shows fewer fields on Linux/macOS**
+Expected. The deep readers (WMI, registry, NVMe IOCTL, TPM, EDID) are Windows-only. Non-Windows falls back to `sysinfo` for core data.
+
+**Cookie extraction fails on Chrome 127+**
+Chrome added App-Bound Encryption. Use `msc wget cookies URL --cdp` with Chrome running as `chrome.exe --remote-debugging-port=9222`, or add `--auto-launch`.
 
 ### Getting Help
 
 ```bash
-# General help
 msc --help
-
-# Command-specific help
 msc sys --help
-msc vget --help
-msc clean --help
+msc sys info --help
+msc clean start --help
 ```
+
+Every subcommand ships a detailed `--help` with examples.
 
 ## Security & Safety
 
-- **Path Validation**: Cleanup operations validate paths to prevent dangerous deletions
-- **Age-Based Filtering**: Default 24-hour minimum age for file deletion
-- **Dry-Run Mode**: Preview changes before executing
-- **Ignore Lists**: Configurable exclusion patterns
-- **Admin Escalation**: Prompts when elevated privileges needed
+- **Path validation** — protected system directories cannot be added to clean paths
+- **Age-based filtering** — 24-hour minimum by default; `--include-recent` is opt-in and warned about
+- **Dry-run mode** — preview every deletion before it happens
+- **Two-phase cleanup** — user directories first, system directories only after explicit elevation
+- **Ignore lists** — configurable exclusions for work-cache cleanup
+- **No admin for diagnostics** — SMART, TPM, and EDID readers run unprivileged by design
+
+See [docs/security.md](docs/security.md).
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
-4. Run tests (`cargo test`)
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
+4. Run `cargo test` and `cargo clippy --all-targets`
+5. Commit using [conventional commits](https://www.conventionalcommits.org/) (`git commit -m 'feat: add amazing feature'`)
+6. Push and open a Pull Request
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-- Uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for video downloading
-- Uses [FFmpeg](https://ffmpeg.org/) for video processing
-- Built with [Rust](https://www.rust-lang.org/)
-- TUI powered by [ratatui](https://github.com/ratatui-org/ratatui)
-- System information via [sysinfo](https://github.com/GuillaumeGomez/sysinfo)
+Built with [Rust](https://www.rust-lang.org/) · TUI by [ratatui](https://github.com/ratatui-org/ratatui) · CLI by [clap](https://github.com/clap-rs/clap) · base metrics from [sysinfo](https://github.com/GuillaumeGomez/sysinfo) · downloads via [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [FFmpeg](https://ffmpeg.org/)
 
 ## Support
 
 - 🐛 [Report bugs](https://github.com/MarcossIC/msc/issues)
 - 💡 [Request features](https://github.com/MarcossIC/msc/issues)
-- 📖 [View documentation](https://github.com/MarcossIC/msc/blob/main/README.md)
+- 📖 [Documentation](docs/)
 
 ---
 
-**Made with ❤️ by Marco**
+**Made with ❤️ by Marcos**
