@@ -21,6 +21,7 @@ pub mod validation;
 pub mod wget;
 pub mod workspace;
 pub mod yt_dlp_manager;
+pub mod yt_dlp_output;
 
 // Re-export commonly used items
 pub use alias::{Alias, AliasConfig};

@@ -165,4 +165,59 @@ impl YtDlpManager {
         println!("{}", "🔧 Iniciando yt-dlp (primera ejecución)...".cyan());
         self.install()
     }
+
+    /// Versión que reporta `yt-dlp --version` (formato fecha, ej. 2026.03.17)
+    pub fn version_of(path: &Path) -> Option<String> {
+        let output = Command::new(path).arg("--version").output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!version.is_empty()).then_some(version)
+    }
+
+    /// Actualiza yt-dlp con su propio updater (`-U`) en vez de re-descargarlo:
+    /// verifica el SHA-256 del release y sabe reemplazar el .exe en uso en Windows.
+    /// Si el yt-dlp del PATH vino de pip/winget, el mismo yt-dlp lo detecta e
+    /// indica qué gestor usar.
+    pub fn update(&mut self) -> Result<()> {
+        let path = self.ensure_yt_dlp()?;
+        let before = Self::version_of(&path);
+
+        println!("{}", "Actualizando yt-dlp...".cyan());
+        println!();
+
+        let status = Command::new(&path)
+            .arg("-U")
+            .status()
+            .context("No se pudo ejecutar yt-dlp -U")?;
+
+        println!();
+
+        let after = Self::version_of(&path);
+        match (before.as_deref(), after.as_deref()) {
+            (Some(old), Some(new)) if old != new => println!(
+                "{} {} → {}",
+                "✓ yt-dlp actualizado:".green().bold(),
+                old.dimmed(),
+                new.yellow().bold()
+            ),
+            (_, Some(current)) if status.success() => println!(
+                "{} {}",
+                "✓ yt-dlp ya está en la última versión:".green(),
+                current.yellow()
+            ),
+            _ => {}
+        }
+
+        if !status.success() {
+            return Err(anyhow!(
+                "yt-dlp no se pudo actualizar ({}). Revisá el mensaje de yt-dlp arriba",
+                status
+            ));
+        }
+
+        println!();
+        Ok(())
+    }
 }

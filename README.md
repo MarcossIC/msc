@@ -126,6 +126,7 @@ msc vget "URL" --audio-only
 msc vget "URL" --playlist                # Or --no-playlist to force single
 msc vget "URL" --clean-parts             # Remove orphaned .part files first
 msc vget "URL" --no-continue             # Restart from scratch
+msc vget --update                        # Update yt-dlp (add a URL to update, then download)
 
 # Authenticated content
 msc vget "URL" --cb                      # Chrome cookies (default)
@@ -319,7 +320,7 @@ MSC isn't in your PATH. Reinstall via the MSI, or add the directory containing `
 Some system directories need elevation. MSC runs user directories first, then prompts for admin. Run the terminal as Administrator for a full system pass.
 
 **Video download fails**
-MSC auto-installs yt-dlp, but you can install it yourself: `winget install yt-dlp`.
+MSC auto-installs yt-dlp, but you can install it yourself: `winget install yt-dlp`. Sites change often, so an old yt-dlp is the most common cause: run `msc vget --update`. MSC also explains HTTP errors like 410 (content removed) or 403 (login required), and shows only the site's domain in the log, never the full URL.
 
 **FFmpeg not found**
 `winget install ffmpeg`, or grab it from [ffmpeg.org](https://ffmpeg.org/download.html).

@@ -1,10 +1,19 @@
+use crate::core::yt_dlp_output::{
+    classify_failure, redact_url, version_age_days, FailureKind, UrlRedactor, STALE_AFTER_DAYS,
+};
 use crate::core::{validation, Config, YtDlpManager};
 use anyhow::{anyhow, Context, Result};
 use colored::Colorize;
 use dialoguer::Input;
+use std::collections::VecDeque;
 use std::fs;
+use std::io::{self, BufRead, BufReader, ErrorKind, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
+use std::thread;
+
+/// Máximo de líneas que se guardan de la salida de yt-dlp para diagnosticar
+const OUTPUT_TAIL: usize = 50;
 
 /// Configuration for video download
 struct DownloadConfig<'a> {
@@ -26,7 +35,8 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     // 1. Extraer argumentos
     let get = |k| matches.get_one::<String>(k).map(|s| s.as_str());
 
-    let url = get("url").context("URL es requerida")?;
+    let url = get("url");
+    let update = matches.get_flag("update");
     let output = get("output");
     let quality = get("quality");
     let format = get("format");
@@ -39,27 +49,39 @@ pub fn execute(matches: &clap::ArgMatches) -> Result<()> {
     let cookies_file = get("cookies");
 
     // 2. Validar URL con validación mejorada
-    validation::validate_url(url).with_context(|| format!("URL inválida: {}", url))?;
+    if let Some(url) = url {
+        validation::validate_url(url).with_context(|| format!("URL inválida: {}", url))?;
+    }
 
-    // 3. Asegurar yt-dlp instalado
+    // 3. Actualizar yt-dlp si se pidió (solo, o antes de descargar)
     let mut manager = YtDlpManager::new()?;
+    if update {
+        manager.update()?;
+    }
+
+    // clap exige la URL salvo con --update
+    let Some(url) = url else {
+        return Ok(());
+    };
+
+    // 4. Asegurar yt-dlp instalado
     let yt_dlp_path = manager.ensure_yt_dlp()?;
 
-    // 4. Determinar directorio de destino
+    // 5. Determinar directorio de destino
     let download_dir = get_download_directory()?;
 
-    // 5. Limpiar archivos .part si se solicitó
+    // 6. Limpiar archivos .part si se solicitó
     if clean_parts {
         clean_part_files(&download_dir)?;
     }
 
-    // 6. Validar output path si se proporcionó
+    // 7. Validar output path si se proporcionó
     if let Some(output_name) = output {
         validation::validate_output_path(output_name)
             .with_context(|| format!("Output path inválido: {}", output_name))?;
     }
 
-    // 7. Construir y ejecutar comando
+    // 8. Construir y ejecutar comando
     let config = DownloadConfig {
         yt_dlp_path: &yt_dlp_path,
         url,
@@ -306,22 +328,182 @@ fn execute_download(config: &DownloadConfig) -> Result<()> {
         println!("{} {}", "🍪 Usando archivo de cookies:".cyan(), file);
     }
 
+    // Por pipe yt-dlp apaga los colores: los forzamos solo si msc escribe en
+    // una terminal real, así la salida se ve igual que antes
+    if io::stdout().is_terminal() {
+        cmd.arg("--color").arg("always");
+    }
+
     // Agregar URL
     cmd.arg(config.url);
 
-    println!("{} {:?}", "Ejecutando:".dimmed(), cmd);
+    // Por pipe Python usa la codepage de Windows; forzamos UTF-8 para los títulos
+    cmd.env("PYTHONIOENCODING", "utf-8");
+
+    println!(
+        "{} {}",
+        "Ejecutando:".dimmed(),
+        redacted_command_line(&cmd, config.url)
+    );
     println!();
 
     // Ejecutar comando
-    let status = cmd.status().context("Error al ejecutar yt-dlp")?;
+    let redactor = UrlRedactor::new(config.url);
+    let (status, stderr_tail) = run_redacted(&mut cmd, &redactor)?;
 
     println!();
 
     if status.success() {
         println!("{}", "✓ Descarga completada exitosamente".green().bold());
-    } else {
-        return Err(anyhow!("La descarga falló con código: {}", status));
+        return Ok(());
     }
 
-    Ok(())
+    let kind = classify_failure(&stderr_tail);
+    report_failure(kind, config.yt_dlp_path);
+
+    let reason = match kind {
+        FailureKind::Unknown => format!("{} ({})", kind.label(), status),
+        _ => kind.label().to_string(),
+    };
+    Err(anyhow!(
+        "La descarga de {} falló: {}",
+        redact_url(config.url),
+        reason
+    ))
+}
+
+/// Como el `{:?}` de Command, pero con la URL reducida a su dominio
+fn redacted_command_line(cmd: &Command, url: &str) -> String {
+    std::iter::once(cmd.get_program())
+        .chain(cmd.get_args())
+        .map(|arg| {
+            let arg = arg.to_string_lossy();
+            if arg == url {
+                format!("{:?}", redact_url(url))
+            } else {
+                format!("{:?}", arg)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Corre yt-dlp reenviando su stdout/stderr a la terminal con la URL oculta.
+/// Devuelve el exit status y las últimas líneas de stderr para diagnosticar.
+fn run_redacted(cmd: &mut Command, redactor: &UrlRedactor) -> Result<(ExitStatus, Vec<String>)> {
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Error al ejecutar yt-dlp")?;
+
+    let stdout = child.stdout.take().context("stdout de yt-dlp no disponible")?;
+    let stderr = child.stderr.take().context("stderr de yt-dlp no disponible")?;
+
+    // Ambos pipes se drenan en paralelo: si uno se llena, yt-dlp se bloquea
+    let (status, stderr_tail) = thread::scope(|s| {
+        let out = s.spawn(|| relay(stdout, io::stdout(), redactor));
+        let err = s.spawn(|| relay(stderr, io::stderr(), redactor));
+        let status = child.wait();
+        // Un panic en el relay no debe tapar el resultado de la descarga
+        let _ = out.join();
+        (status, err.join().unwrap_or_default())
+    });
+
+    Ok((status.context("Error esperando a yt-dlp")?, stderr_tail))
+}
+
+/// Copia un stream de yt-dlp al nuestro ocultando la URL. Corta en '\n' y '\r'
+/// para que la barra de progreso (que se redibuja con '\r') siga funcionando.
+/// Devuelve las últimas líneas no vacías.
+fn relay(src: impl Read, mut dst: impl Write, redactor: &UrlRedactor) -> Vec<String> {
+    let mut reader = BufReader::new(src);
+    let mut pending: Vec<u8> = Vec::new();
+    let mut tail: VecDeque<String> = VecDeque::new();
+
+    loop {
+        let chunk = match reader.fill_buf() {
+            Ok([]) => break,
+            Ok(chunk) => chunk,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        let read = chunk.len();
+        pending.extend_from_slice(chunk);
+        reader.consume(read);
+
+        // Todo hasta el último separador son líneas completas
+        if let Some(last) = pending.iter().rposition(|&b| b == b'\n' || b == b'\r') {
+            let rest = pending.split_off(last + 1);
+            emit(&pending, &mut dst, redactor, &mut tail);
+            pending = rest;
+        }
+
+        // yt-dlp escribe el progreso como "\r[download]  45%..." sin salto final:
+        // se muestra ya para no atrasar la barra. Esas líneas no llevan URL ni ID
+        if pending.starts_with(b"[download]") && !pending.windows(3).any(|w| w == b"://") {
+            emit(&pending, &mut dst, redactor, &mut tail);
+            pending.clear();
+        }
+
+        let _ = dst.flush();
+    }
+
+    if !pending.is_empty() {
+        emit(&pending, &mut dst, redactor, &mut tail);
+        let _ = dst.flush();
+    }
+
+    tail.into()
+}
+
+fn emit(bytes: &[u8], dst: &mut impl Write, redactor: &UrlRedactor, tail: &mut VecDeque<String>) {
+    let text = redactor.redact(&String::from_utf8_lossy(bytes));
+    let _ = dst.write_all(text.as_bytes());
+
+    for line in text
+        .split(|c: char| c == '\n' || c == '\r')
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        if tail.len() == OUTPUT_TAIL {
+            tail.pop_front();
+        }
+        tail.push_back(line.to_string());
+    }
+}
+
+/// Explica la causa probable del fallo y, si yt-dlp está viejo, cómo actualizarlo
+fn report_failure(kind: FailureKind, yt_dlp_path: &Path) {
+    if let Some(meaning) = kind.meaning() {
+        println!("{} {}", format!("✗ {}:", kind.label()).red().bold(), meaning);
+        println!("  {}", "Causas probables:".yellow());
+        for (i, cause) in kind.causes().iter().enumerate() {
+            println!("    {}. {}", i + 1, cause);
+        }
+        println!();
+    }
+
+    if !kind.update_may_help() {
+        return;
+    }
+
+    let Some(version) = YtDlpManager::version_of(yt_dlp_path) else {
+        return;
+    };
+    let today = chrono::Local::now().date_naive();
+    if let Some(age) = version_age_days(&version, today).filter(|&d| d > STALE_AFTER_DAYS) {
+        println!(
+            "{} Tu yt-dlp ({}) tiene {} días. Actualizalo con:",
+            "⚠️ ".yellow(),
+            version.yellow(),
+            age
+        );
+        println!("     {}", "msc vget --update".green().bold());
+        println!(
+            "   {}",
+            "o sumá --update al mismo comando para actualizar y reintentar de una".dimmed()
+        );
+        println!();
+    }
 }

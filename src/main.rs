@@ -496,13 +496,21 @@ fn build_cli() -> Command {
                     msc vget \"URL\" --no-continue                        # Force download from scratch\n\
                     msc vget \"URL\" --clean-parts                        # Clean .part files first\n\
                     msc vget \"URL\" --cb                                 # Use Chrome cookies\n\
-                    msc vget \"URL\" --cb firefox                         # Use Firefox cookies"
+                    msc vget \"URL\" --cb firefox                         # Use Firefox cookies\n\
+                    msc vget --update                                   # Update yt-dlp\n\
+                    msc vget \"URL\" --update                             # Update yt-dlp, then download"
                 )
                 .arg(
                     Arg::new("url")
                         .help("URL of the video to download")
-                        .required(true)
+                        .required_unless_present("update")
                         .index(1),
+                )
+                .arg(
+                    Arg::new("update")
+                        .long("update")
+                        .help("Update yt-dlp to the latest version (before downloading, if a URL is given)")
+                        .action(clap::ArgAction::SetTrue),
                 )
                 .arg(
                     Arg::new("output")
